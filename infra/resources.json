@@ -1,6 +1,15 @@
 {
   "account_id": "395063532779",
-  "authorization": "Maintainer explicitly approved the remaining eight-instance trial, with a shorter Cobalt build budget. Use a one-hour Packer build deadline and a90-minute controller job limit. Organization-wide RunsOn App installation is authorized.",
+  "authorization": "Maintainer authorizes retries until Ubuntu24.04 + Xenomai3 Cobalt runners compile and run the application successfully, with a maximum$20. Estimate resources before each attempt and avoid unnecessary expense. Apply this ceiling to the whole trial.",
+  "budget_authorization": {
+    "authorized_at": "2026-09-13T12:44:10Z",
+    "ceiling_usd": 20,
+    "currency": "USD",
+    "execution_policy": "One active build at a time. Diagnose concrete failures and verify cleanup before replacement resources. Record each next attempt estimate and proceed within the approved ceiling. Stop new launches if projected total reaches$20.",
+    "projected_total_before_next_attempt_usd": 2.3084385273972603,
+    "resource_defaults": "t3.small controllers/probes/runners; c7i.large builder; one-hour Packer and90-minute controller limits; encrypted baseline gp3;24-hour candidate and30-day input/report retention.",
+    "scope": "whole project trial including prior attempts, continued service, retained artifacts and images"
+  },
   "checks": {
     "controller_read_only_preflight": "passed using the dedicated operator assuming ami-example-controller",
     "github_app_installation": "Verified installation161327403 with App-authenticated organization and exact repository lookups; repository_selection=all, suspended=false",
@@ -41,7 +50,7 @@
     "currency": "USD",
     "estimated_total_usd": 2.161789897260274,
     "excluded": "Existing RunsOn license charges and any GitHub charges under the organization plan. This public repository uses standard Linux GitHub-hosted control jobs; verify applicable plan billing before dispatch.",
-    "limits": "Planning quantities and estimates are not enforced AWS spending caps. No second reproducibility build is included. Failed live stages must be reviewed before launching replacement instances beyond this resource plan.",
+    "limits": "Estimates are planning quantities. The maintainer now authorizes necessary retries within a whole-trial$20 ceiling, with a fresh resource estimate and cleanup check before each attempt.",
     "monthly_billing_hours_used": 730,
     "planning_allowance_usd": 3,
     "rates": {
@@ -166,8 +175,7 @@
       }
     ],
     "actual_trial_launches": 4,
-    "approved_trial_launches": 8,
-    "approved_trial_launches_remaining": 4,
+    "authorized_launch_policy": "Necessary sequential retries under the whole-trial$20 ceiling; previous fixed eight-launch limit superseded.",
     "burstable_cpu_credits": "standard",
     "candidate_amis": 1,
     "candidate_retention_hours_after_build": 24,
@@ -241,6 +249,7 @@
       "launched_at": "2026-09-13T06:16:52Z",
       "status": "previously_completed_and_cleaned"
     },
+    "previous_approved_trial_launches": 8,
     "purchase": "on-demand",
     "single_build_dispatches": 1,
     "stock_dispatches": 1,
@@ -279,7 +288,7 @@
     ],
     "vpc_id": "vpc-03d128ca7d1038364"
   },
-  "next_approval_plan": {
+  "next_execution_plan": {
     "account_id": "395063532779",
     "additional_launches_beyond_existing_eight": 2,
     "candidate_amis": 1,
@@ -336,7 +345,7 @@
       }
     ],
     "launches": 6,
-    "limits": "No second retry, second reproducibility build, parent copy, new networking, additional candidate set, or service-lifetime extension is included. This proposal has not been executed.",
+    "limits": "One corrected single-build qualification and one standalone application dispatch. Later retries require a new recorded estimate and cleanup check within the existing$20 authorization.",
     "new_execution_compute_ebs_ipv4_estimate_usd": 0.18121575342465754,
     "planning_allowance_usd": 3,
     "rates_source": "cost_plan.rates, us-east-1, checked2026-09-13",
@@ -346,7 +355,8 @@
     "revised_trial_estimate_usd": 2.3084385273972603,
     "scope": "One corrected single-build qualification retry, then one standalone Cobalt application dispatch on main",
     "service_review_or_teardown_due": "2026-09-14T08:33:19Z",
-    "status": "pending_explicit_approval",
+    "spending_ceiling_usd": 20,
+    "status": "approved_under_whole_trial_20_usd_ceiling",
     "validated_implementation_commit": "c42ebef81c2fb908a7f72852d690e5363b2dc1ef"
   },
   "purpose": "Build and retain one Xenomai Cobalt AMI, prove fresh boot and application execution, then run the same application through a separate manual dispatch on that exact image.",
@@ -1404,6 +1414,6 @@
     "vpc_cidr": "10.60.0.0/16"
   },
   "schema_version": 1,
-  "status": "cobalt_build_failed_retry_pending_approval",
-  "updated_at": "2026-09-13T12:20:35Z"
+  "status": "cobalt_retry_authorized",
+  "updated_at": "2026-09-13T12:44:10Z"
 }

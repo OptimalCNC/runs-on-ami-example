@@ -16,8 +16,8 @@ no latency target.
 **Status: scoped IAM and stock RunsOn qualification passed in AWS. The first
 Cobalt kernel and SDK compiled successfully; image finalization then failed
 while clearing an inherited PostgreSQL log. All trial instances were cleaned
-up, and no candidate AMI was created. The corrected retry is awaiting resource
-approval in [infra/resources.json](infra/resources.json).** An AMI creation
+up, and no candidate AMI was created. Retries are authorized within the recorded $20 ceiling in
+[infra/resources.json](infra/resources.json).** An AMI creation
 record is not a qualification result.
 
 The image build controller uses a separately pinned stock RunsOn AMI. It is
