@@ -22,7 +22,7 @@ jobs:
       role_arn: ${{ steps.configure.outputs.role_arn }}
       environment: ${{ steps.configure.outputs.environment }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
       - id: configure
@@ -39,11 +39,11 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
       - run: python3 scripts/install-tools.py --group cloud
-      - uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
+      - uses: aws-actions/configure-aws-credentials@v6.2.4
         with:
           role-session-name: ami-example-${{ github.run_id }}-${{ github.run_attempt }}
           role-to-assume: ${{ needs.prepare.outputs.role_arn }}
@@ -79,13 +79,13 @@ jobs:
         run: ami-example-smoke identity
       - name: Activate Cobalt environment for subsequent steps
         run: runner-image-env --github
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
       - name: Compile and run the Cobalt application
         run: ami-example-smoke test
       - if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: ${{ needs.prepare.outputs.build_id }}-application
           path: ${{ runner.temp }}/ami-example-smoke
@@ -102,11 +102,11 @@ jobs:
       id-token: write
       actions: write
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
       - run: python3 scripts/install-tools.py --group cloud
-      - uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
+      - uses: aws-actions/configure-aws-credentials@v6.2.4
         with:
           role-session-name: ami-example-${{ github.run_id }}-${{ github.run_attempt }}
           role-to-assume: ${{ needs.prepare.outputs.role_arn }}
@@ -115,7 +115,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
       - if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: ${{ needs.prepare.outputs.build_id }}-application-watchdog
           path: artifacts/application/watchdog.json
@@ -133,17 +133,17 @@ jobs:
       id-token: write
       actions: read
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@v8.0.1
         with:
           name: ${{ needs.prepare.outputs.build_id }}-application
           path: artifacts/application/smoke
       - if: always()
         run: python3 scripts/install-tools.py --group cloud
       - if: always()
-        uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
+        uses: aws-actions/configure-aws-credentials@v6.2.4
         with:
           role-session-name: ami-example-${{ github.run_id }}-${{ github.run_attempt }}
           role-to-assume: ${{ needs.prepare.outputs.role_arn }}
@@ -158,7 +158,7 @@ jobs:
       - if: always()
         run: python3 scripts/accepted_image.py retain
       - if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: ${{ needs.prepare.outputs.build_id }}-application-final
           path: artifacts/application
