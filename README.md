@@ -14,8 +14,8 @@ initramfs content. The application test checks functional execution; there is
 no latency target.
 
 **Status: scoped IAM and stock RunsOn qualification passed in AWS. The Cobalt
-kernel and SDK compiled, and the custom AMI is available. Its boot and RunsOn
-qualification are pending. Retries are authorized within the recorded $20
+kernel and SDK compiled, and the custom AMI passed direct boot. RunsOn
+registration passed; non-root application qualification is pending. Retries are authorized within the recorded $20
 ceiling in [infra/resources.json](infra/resources.json).** An AMI creation
 record is not a qualification result.
 
@@ -118,6 +118,12 @@ baked identity, activate the image's `/usr/xenomai` development environment
 for a later step, and build and run the Cobalt application's one CTest test.
 The application starts and joins an Alchemy task and verifies that the task
 runs in Cobalt primary mode; a stock kernel cannot satisfy it.
+
+Each candidate job first grants the preconfigured `xenomai` group access to
+the two Cobalt RTDM memory devices using the upstream `0660` mode. Identity
+checks, compilation, and application execution then run as the ordinary runner
+user. This activation supports the retained image whose recipe omitted the
+udev device rule.
 
 To qualify an already retained candidate, dispatch **Qualify retained Cobalt
 image** on `main` with the immutable versioned S3 URI of its candidate

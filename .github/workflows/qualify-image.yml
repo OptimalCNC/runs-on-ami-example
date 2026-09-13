@@ -128,6 +128,18 @@ jobs:
       BUILD_ID: ${{ needs.configure.outputs.build_id }}
       SMOKE_STAGE: a
     steps:
+      - name: Grant the runner access to Cobalt memory devices
+        run: |
+          test "$(id -u)" -ne 0
+          [[ " $(id -G) " == *" 4242 "* ]]
+          prlimit --pid "$$" --memlock --rtprio
+          devices=(/dev/rtdm/memdev-private /dev/rtdm/memdev-shared)
+          for device in "${devices[@]}"; do
+            [[ -c "$device" && ! -L "$device" ]]
+          done
+          sudo chgrp xenomai "${devices[@]}"
+          sudo chmod 0660 "${devices[@]}"
+          stat -c '%n %U:%G %a' "${devices[@]}"
       - name: Check running Cobalt kernel and fresh image before checkout
         run: ami-example-smoke identity
       - name: Activate image environment for subsequent steps
@@ -157,6 +169,18 @@ jobs:
       BUILD_ID: ${{ needs.configure.outputs.build_id }}
       SMOKE_STAGE: b
     steps:
+      - name: Grant the runner access to Cobalt memory devices
+        run: |
+          test "$(id -u)" -ne 0
+          [[ " $(id -G) " == *" 4242 "* ]]
+          prlimit --pid "$$" --memlock --rtprio
+          devices=(/dev/rtdm/memdev-private /dev/rtdm/memdev-shared)
+          for device in "${devices[@]}"; do
+            [[ -c "$device" && ! -L "$device" ]]
+          done
+          sudo chgrp xenomai "${devices[@]}"
+          sudo chmod 0660 "${devices[@]}"
+          stat -c '%n %U:%G %a' "${devices[@]}"
       - name: Check running Cobalt kernel and absence of job A sentinel
         run: ami-example-smoke identity
       - name: Activate image environment for subsequent steps
