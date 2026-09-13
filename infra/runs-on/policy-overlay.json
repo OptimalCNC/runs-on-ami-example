@@ -433,12 +433,17 @@
           }
         },
         {
+          "Sid": "FleetVolumeAuthorization",
+          "Effect": "Allow",
+          "Action": "ec2:CreateFleet",
+          "Resource": {
+            "Fn::Sub": "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:volume/*"
+          }
+        },
+        {
           "Sid": "TaggedEncryptedRoot",
           "Effect": "Allow",
-          "Action": [
-            "ec2:RunInstances",
-            "ec2:CreateFleet"
-          ],
+          "Action": "ec2:RunInstances",
           "Resource": {
             "Fn::Sub": "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:volume/*"
           },

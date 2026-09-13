@@ -119,8 +119,11 @@ def main():
             time.sleep(propagation)
         inventory["runs_on"]["ecs_service_linked_role_arn"] = linked["Arn"]
         aws("cloudformation", "execute-change-set", {"ChangeSetName": record["change_set_id"]})
-        inventory["runs_on"].update(status="creation_started", stack_id=record["stack_id"],
-            created_at=timestamp(), review_or_teardown_due=timestamp(utcnow() + dt.timedelta(hours=config["trial_hours"])))
+        creating = record["change_set_type"] == "CREATE"
+        inventory["runs_on"].update(status="creation_started" if creating else "update_started", stack_id=record["stack_id"])
+        if creating:
+            inventory["runs_on"].update(created_at=timestamp(),
+                review_or_teardown_due=timestamp(utcnow() + dt.timedelta(hours=config["trial_hours"])))
         write_json(inventory_file, inventory)
         print(json.dumps({"stack_id": record["stack_id"], "status": "execution_started",
                           "planned_resources": len(resources)}))

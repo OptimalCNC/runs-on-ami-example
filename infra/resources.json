@@ -9,7 +9,7 @@
     "public_repository": "https://github.com/OptimalCNC/runs-on-ami-example",
     "runs_on_deployed_readback": "17/17 policy, trust, profile, launch-template, networking and selected-key checks passed",
     "runs_on_principal_simulations": "52/53 matched expectations; vendor runner self-tagging returned implicitDeny and needs a real EC2-session check",
-    "stock_dispatch": "Run34752517613 failed at hosted OIDC admission, with zero EC2 launches. Updating exact trust before retry.",
+    "stock_dispatch": "Retry34752883566 passed OIDC, then CreateFleet volume authorization denied before EC2 creation. Cancelled; independent cleanup34753050841 passed.",
     "validated_commit": "8c3934fb71a04085e3c5a078a12d59111175214b",
     "validation_result": "passed; 63 tests and Terraform/Packer/workflow validation",
     "validation_run": "https://github.com/OptimalCNC/runs-on-ami-example/actions/runs/34748411058"
@@ -69,6 +69,18 @@
         "stage": "stock",
         "status": "failed_before_ec2",
         "url": "https://github.com/OptimalCNC/runs-on-ami-example/actions/runs/34752517613"
+      },
+      {
+        "cleanup_run_id": 34753050841,
+        "cleanup_status": "success",
+        "failure": "CreateFleet preliminary volume authorization omitted disk/tag context required by the policy",
+        "head_sha": "703dd04bd703877f9426201b2db99fd102585141",
+        "instance_ids": [],
+        "run_attempt": 1,
+        "run_id": 34752883566,
+        "stage": "stock",
+        "status": "cancelled_after_launch_denied",
+        "url": "https://github.com/OptimalCNC/runs-on-ami-example/actions/runs/34752883566"
       }
     ],
     "burstable_cpu_credits": "standard",
@@ -1093,7 +1105,7 @@
         "log_retention_days": null,
         "logical_id": "RunsOnServiceRole",
         "physical_id": "runs-on-ami-example-RunsOnServiceRole-otjOp2v4RfhR",
-        "status": "CREATE_COMPLETE",
+        "status": "UPDATE_COMPLETE",
         "type": "AWS::IAM::Role"
       },
       {
@@ -1223,13 +1235,13 @@
     "service_role_arn": "arn:aws:iam::395063532779:role/runs-on-ami-example-RunsOnServiceRole-otjOp2v4RfhR",
     "stack_id": "arn:aws:cloudformation:us-east-1:395063532779:stack/runs-on-ami-example/b1121190-af4d-11f1-b98a-0afffe23461d",
     "stack_name": "runs-on-ami-example",
-    "status": "CREATE_COMPLETE",
-    "template_sha256": "a50dde0d8460b39da1c2c79fbacf56bedf85b33f96fc9493e1c14948401d062e",
+    "status": "UPDATE_COMPLETE",
+    "template_sha256": "0981f59611d2ac733063a78f4c8691bb88afda955bf008eaa1c4938d5cbfd764",
     "template_source_lock": "infra/runs-on/template-lock.json",
     "trial_hours": 24,
     "vpc_cidr": "10.60.0.0/16"
   },
   "schema_version": 1,
   "status": "approved_stock_dispatch_started",
-  "updated_at": "2026-09-13T10:42:10Z"
+  "updated_at": "2026-09-13T10:59:42Z"
 }

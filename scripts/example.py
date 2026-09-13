@@ -235,7 +235,7 @@ class Deployment:
         volume = self.parent_root_volume_gib if parent else self.root_volume_gib
         return (f"runs-on={key}/family={self.instance_type}/cpu={self.vcpus}/ami={ami}"
                 f"/spot=false/retry=false/env={installation.environment}/region={self.region}"
-                f"/private={str(self.private).lower()}/volume={volume}gb:gp3")
+                f"/private={str(self.private).lower()}/volume={volume}gb:gp3:125mbs:3000iops")
 
 
 def load_deployment(path: str = "infra/deployment.json", *, inventories: bool = True) -> Deployment:

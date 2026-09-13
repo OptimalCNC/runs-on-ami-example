@@ -50,8 +50,8 @@ class Inputs(unittest.TestCase):
         parsed = Deployment.parse(value)
         self.assertEqual(parsed.source_ami.owner, "135269210855")
         self.assertIn("family=t3.micro/cpu=2", parsed.label("parent", parsed.source_ami.id, parent=True))
-        self.assertIn("volume=30gb:gp3", parsed.label("parent", parsed.source_ami.id, parent=True))
-        self.assertIn("volume=80gb:gp3", parsed.label("candidate", "ami-11111111111111111"))
+        self.assertIn("volume=30gb:gp3:125mbs:3000iops", parsed.label("parent", parsed.source_ami.id, parent=True))
+        self.assertIn("volume=80gb:gp3:125mbs:3000iops", parsed.label("candidate", "ami-11111111111111111"))
 
     def test_inventory_configuration_does_not_claim_an_installed_runson(self):
         parsed = Deployment.parse({**deployment_dict(), "runs_on": None})

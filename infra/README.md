@@ -190,6 +190,13 @@ the versioned template and prepare its CloudFormation change set, then use
 `apply` to execute that reviewed set. The `inventory` command refreshes
 physical IDs in `infra/resources.json`. The helper keeps secret request
 files under `.aws-local/` with mode `0600` and removes them after each call.
+Updating the stack preserves the original trial teardown deadline.
+
+The RunsOn service's preliminary `CreateFleet` volume check supplies no disk
+tags or encryption/size attributes. Its volume permission therefore uses
+the selected region/account's `volume/*` ARN. The separate `RunInstances`
+permission enforces ownership tags, encryption, gp3, and the approved disk
+limits when instances launch; this grant does not allow `CreateVolume`.
 
 Local initialization and validation do not provision resources:
 
