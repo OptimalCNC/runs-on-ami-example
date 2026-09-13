@@ -5,14 +5,15 @@
     "controller_read_only_preflight": "passed using the dedicated operator assuming ami-example-controller",
     "github_app_installation": "Verified installation161327403 with App-authenticated organization and exact repository lookups; repository_selection=all, suspended=false",
     "launch_request_dry_runs": "Administrator RunInstances and instant CreateFleet returned DryRunOperation; this does not prove service-role runtime authorization",
-    "live_cobalt_build_and_runner_qualification": "not yet executed",
+    "live_cobalt_build_and_runner_qualification": "Run34754803377 compiled kernel6.12.90-cip24-xenomai-cobalt and matching SDK, then failed inherited PostgreSQL log truncation during finalization; no AMI created and no boot/runtime qualification",
     "public_repository": "https://github.com/OptimalCNC/runs-on-ami-example",
     "runs_on_deployed_readback": "17/17 policy, trust, profile, launch-template, networking and selected-key checks passed",
-    "runs_on_principal_simulations": "52/53 matched expectations; vendor runner self-tagging returned implicitDeny and needs a real EC2-session check",
-    "stock_dispatch": "Run34753788158 denied at preliminary fleet network-interface authorization before EC2 creation; cancelled before retry",
-    "validated_commit": "8c3934fb71a04085e3c5a078a12d59111175214b",
-    "validation_result": "passed; 63 tests and Terraform/Packer/workflow validation",
-    "validation_run": "https://github.com/OptimalCNC/runs-on-ami-example/actions/runs/34748411058"
+    "runs_on_principal_simulations": "52/53 matched expectations; runner self-tagging simulator implicitDeny was disproved by successful live EC2-session tagging in run34754322307",
+    "secret_scan": "Current tracked source and all14 downloaded Cobalt build/final artifacts passed; no credential,license,private-key or token leaks detected",
+    "stock_dispatch": "Run34754322307 passed stock management, watchdog and finalization; both instances terminated, root volumes and ENIs deleted",
+    "validated_commit": "c42ebef81c2fb908a7f72852d690e5363b2dc1ef",
+    "validation_result": "passed;64 tests and Terraform/Packer/workflow validation",
+    "validation_run": "https://github.com/OptimalCNC/runs-on-ami-example/actions/runs/34756745162"
   },
   "cleanup": {
     "candidate_image": "After approved retention, deregister only this repository-owned candidate and delete its snapshots only after checking no registered AMI references them and no live job requires the image.",
@@ -101,8 +102,72 @@
         "stage": "stock",
         "status": "cancelled_after_launch_denied",
         "url": "https://github.com/OptimalCNC/runs-on-ami-example/actions/runs/34753788158"
+      },
+      {
+        "cleanup": "Both exact instances terminated; both recorded root volumes deleted; neither retains ENIs; no owned key pairs remain",
+        "cleanup_status": "passed",
+        "cleanup_verified_at": "2026-09-13T11:28:57Z",
+        "head_sha": "16ddf1eef1014388f314f9003c5e068c61ac792f",
+        "instance_ids": [
+          "i-0fb7ab2e1abcb51b4",
+          "i-0aacbd22706434d0a"
+        ],
+        "root_volume_ids": [
+          "vol-0bb57c6dd23fb5416",
+          "vol-0fc839664d52f5cc8"
+        ],
+        "run_attempt": 1,
+        "run_id": 34754322307,
+        "stage": "stock",
+        "status": "success",
+        "url": "https://github.com/OptimalCNC/runs-on-ami-example/actions/runs/34754322307"
+      },
+      {
+        "cleanup": "Both exact instances terminated; root volumes and ENIs deleted; no candidate AMI, snapshots, volumes or temporary keys remain",
+        "cleanup_status": "passed",
+        "cleanup_verified_at": "2026-09-13T12:13:32Z",
+        "completed_inputs_retained": false,
+        "failure": "finalize-image.sh: truncate could not open inherited /var/log/postgresql/postgresql-16-main.log for writing",
+        "head_sha": "16ddf1eef1014388f314f9003c5e068c61ac792f",
+        "input_retention_note": "This failed attempt transferred the446832640-byte input archive to its controller, but failure-path retention skipped it. Future attempts retain completed archives even if finalization fails.",
+        "instance_ids": [
+          "i-016f36edc57c80e20",
+          "i-07f0cf28e7a16538d"
+        ],
+        "kernel_compile_approximate_minutes": 19,
+        "kernel_release": "6.12.90-cip24-xenomai-cobalt",
+        "operational_interventions": [
+          {
+            "action": "Expanded last root partition and ext4 filesystem with growpart and resize2fs inside the existing approved80GiB EBS disk. Root filesystem changed29GiB to77GiB; no disk allocation, kernel inputs or compiler changes.",
+            "at": "2026-09-13T11:44:50Z",
+            "future_build_fix_commit": "50055c59e14a440162ac43a5fa84328949353af7",
+            "instance_id": "i-07f0cf28e7a16538d",
+            "reason": "Parent root filesystem had retained its30GiB image layout; compilation needs the approved disk capacity.",
+            "report_uri": "s3://ami-example-395063532779-us-east-1-artifacts/OptimalCNC/runs-on-ami-example/34754803377-1-one/builder-root-expansion-result.json",
+            "ssm_command_id": "c4b08267-aab4-468a-9ddd-6227b1f3c6a6",
+            "status": "success"
+          }
+        ],
+        "packer_elapsed_seconds": 1939,
+        "root_volume_ids": [
+          "vol-077bc5e001d126916",
+          "vol-0bd948a53465fc65d"
+        ],
+        "run_attempt": 1,
+        "run_id": 34754803377,
+        "ssm_session_cleanup": {
+          "active_session_readback": "absent",
+          "session_id": "ami-example-34754803377-1-ie23o2aih6iupinhupcfa7li5a",
+          "termination_accepted_at": "2026-09-13T12:15:44Z"
+        },
+        "stage": "single",
+        "status": "failed_before_ami",
+        "url": "https://github.com/OptimalCNC/runs-on-ami-example/actions/runs/34754803377"
       }
     ],
+    "actual_trial_launches": 4,
+    "approved_trial_launches": 8,
+    "approved_trial_launches_remaining": 4,
     "burstable_cpu_credits": "standard",
     "candidate_amis": 1,
     "candidate_retention_hours_after_build": 24,
@@ -167,8 +232,15 @@
         "type": "t3.small"
       }
     ],
-    "live_qualification_status": "not yet executed",
+    "live_qualification_status": "stock passed; Cobalt kernel and SDK compilation passed; image finalization failed; no accepted AMI",
     "parent_copies": 0,
+    "pretrial_inventory_probe": {
+      "authorization_scope": "Earlier separately approved parent inventory capture; excluded from the current eight-launch workflow trial",
+      "build_id": "1789279992-1-stock",
+      "instance_id": "i-04e0c5f63284e3ee9",
+      "launched_at": "2026-09-13T06:16:52Z",
+      "status": "previously_completed_and_cleaned"
+    },
     "purchase": "on-demand",
     "single_build_dispatches": 1,
     "stock_dispatches": 1,
@@ -206,6 +278,76 @@
       "infra/operator"
     ],
     "vpc_id": "vpc-03d128ca7d1038364"
+  },
+  "next_approval_plan": {
+    "account_id": "395063532779",
+    "additional_launches_beyond_existing_eight": 2,
+    "candidate_amis": 1,
+    "candidate_retention_hours_after_build": 24,
+    "candidate_snapshot_sets": 1,
+    "cleanup": "Existing finalizer/watchdog/completion cleanup terminates owned instances and verifies root volume/ENI deletion and key removal. Hourly expiry cleanup deregisters retained owned candidate after24h and deletes only unreferenced snapshots; S3 lifecycle enforces30-day retention. Existing service teardown remains manual at the original deadline.",
+    "github_artifact_retention_days": 14,
+    "implementation_fixes": [
+      "Grow builder root partition and filesystem within the approved EBS disk before provisioning",
+      "Truncate existing logs with --no-create; real write errors still fail finalization",
+      "Retain downloaded inputs.tar exactly once and index its immutable S3 URI on success and failure"
+    ],
+    "increase_to_previous_trial_estimate_usd": 0.1466486301369863,
+    "instances": [
+      {
+        "count": 1,
+        "estimate_usd": 0.04363150684931507,
+        "hours_each": 1.5,
+        "purpose": "kernel build controller",
+        "root_gib_each": 30,
+        "type": "t3.small"
+      },
+      {
+        "count": 1,
+        "estimate_usd": 0.10301712328767124,
+        "hours_each": 1,
+        "purpose": "kernel Packer builder",
+        "root_gib_each": 80,
+        "type": "c7i.large"
+      },
+      {
+        "count": 1,
+        "estimate_usd": 0.008641780821917808,
+        "hours_each": 0.25,
+        "purpose": "independent Cobalt boot probe",
+        "root_gib_each": 80,
+        "type": "t3.small"
+      },
+      {
+        "count": 2,
+        "estimate_usd": 0.017283561643835616,
+        "hours_each": 0.25,
+        "purpose": "fresh Cobalt qualification runners",
+        "root_gib_each": 80,
+        "type": "t3.small"
+      },
+      {
+        "count": 1,
+        "estimate_usd": 0.008641780821917808,
+        "hours_each": 0.25,
+        "purpose": "standalone workflow_dispatch runner",
+        "root_gib_each": 80,
+        "type": "t3.small"
+      }
+    ],
+    "launches": 6,
+    "limits": "No second retry, second reproducibility build, parent copy, new networking, additional candidate set, or service-lifetime extension is included. This proposal has not been executed.",
+    "new_execution_compute_ebs_ipv4_estimate_usd": 0.18121575342465754,
+    "planning_allowance_usd": 3,
+    "rates_source": "cost_plan.rates, us-east-1, checked2026-09-13",
+    "region": "us-east-1",
+    "retained_inputs_and_reports_days": 30,
+    "revised_total_trial_launches": 10,
+    "revised_trial_estimate_usd": 2.3084385273972603,
+    "scope": "One corrected single-build qualification retry, then one standalone Cobalt application dispatch on main",
+    "service_review_or_teardown_due": "2026-09-14T08:33:19Z",
+    "status": "pending_explicit_approval",
+    "validated_implementation_commit": "c42ebef81c2fb908a7f72852d690e5363b2dc1ef"
   },
   "purpose": "Build and retain one Xenomai Cobalt AMI, prove fresh boot and application execution, then run the same application through a separate manual dispatch on that exact image.",
   "region": "us-east-1",
@@ -1262,6 +1404,6 @@
     "vpc_cidr": "10.60.0.0/16"
   },
   "schema_version": 1,
-  "status": "approved_stock_dispatch_started",
-  "updated_at": "2026-09-13T11:22:51Z"
+  "status": "cobalt_build_failed_retry_pending_approval",
+  "updated_at": "2026-09-13T12:20:35Z"
 }

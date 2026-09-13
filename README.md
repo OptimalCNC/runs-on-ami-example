@@ -13,10 +13,12 @@ kernel, modules, Xenomai payload, configuration, packages, and unpacked
 initramfs content. The application test checks functional execution; there is
 no latency target.
 
-**Status: the scoped IAM setup and stock-parent EC2/SSM inventory probe have
-passed in AWS. RunsOn Flex v3.3.1 is deployed with a valid license; GitHub App
-connection is pending. The custom Xenomai AMI has not been built or qualified.** An AMI
-creation record is not a qualification result.
+**Status: scoped IAM and stock RunsOn qualification passed in AWS. The first
+Cobalt kernel and SDK compiled successfully; image finalization then failed
+while clearing an inherited PostgreSQL log. All trial instances were cleaned
+up, and no candidate AMI was created. The corrected retry is awaiting resource
+approval in [infra/resources.json](infra/resources.json).** An AMI creation
+record is not a qualification result.
 
 The image build controller uses a separately pinned stock RunsOn AMI. It is
 never snapshotted. The example targets Ubuntu 24.04, x86-64, one exact Nitro
