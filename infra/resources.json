@@ -6,31 +6,40 @@
     "ceiling_usd": 20,
     "currency": "USD",
     "execution_policy": "One active build at a time. Diagnose concrete failures and verify cleanup before replacement resources. Record each next attempt estimate and proceed within the approved ceiling. Stop new launches if projected total reaches$20.",
-    "projected_total_before_next_attempt_usd": 2.325722089041096,
+    "projected_total_before_next_attempt_usd": 2.536133047945206,
     "resource_defaults": "t3.small controllers/probes/runners; c7i.large builder; 90-minute Packer and 105-minute controller limits for future builds; encrypted baseline gp3; 24-hour candidate and 30-day input/report retention.",
     "scope": "whole project trial including prior attempts, continued service, retained artifacts and images"
   },
   "checks": {
     "controller_read_only_preflight": "passed using the dedicated operator assuming ami-example-controller",
+    "final_resource_readback": "2026-09-13T14:50:13Z: zero active project EC2 instances, no runner volumes/temporary keys; accepted AMI/snapshot retained; one old builder volume deleting. RunsOn service healthy,1 desired/1 running/0 pending.",
     "github_app_installation": "Verified installation161327403 with App-authenticated organization and exact repository lookups; repository_selection=all, suspended=false",
     "iam_readback": "2026-09-13T14:34:05Z: all five role policies/trusts and profiles match expected documents; operator sole AssumeRole grant/boundary and both project STS profiles verified.",
     "launch_request_dry_runs": "Administrator RunInstances and instant CreateFleet returned DryRunOperation; this does not prove service-role runtime authorization",
-    "live_cobalt_build_and_runner_qualification": "Retry34757925378 passed kernel/SDK compilation and guest finalization; candidateami-0270758ffeab9556c snapshot pending; boot and runner qualification pending",
+    "live_cobalt_build_and_runner_qualification": "Original build34757925378 compiled kernel/SDK and finalized the guest; Packer timed out during snapshot preparation. The available AMI was recovered with immutable provenance, qualified in34762739224, and used successfully by standalone dispatch34763569287. No complete uninterrupted image-build workflow or two-build payload comparison is claimed.",
     "live_cobalt_qualification": "Passed direct boot, both fresh RunsOn primary-mode application tests, final control-plane verification and completion cleanup in run34762739224.",
     "public_repository": "https://github.com/OptimalCNC/runs-on-ami-example",
     "retained_qualification_local_validation": "Full pinned tool/lock checks, shell syntax, actionlint, Terraform and both Packer modes passed. After the watchdog deadline fix, all 83 unit tests and Python compilation passed.",
     "runs_on_deployed_readback": "17/17 policy, trust, profile, launch-template, networking and selected-key checks passed",
     "runs_on_principal_simulations": "52/53 matched expectations; runner self-tagging simulator implicitDeny was disproved by successful live EC2-session tagging in run34754322307",
     "runtime_permission_retry": "Actionlint passed all three changed workflows; Bash syntax passed all five device activation blocks; input/recipe validation remains unchanged. Exact upstream Xenomai 3.3.3 rule verified from the retained SHA-checked archive.",
-    "secret_scan": "Current tracked source and all14 downloaded Cobalt build/final artifacts passed; no credential,license,private-key or token leaks detected",
+    "secret_scan": "Public source/history and incremental publications passed secret audit;114 downloaded qualification/application artifacts (including16 binaries and failed-smoke GitHub log) plus2859 decoded JSON strings had zero secret matches.",
+    "standalone_cobalt_application": "Run34763569287 and completion cleanup34763738997 succeeded; exact AMI/kernel/SDK identity, non-root compilation and Cobalt primary-mode execution verified.",
     "stock_dispatch": "Run34754322307 passed stock management, watchdog and finalization; both instances terminated, root volumes and ENIs deleted",
-    "validated_commit": "4c1028c0ed875466951404b4e4573f5f7cb08961",
-    "validation_result": "passed;64 tests and Terraform/Packer/workflow validation",
-    "validation_run": "https://github.com/OptimalCNC/runs-on-ami-example/actions/runs/34757912341"
+    "validated_commit": "94786e89df6990008f5a6ee5774c9fcf3e9784cd",
+    "validation_result": "Passed83 unit tests and local+GitHub Terraform/Packer/workflow validation; runtime qualification and standalone app passed separately.",
+    "validation_run": "https://github.com/OptimalCNC/runs-on-ami-example/actions/runs/34763525058"
   },
   "cleanup": {
     "candidate_image": "After approved retention, deregister only this repository-owned candidate and delete its snapshots only after checking no registered AMI references them and no live job requires the image.",
     "iam_and_support": "Only after workload and report cleanup, review Terraform destroy plans for infra then infra/operator. Revoke the local operator access key before deleting its IAM user, and remove the ignored local credential files. Preserve shared/default networking and AWS-managed keys.",
+    "remaining_builder_volume": {
+      "attachments": [],
+      "procedure": "Recheck this exact volume until InvalidVolume.NotFound. Do not launch replacements or delete the retained AMI to force deletion. Investigate with AWS support if deletion remains stalled.",
+      "state": "deleting",
+      "verified_at": "2026-09-13T14:50:13Z",
+      "volume_id": "vol-0352b2fd26f811765"
+    },
     "retained_report_bucket": "At the approved retention deadline, delete all versions for trial report/input/template prefixes. Delete the bucket only if no longer needed; Terraform force_destroy is false.",
     "retained_vendor_buckets": "S3BucketCache and S3BucketLogging survive normal stack deletion. Record their physical names, delete approved contents including all versions and delete markers, then delete those exact buckets.",
     "runs_on_stack": "Stop dispatches, set MaintenanceMode=true, remove or suspend the GitHub App installation, confirm no stack runners/volumes remain, then delete CloudFormation stack runs-on-ami-example using the administrative profile. Verify ECS tasks/public IPs and stack networking are gone.",
@@ -39,11 +48,12 @@
   },
   "cost_plan": {
     "components_usd": {
-      "ec2_ebs_ipv4": 0.21424195205479452,
+      "ec2_ebs_ipv4": 0.3781741438356168,
       "internet_egress_one_gib_before_free_allowance": 0.09,
       "logs_one_gib_ingest_and_30_day_retention": 0.53,
       "one_80_gib_snapshot_24_hours_maximum_used_size": 0.13150684931506848,
       "one_dashboard_one_day": 0.09863013698630137,
+      "pending_builder_volume_24_hour_allowance": 0.2104109589041096,
       "retained_source_and_reports_10_gib_30_days": 0.22684931506849315,
       "s3_10000_writes_and_100000_reads": 0.09,
       "service_api_and_request_allowance": 0.2,
@@ -52,10 +62,12 @@
       "two_secrets_one_day": 0.026301369863013704
     },
     "currency": "USD",
-    "estimated_total_usd": 2.161789897260274,
+    "estimate_note": "Conservative whole-trial planning estimate, not a settled AWS bill. Includes prior attempts,24-hour service/AMI,30-day retained inputs/reports, and an additional24-hour charge allowance for the old builder volume while AWS reports deleting.",
+    "estimated_total_usd": 2.536133047945206,
     "excluded": "Existing RunsOn license charges and any GitHub charges under the organization plan. This public repository uses standard Linux GitHub-hosted control jobs; verify applicable plan billing before dispatch.",
     "limits": "Estimates are planning quantities. The maintainer now authorizes necessary retries within a whole-trial$20 ceiling, with a fresh resource estimate and cleanup check before each attempt.",
     "monthly_billing_hours_used": 730,
+    "original_trial_estimate_usd": 2.161789897260274,
     "planning_allowance_usd": 3,
     "rates": {
       "c7i.large_hour": 0.08925,
@@ -185,9 +197,9 @@
         "automatic_root_growth": "passed before provisioning; existing80GiB disk expanded to77GiB root filesystem, no manual intervention",
         "candidate_ami_id": "ami-0270758ffeab9556c",
         "candidate_expires_at": "2026-09-14T13:55:50Z",
-        "cleanup": "Both instances terminated; controller root volume, ENIs and temporary key gone. Builder volume vol-0352b2fd26f811765 still reported deleting with no attachments at the last observation. Historical workflow cleanup failed while waiting for deletion.",
+        "cleanup": "Both original instances terminated; controller volume, ENIs and temporary key gone. Builder volume vol-0352b2fd26f811765 still reports deleting with no attachments. Historical workflow cleanup failed while waiting; final volume deletion is not yet established.",
         "cleanup_status": "pending_volume_deletion",
-        "cleanup_verified_at": "2026-09-13T14:06:37Z",
+        "cleanup_verified_at": "2026-09-13T14:50:13Z",
         "completed_inputs_retained": true,
         "estimated_whole_trial_usd_before_dispatch": 2.3084385273972603,
         "failure": "One-hour Packer subprocess deadline expired while waiting for AWS AMI/snapshot availability after successful kernel/SDK compilation and guest finalization.",
@@ -296,9 +308,39 @@
         "stage": "retained_qualification",
         "status": "success",
         "url": "https://github.com/OptimalCNC/runs-on-ami-example/actions/runs/34762739224"
+      },
+      {
+        "application_result": "Cobalt task completed in primary mode at priority 50",
+        "candidate_ami_id": "ami-0270758ffeab9556c",
+        "cleanup": "Exact instance terminated; root volume and ENI absent; zero active project EC2 instances, no RunsOn stack volumes or temporary keys.",
+        "cleanup_status": "passed",
+        "cleanup_verified_at": "2026-09-13T14:50:13Z",
+        "completion_cleanup_run_id": 34763738997,
+        "completion_cleanup_status": "success",
+        "eni_ids": [
+          "eni-07dcde17d6fb16ca2"
+        ],
+        "estimated_whole_trial_usd_before_dispatch": 2.325722089041096,
+        "head_sha": "94786e89df6990008f5a6ee5774c9fcf3e9784cd",
+        "instance_ids": [
+          "i-0ac78d5feed7715e1"
+        ],
+        "kernel_release": "6.12.90-cip24-xenomai-cobalt",
+        "launched_at": "2026-09-13T14:45:34Z",
+        "root_volume_ids": [
+          "vol-0df04a32fe3fc37c9"
+        ],
+        "run_attempt": 1,
+        "run_id": 34763569287,
+        "spending_ceiling_usd": 20,
+        "stage": "standalone_application",
+        "status": "success",
+        "url": "https://github.com/OptimalCNC/runs-on-ami-example/actions/runs/34763569287",
+        "verification_status": "passed",
+        "xenomai_version": "3.3.3"
       }
     ],
-    "actual_trial_launches": 11,
+    "actual_trial_launches": 12,
     "authorized_launch_policy": "Necessary sequential retries under the whole-trial$20 ceiling; previous fixed eight-launch limit superseded.",
     "burstable_cpu_credits": "standard",
     "candidate_amis": 1,
@@ -364,10 +406,10 @@
         "type": "t3.small"
       }
     ],
-    "live_qualification_status": "Retained candidate passed direct boot, two fresh non-root Cobalt compile/run jobs, final verification and both cleanup paths. Accepted-image record is ready for standalone application dispatch.",
+    "live_qualification_status": "Successful standalone workflow_dispatch34763569287 compiled and ran the Cobalt application as non-root on the exact accepted AMI. Qualification34762739224 proved direct boot and two fresh runners. All qualification/application instances and their root volumes/ENIs are gone.",
     "parent_copies": 0,
     "pretrial_inventory_probe": {
-      "authorization_scope": "Earlier separately approved parent inventory capture; excluded from the current eight-launch workflow trial",
+      "authorization_scope": "Earlier separately approved parent inventory capture; excluded from the workflow trial launch count.",
       "build_id": "1789279992-1-stock",
       "instance_id": "i-04e0c5f63284e3ee9",
       "launched_at": "2026-09-13T06:16:52Z",
@@ -375,8 +417,9 @@
     },
     "previous_approved_trial_launches": 8,
     "purchase": "on-demand",
-    "single_build_dispatches": 1,
-    "stock_dispatches": 1,
+    "retained_qualification_dispatches": 2,
+    "single_build_dispatches": 2,
+    "stock_dispatches": 5,
     "test_only_dispatches": 1
   },
   "existing_image_infrastructure": {
@@ -419,7 +462,8 @@
     "candidate_retention_hours_after_build": 24,
     "candidate_snapshot_sets": 1,
     "cleanup": "Existing finalizer/watchdog/completion cleanup terminates owned instances and verifies root volume/ENI deletion and key removal. Hourly expiry cleanup deregisters retained owned candidate after24h and deletes only unreferenced snapshots; S3 lifecycle enforces30-day retention. Existing service teardown remains manual at the original deadline.",
-    "cleanup_before_retry": "Failed retained qualification finalizer and completion cleanup passed; old build volume remains pending AWS deletion as separately recorded.",
+    "cleanup_before_retry": "Both prior retained qualification and successful qualification/application cleanup paths completed; old build volume deletion is separately tracked.",
+    "completion_note": "Requested workflow_dispatch goal achieved; no further retry is planned. Pre-dispatch estimates above remain historical; cost_plan includes the final pending-volume allowance.",
     "failed_qualification_allowance_usd": 0.017283561643835616,
     "github_artifact_retention_days": 14,
     "implementation_fixes": [
@@ -444,6 +488,7 @@
     "previous_whole_trial_estimate_usd": 2.3084385273972603,
     "rates_source": "cost_plan.rates, us-east-1, checked2026-09-13",
     "region": "us-east-1",
+    "remaining_launches": 0,
     "retained_inputs_and_reports_days": 30,
     "revised_total_trial_launches": 12,
     "revised_trial_estimate_usd": 2.325722089041096,
@@ -451,14 +496,14 @@
     "service_review_or_teardown_due": "2026-09-14T08:33:19Z",
     "source_result_uri": "s3://ami-example-395063532779-us-east-1-artifacts/OptimalCNC/runs-on-ami-example/34757925378-1-one/recovery/image-result.json?versionId=Z4SWe62phrNMX_oNL.5CagfNKK__bdZ9",
     "spending_ceiling_usd": 20,
-    "status": "authorized_standalone_application_ready_for_publication",
-    "validated_implementation_commit": "50114abd978df24ef46853d6867112d32f98e77e"
+    "status": "completed_successfully",
+    "validated_implementation_commit": "94786e89df6990008f5a6ee5774c9fcf3e9784cd"
   },
   "purpose": "Build and retain one Xenomai Cobalt AMI, prove fresh boot and application execution, then run the same application through a separate manual dispatch on that exact image.",
   "region": "us-east-1",
   "repository": "OptimalCNC/runs-on-ami-example",
   "retention": {
-    "candidate_ami_and_snapshots": "24 hours after successful build; expiry tags and cleanup workflow govern deletion. An in-use image is preserved until its independent jobs finish.",
+    "candidate_ami_and_snapshots": "Expires2026-09-14T13:55:50Z; hourly cleanup enforces the exact tags after protecting active jobs. No retention extension performed.",
     "github_report_artifacts_days": 14,
     "source_inputs_and_reports": "30 days in the versioned project bucket; delete all versions and delete markers for exact trial prefixes at the approved deadline. Current/noncurrent lifecycle each30days is a fallback and can retain bytes longer.",
     "vendor_bucket_logs_days": 30,
@@ -1509,6 +1554,6 @@
     "vpc_cidr": "10.60.0.0/16"
   },
   "schema_version": 1,
-  "status": "cobalt_qualified_standalone_application_pending",
-  "updated_at": "2026-09-13T14:41:52Z"
+  "status": "workflow_dispatch_cobalt_succeeded",
+  "updated_at": "2026-09-13T14:52:27Z"
 }

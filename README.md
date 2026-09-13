@@ -16,10 +16,17 @@ no latency target.
 **Status: live Cobalt qualification passed.** The
 [qualification run](https://github.com/OptimalCNC/runs-on-ami-example/actions/runs/34762739224)
 verified direct boot and compiled and ran the application in Cobalt primary
-mode on two fresh `t3.small` runners. Cleanup passed. The exact retained AMI is
+mode on two fresh `t3.small` runners. The standalone
+[application dispatch](https://github.com/OptimalCNC/runs-on-ami-example/actions/runs/34763569287)
+also passed, including verification and cleanup. The exact retained AMI is
 recorded in [accepted-image.json](accepted-image.json); its expiry and the
 approved $20 trial ceiling are recorded in [infra/resources.json](infra/resources.json).
 Two-build payload reproducibility has not been established.
+
+The accepted AMI expires on **2026-09-14 at 13:55:50 UTC**. The RunsOn service
+remains running and requires manual review or teardown by
+**2026-09-14 at 08:33:19 UTC**. The resource inventory records cleanup procedures and
+one older builder volume still awaiting AWS's final deletion.
 
 The image build controller uses a separately pinned stock RunsOn AMI. It is
 never snapshotted. The example targets Ubuntu 24.04, x86-64, one exact Nitro
