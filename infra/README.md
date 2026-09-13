@@ -109,13 +109,16 @@ false; their security group still has no SSH ingress.
 
 ## Trust and authorization
 
-The OIDC subject is exactly
-`repo:<owner>/<repository>:environment:<environment>`, with audience
-`sts.amazonaws.com`. This is the default GitHub subject for jobs using an
-environment. If the organization customizes OIDC subjects, adapt the trust
-policy to that actual subject before applying it. Enforce allowed branches
-in the GitHub environment; an environment subject does not also contain a
-branch component.
+The OIDC trust matches the repository's exact subject prefix plus
+`:environment:<environment>`, with audience `sts.amazonaws.com`. Read the
+prefix with `gh api repos/<owner>/<repository>/actions/oidc/customization/sub`.
+When GitHub returns an immutable `sub_claim_prefix`, set
+`github_oidc_subject_prefix` to that exact value in the Terraform inputs.
+For this deployment it is
+`repo:OptimalCNC@152301727/runs-on-ami-example@1368176948`. Leaving the input
+unset selects the name-only prefix `repo:<owner>/<repository>` for repositories
+that use it. Enforce allowed branches in the GitHub environment; an environment
+subject does not also contain a branch component.
 
 The local operator can only assume the configured controller role with an
 `ami-example-` session name. It cannot administer IAM, change its boundary,

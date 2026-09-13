@@ -24,6 +24,7 @@ locals {
   snapshot_arn   = "arn:aws:ec2:${var.region}::snapshot"
   ssm_arn        = "arn:aws:ssm:${var.region}:${var.account_id}"
   oidc_arn       = var.existing_oidc_provider_arn != null ? var.existing_oidc_provider_arn : aws_iam_openid_connect_provider.github[0].arn
+  github_subject = "${coalesce(var.github_oidc_subject_prefix, "repo:${var.repository}")}:environment:${var.environment}"
   security_group = var.existing_security_group_id != null ? var.existing_security_group_id : aws_security_group.management[0].id
   existing_profiles = {
     builder = var.existing_builder_profile_name
@@ -55,7 +56,7 @@ data "aws_iam_policy_document" "github_trust" {
     condition {
       test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:${var.repository}:environment:${var.environment}"]
+      values   = [local.github_subject]
     }
   }
   dynamic "statement" {

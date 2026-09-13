@@ -9,7 +9,7 @@
     "public_repository": "https://github.com/OptimalCNC/runs-on-ami-example",
     "runs_on_deployed_readback": "17/17 policy, trust, profile, launch-template, networking and selected-key checks passed",
     "runs_on_principal_simulations": "52/53 matched expectations; vendor runner self-tagging returned implicitDeny and needs a real EC2-session check",
-    "stock_dispatch": "Started approved run34752517613 on main; runtime qualification pending",
+    "stock_dispatch": "Run34752517613 failed at hosted OIDC admission, with zero EC2 launches. Updating exact trust before retry.",
     "validated_commit": "8c3934fb71a04085e3c5a078a12d59111175214b",
     "validation_result": "passed; 63 tests and Terraform/Packer/workflow validation",
     "validation_run": "https://github.com/OptimalCNC/runs-on-ami-example/actions/runs/34748411058"
@@ -61,12 +61,13 @@
     "accepted_image_file": "accepted-image.json",
     "actual_runs": [
       {
+        "failure": "GitHub immutable OIDC subject did not match the legacy controller trust",
         "head_sha": "0ff05660bc22cc55009856161dfd39a09a9b19f2",
         "instance_ids": [],
         "run_attempt": 1,
         "run_id": 34752517613,
         "stage": "stock",
-        "status": "in_progress",
+        "status": "failed_before_ec2",
         "url": "https://github.com/OptimalCNC/runs-on-ami-example/actions/runs/34752517613"
       }
     ],
@@ -145,6 +146,7 @@
     "artifact_bucket": "ami-example-395063532779-us-east-1-artifacts",
     "controller_role": "arn:aws:iam::395063532779:role/ami-example-controller",
     "ebs_key_arn": "arn:aws:kms:us-east-1:395063532779:key/a8b7b837-3485-4591-ad38-2072e0f78562",
+    "github_oidc_subject": "repo:OptimalCNC@152301727/runs-on-ami-example@1368176948:environment:ami-build",
     "management_roles": {
       "builder": "arn:aws:iam::395063532779:role/ami-example-builder",
       "probe": "arn:aws:iam::395063532779:role/ami-example-probe"

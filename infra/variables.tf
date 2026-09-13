@@ -17,6 +17,17 @@ variable "environment" {
   type    = string
   default = "ami-build"
 }
+variable "github_oidc_subject_prefix" {
+  type    = string
+  default = null
+  validation {
+    condition = var.github_oidc_subject_prefix == null ? true : (
+      can(regex("^repo:[A-Za-z0-9_.-]+(@[0-9]+)?/[A-Za-z0-9_.-]+(@[0-9]+)?$", var.github_oidc_subject_prefix)) &&
+      replace(var.github_oidc_subject_prefix, "/@[0-9]+/", "") == "repo:${var.repository}"
+    )
+    error_message = "Use this repository's GitHub OIDC subject prefix, optionally including its immutable numeric IDs."
+  }
+}
 variable "name_prefix" {
   type    = string
   default = "ami-example"
