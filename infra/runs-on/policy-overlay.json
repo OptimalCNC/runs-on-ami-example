@@ -384,27 +384,11 @@
           }
         },
         {
-          "Sid": "TaggedFleetInstances",
+          "Sid": "FleetInstanceAuthorization",
           "Effect": "Allow",
           "Action": "ec2:CreateFleet",
           "Resource": {
             "Fn::Sub": "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/*"
-          },
-          "Condition": {
-            "StringEquals": {
-              "aws:RequestTag/runs-on-stack-name": {
-                "Ref": "AWS::StackName"
-              },
-              "ec2:InstanceType": "t3.small"
-            },
-            "ArnEquals": {
-              "ec2:InstanceProfile": {
-                "Fn::GetAtt": [
-                  "EC2InstanceProfile",
-                  "Arn"
-                ]
-              }
-            }
           }
         },
         {

@@ -192,11 +192,12 @@ physical IDs in `infra/resources.json`. The helper keeps secret request
 files under `.aws-local/` with mode `0600` and removes them after each call.
 Updating the stack preserves the original trial teardown deadline.
 
-The RunsOn service's preliminary `CreateFleet` volume check supplies no disk
-tags or encryption/size attributes. Its volume permission therefore uses
-the selected region/account's `volume/*` ARN. The separate `RunInstances`
-permission enforces ownership tags, encryption, gp3, and the approved disk
-limits when instances launch; this grant does not allow `CreateVolume`.
+The RunsOn service's preliminary `CreateFleet` instance and volume checks
+supply no type, profile, tag, or disk attributes. Those permissions therefore
+use the selected region/account's `instance/*` and `volume/*` ARNs. Separate
+`RunInstances` permissions enforce the approved instance type and profile,
+ownership tags, encryption, gp3, and disk limits when instances launch;
+these grants do not allow `CreateVolume`.
 
 Local initialization and validation do not provision resources:
 

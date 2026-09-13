@@ -9,7 +9,7 @@
     "public_repository": "https://github.com/OptimalCNC/runs-on-ami-example",
     "runs_on_deployed_readback": "17/17 policy, trust, profile, launch-template, networking and selected-key checks passed",
     "runs_on_principal_simulations": "52/53 matched expectations; vendor runner self-tagging returned implicitDeny and needs a real EC2-session check",
-    "stock_dispatch": "Retry34752883566 passed OIDC, then CreateFleet volume authorization denied before EC2 creation. Cancelled; independent cleanup34753050841 passed.",
+    "stock_dispatch": "Run34753410352 passed OIDC, then CreateFleet instance authorization denied before EC2 creation; cancelled before retry",
     "validated_commit": "8c3934fb71a04085e3c5a078a12d59111175214b",
     "validation_result": "passed; 63 tests and Terraform/Packer/workflow validation",
     "validation_run": "https://github.com/OptimalCNC/runs-on-ami-example/actions/runs/34748411058"
@@ -81,6 +81,16 @@
         "stage": "stock",
         "status": "cancelled_after_launch_denied",
         "url": "https://github.com/OptimalCNC/runs-on-ami-example/actions/runs/34752883566"
+      },
+      {
+        "failure": "CreateFleet preliminary instance authorization omitted type/profile/tag context required by the policy",
+        "head_sha": "cc2890a821b509a0bc03dd32559e81ccaf462f9b",
+        "instance_ids": [],
+        "run_attempt": 1,
+        "run_id": 34753410352,
+        "stage": "stock",
+        "status": "cancelled_after_launch_denied",
+        "url": "https://github.com/OptimalCNC/runs-on-ami-example/actions/runs/34753410352"
       }
     ],
     "burstable_cpu_credits": "standard",
@@ -1236,12 +1246,12 @@
     "stack_id": "arn:aws:cloudformation:us-east-1:395063532779:stack/runs-on-ami-example/b1121190-af4d-11f1-b98a-0afffe23461d",
     "stack_name": "runs-on-ami-example",
     "status": "UPDATE_COMPLETE",
-    "template_sha256": "0981f59611d2ac733063a78f4c8691bb88afda955bf008eaa1c4938d5cbfd764",
+    "template_sha256": "87494787738808100706ffd4156725ff7e9b117875b30eebe702d101cc6e4eb0",
     "template_source_lock": "infra/runs-on/template-lock.json",
     "trial_hours": 24,
     "vpc_cidr": "10.60.0.0/16"
   },
   "schema_version": 1,
   "status": "approved_stock_dispatch_started",
-  "updated_at": "2026-09-13T10:59:42Z"
+  "updated_at": "2026-09-13T11:10:17Z"
 }
