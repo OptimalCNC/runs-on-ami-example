@@ -1,13 +1,16 @@
 import copy
 import dataclasses
+import io
 from pathlib import Path
+import subprocess
+import tarfile
 import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
 from support import FakeCloud, deployment, instance, module, result, tags
 from cleanup import CleanupScope, cleanup
-from example import Cloud, InvalidInput, OWNER_TAG, RUNS_ON_TAG, tags_of
+from example import Cloud, InvalidInput, OWNER_TAG, RUNS_ON_TAG, read_json, tags_of, write_json
 
 
 class Lifecycle(unittest.TestCase):
@@ -235,6 +238,65 @@ class Deadlines(unittest.TestCase):
 
 
 class Artifacts(unittest.TestCase):
+    def test_downloaded_inputs_survive_packer_failure_without_duplicate_success_upload(self):
+        build = module("build-image")
+        for packer_fails in (False, True):
+            with self.subTest(packer_fails=packer_fails), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                d = deployment()
+                image = result()["payload"]
+                write_json(root / "images/xenomai-cobalt/inputs.lock.json",
+                           {"xenomai": image["xenomai"], "kernel": {"release": image["kernel_release"]}, "tools": {}})
+                write_json(root / d.source_ami.inventory_file, {})
+                destination = root / "artifacts/123-1-one"
+                cloud = MagicMock()
+                cloud.call.side_effect = lambda service, operation, payload: {
+                    "create-key-pair": {"KeyName": "fixture", "KeyPairId": "key-fixture", "KeyMaterial": "fixture-private-key"},
+                    "delete-key-pair": {}, "describe-images": {"Images": [{
+                        "ImageId": "ami-11111111111111111", "State": "available", "BootMode": "uefi",
+                        "CreationDate": "2026-09-12T01:00:00Z", "BlockDeviceMappings": []}]},
+                }[operation]
+                uploads = {}
+                def retain(path, key):
+                    self.assertNotIn(key, uploads, "each artifact must create only one retained version")
+                    self.assertNotIn(b"fixture-private-key", path.read_bytes())
+                    uploads[key] = path.read_bytes()
+                    return f"s3://example-artifacts/example/repo/{key}?versionId=immutable-version"
+                cloud.retain.side_effect = retain
+                def packer(command, **kwargs):
+                    if command[1] == "build":
+                        with tarfile.open(destination / "inputs.tar", "w") as archive:
+                            member = tarfile.TarInfo("downloaded-source.txt")
+                            member.size = len(b"actual downloaded inputs")
+                            archive.addfile(member, io.BytesIO(b"actual downloaded inputs"))
+                        if packer_fails:
+                            raise subprocess.CalledProcessError(1, command)
+                        write_json(destination / "image-manifest.json", image)
+                        write_json(destination / "packer-manifest.json", {"builds": [{"artifact_id": "us-east-1:ami-11111111111111111"}]})
+                    return subprocess.CompletedProcess(command, 0)
+                environment = {"GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_REPOSITORY": d.repository,
+                               "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1", "CONFIGURED_BUILD_ID": "123-1-one",
+                               "GITHUB_SHA": "2" * 40, "GITHUB_WORKFLOW_REF": "example/repo/build@refs/heads/main"}
+                with patch.object(build, "ROOT", root), patch.object(build, "load_deployment", return_value=d), \
+                     patch.object(build, "recipe", return_value=("1" * 64, {})), patch.object(build, "Cloud", return_value=cloud), \
+                     patch.object(build, "inspect_deployment", return_value={"source_ami": {"RootDeviceName": "/dev/sda1"}}), \
+                     patch.object(build, "controller_identity", return_value={"instance_id": "i-22222222222222222"}), \
+                     patch.object(build, "run", side_effect=lambda command, **kwargs: "2" * 40 if command[1] == "rev-parse" else ""), \
+                     patch.object(build.subprocess, "run", side_effect=packer), patch("preflight.inspect_ami"), \
+                     patch.dict("os.environ", environment), patch("sys.argv", ["build-image.py", "--variant", "one", "--execute"]):
+                    if packer_fails:
+                        with self.assertRaises(subprocess.CalledProcessError):
+                            build.main()
+                    else:
+                        build.main()
+                uri = "s3://example-artifacts/example/repo/123-1-one/inputs.tar?versionId=immutable-version"
+                self.assertEqual(read_json(destination / "artifact-index.json")["inputs.tar"], uri)
+                with tarfile.open(fileobj=io.BytesIO(uploads["123-1-one/inputs.tar"])) as archive:
+                    self.assertEqual(archive.extractfile("downloaded-source.txt").read(), b"actual downloaded inputs")
+                self.assertFalse((root / ".work/123-1-one/builder-key.pem").exists())
+                if not packer_fails:
+                    self.assertIn(uri, read_json(destination / "image-result.json")["lifecycle"]["artifact_locations"])
+
     @staticmethod
     def responses(service, operation, payload=None):
         return {"get-caller-identity": {"Account": "123456789012"}, "head-bucket": {},

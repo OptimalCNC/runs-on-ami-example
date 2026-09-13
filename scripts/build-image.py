@@ -97,6 +97,7 @@ def main():
     variable_file = destination / "packer-vars.json"
     write_json(variable_file, variables)
     template = "images/xenomai-cobalt/image.pkr.hcl"
+    locations = {}
     try:
         subprocess.run(["packer", "validate", f"-var-file={variable_file}", template], check=True, cwd=ROOT)
         with (destination / "packer.log").open("w") as log:
@@ -128,6 +129,7 @@ def main():
             expiry = timestamp(utcnow() + dt.timedelta(hours=d.retain_hours))
             cloud.call("ec2", "create-tags", {"Resources": [ami_id, *snapshots], "Tags": [{"Key": EXPIRY_TAG, "Value": expiry}]})
         input_uri = cloud.retain(destination / "inputs.tar", f"{build}/inputs.tar")
+        locations["inputs.tar"] = input_uri
         result = {
             "schema_version": 1, "status": "candidate",
             "source": {"recipe_id": recipe_id, "recipe_commit": commit, "recipe_files": hashes,
@@ -159,9 +161,8 @@ def main():
         except Exception as error:
             failures.append(f"temporary key cleanup: {error}")
         # Durable diagnostics are attempted before any cleanup is permitted to remove images.
-        locations = {}
         for path in sorted(destination.glob("*")):
-            if path.is_file() and path.name != "inputs.tar":
+            if path.is_file() and path.name not in locations:
                 try:
                     locations[path.name] = cloud.retain(path, f"{build}/{path.name}")
                 except (subprocess.SubprocessError, OSError, InvalidInput) as error:

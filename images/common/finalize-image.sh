@@ -32,6 +32,7 @@ rm -f /var/lib/dbus/machine-id
 ln -s /etc/machine-id /var/lib/dbus/machine-id
 rm -f /var/lib/systemd/random-seed
 rm -rf /var/log/journal/*
-find /var/log -type f -exec truncate -s 0 {} +
+# O_CREAT can be denied for service-owned logs by fs.protected_regular.
+find /var/log -type f -exec truncate --no-create -s 0 {} +
 find /tmp /var/tmp -mindepth 1 -maxdepth 1 -exec rm -rf {} +
 sync
