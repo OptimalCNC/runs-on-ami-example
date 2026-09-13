@@ -1,4 +1,18 @@
 {
-  "schema_version": 1,
-  "image": null
+  "image": {
+    "account_id": "395063532779",
+    "ami_boot_mode": "uefi-preferred",
+    "ami_id": "ami-0270758ffeab9556c",
+    "build_id": "34757925378-1-one",
+    "expires_at": "2026-09-14T13:55:50Z",
+    "kernel_release": "6.12.90-cip24-xenomai-cobalt",
+    "qualification_run_attempt": "1",
+    "qualification_run_id": "34762739224",
+    "qualification_sha256": "f939b09340ea312694f88d9585d35b6d2afd0cbbcd750074a7c22744b82ab76f",
+    "qualification_url": "https://github.com/OptimalCNC/runs-on-ami-example/actions/runs/34762739224/attempts/1",
+    "recipe_id": "50d29bd73fa737478d647b631bd018f176aac313d6fe1d6205baff5b7808cfb3",
+    "region": "us-east-1",
+    "repository": "OptimalCNC/runs-on-ami-example"
+  },
+  "schema_version": 1
 }

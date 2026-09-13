@@ -13,11 +13,13 @@ kernel, modules, Xenomai payload, configuration, packages, and unpacked
 initramfs content. The application test checks functional execution; there is
 no latency target.
 
-**Status: scoped IAM and stock RunsOn qualification passed in AWS. The Cobalt
-kernel and SDK compiled, and the custom AMI passed direct boot. RunsOn
-registration passed; non-root application qualification is pending. Retries are authorized within the recorded $20
-ceiling in [infra/resources.json](infra/resources.json).** An AMI creation
-record is not a qualification result.
+**Status: live Cobalt qualification passed.** The
+[qualification run](https://github.com/OptimalCNC/runs-on-ami-example/actions/runs/34762739224)
+verified direct boot and compiled and ran the application in Cobalt primary
+mode on two fresh `t3.small` runners. Cleanup passed. The exact retained AMI is
+recorded in [accepted-image.json](accepted-image.json); its expiry and the
+approved $20 trial ceiling are recorded in [infra/resources.json](infra/resources.json).
+Two-build payload reproducibility has not been established.
 
 The image build controller uses a separately pinned stock RunsOn AMI. It is
 never snapshotted. The example targets Ubuntu 24.04, x86-64, one exact Nitro
@@ -143,6 +145,10 @@ application**. It launches one fresh runner from that exact retained AMI,
 compiles and executes the Cobalt test, retains its report, and terminates the
 runner. Admission rejects an expired image. The application job has read-only
 repository access; separate control jobs use the controller's OIDC role.
+
+```sh
+gh workflow run run-cobalt-application.yml --ref main
+```
 
 For an independently approved reproducibility check, choose
 `stage=qualification`, `retain=false`, and `fault=none`. It runs two clean

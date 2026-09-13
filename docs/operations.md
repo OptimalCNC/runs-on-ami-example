@@ -201,10 +201,14 @@ fallback in the build.
 The deployment defaults to a 15-minute direct-boot deadline, a 15-minute
 launch/registration deadline per runnable controller/smoke job, and a 4-hour
 independent deadline per candidate. Registration time starts only after that
-job's prerequisites succeed. Packer has a 60-minute subprocess bound; its job
+job's prerequisites succeed. Packer has a 90-minute subprocess bound; its job
 has a 105-minute timeout. Retained-image qualification has a 45-minute
 independent deadline inside a 60-minute watchdog job. These are runtime limits,
 not hard AWS billing caps.
+
+The live Cobalt trial compiled the kernel in about 20 minutes on `c7i.large`,
+then needed over 30 minutes for AWS snapshot preparation. The Packer bound
+covers preparation, compilation, input transfer, and snapshot availability.
 
 The independent watchdog uses GitHub's supported workflow cancellation API.
 A job that never acquires a runner does not need to run a timeout handler.

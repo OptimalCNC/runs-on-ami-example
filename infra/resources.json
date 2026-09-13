@@ -7,14 +7,16 @@
     "currency": "USD",
     "execution_policy": "One active build at a time. Diagnose concrete failures and verify cleanup before replacement resources. Record each next attempt estimate and proceed within the approved ceiling. Stop new launches if projected total reaches$20.",
     "projected_total_before_next_attempt_usd": 2.325722089041096,
-    "resource_defaults": "t3.small controllers/probes/runners; c7i.large builder; one-hour Packer and90-minute controller limits; encrypted baseline gp3;24-hour candidate and30-day input/report retention.",
+    "resource_defaults": "t3.small controllers/probes/runners; c7i.large builder; 90-minute Packer and 105-minute controller limits for future builds; encrypted baseline gp3; 24-hour candidate and 30-day input/report retention.",
     "scope": "whole project trial including prior attempts, continued service, retained artifacts and images"
   },
   "checks": {
     "controller_read_only_preflight": "passed using the dedicated operator assuming ami-example-controller",
     "github_app_installation": "Verified installation161327403 with App-authenticated organization and exact repository lookups; repository_selection=all, suspended=false",
+    "iam_readback": "2026-09-13T14:34:05Z: all five role policies/trusts and profiles match expected documents; operator sole AssumeRole grant/boundary and both project STS profiles verified.",
     "launch_request_dry_runs": "Administrator RunInstances and instant CreateFleet returned DryRunOperation; this does not prove service-role runtime authorization",
     "live_cobalt_build_and_runner_qualification": "Retry34757925378 passed kernel/SDK compilation and guest finalization; candidateami-0270758ffeab9556c snapshot pending; boot and runner qualification pending",
+    "live_cobalt_qualification": "Passed direct boot, both fresh RunsOn primary-mode application tests, final control-plane verification and completion cleanup in run34762739224.",
     "public_repository": "https://github.com/OptimalCNC/runs-on-ami-example",
     "retained_qualification_local_validation": "Full pinned tool/lock checks, shell syntax, actionlint, Terraform and both Packer modes passed. After the watchdog deadline fix, all 83 unit tests and Python compilation passed.",
     "runs_on_deployed_readback": "17/17 policy, trust, profile, launch-template, networking and selected-key checks passed",
@@ -70,6 +72,7 @@
     "region": "us-east-1"
   },
   "execution": {
+    "accepted_ami_id": "ami-0270758ffeab9556c",
     "accepted_image_file": "accepted-image.json",
     "actual_runs": [
       {
@@ -250,9 +253,52 @@
         "status": "failed_runner_device_permissions",
         "url": "https://github.com/OptimalCNC/runs-on-ami-example/actions/runs/34761857726",
         "xenomai_version": "3.3.3"
+      },
+      {
+        "candidate_ami_id": "ami-0270758ffeab9556c",
+        "cleanup": "All three exact instances terminated; all recorded root volumes and ENIs absent; RunsOn stack volume inventory empty.",
+        "cleanup_status": "passed",
+        "cleanup_verified_at": "2026-09-13T14:38:57Z",
+        "cobalt_application_output": "Cobalt task completed in primary mode at priority 50",
+        "completion_cleanup_run_id": 34763290811,
+        "completion_cleanup_status": "success",
+        "direct_boot_status": "passed",
+        "estimated_whole_trial_usd_before_dispatch": 2.325722089041096,
+        "head_sha": "50114abd978df24ef46853d6867112d32f98e77e",
+        "instance_ids": [
+          "i-0adb3295431df59eb",
+          "i-04015547e65366375",
+          "i-0eacbcc232abb7c09"
+        ],
+        "probe_eni_id": "eni-07880724846268bd8",
+        "probe_instance_id": "i-0adb3295431df59eb",
+        "probe_root_volume_id": "vol-09737711a9fe74bf1",
+        "probe_terminated": true,
+        "qualified_image_result_sha256": "f939b09340ea312694f88d9585d35b6d2afd0cbbcd750074a7c22744b82ab76f",
+        "root_volume_ids": [
+          "vol-09737711a9fe74bf1",
+          "vol-0d62ea6e494a82239",
+          "vol-0e7f305ac80648fec"
+        ],
+        "run_attempt": 1,
+        "run_id": 34762739224,
+        "smoke_a_eni_id": "eni-07b7f9eea65050806",
+        "smoke_a_instance_id": "i-04015547e65366375",
+        "smoke_a_output": "Cobalt task completed in primary mode at priority 50",
+        "smoke_a_root_volume_id": "vol-0d62ea6e494a82239",
+        "smoke_a_status": "passed",
+        "smoke_b_eni_id": "eni-0138628b43995d767",
+        "smoke_b_instance_id": "i-0eacbcc232abb7c09",
+        "smoke_b_root_volume_id": "vol-0e7f305ac80648fec",
+        "smoke_b_status": "passed",
+        "source_build_id": "34757925378-1-one",
+        "spending_ceiling_usd": 20,
+        "stage": "retained_qualification",
+        "status": "success",
+        "url": "https://github.com/OptimalCNC/runs-on-ami-example/actions/runs/34762739224"
       }
     ],
-    "actual_trial_launches": 8,
+    "actual_trial_launches": 11,
     "authorized_launch_policy": "Necessary sequential retries under the whole-trial$20 ceiling; previous fixed eight-launch limit superseded.",
     "burstable_cpu_credits": "standard",
     "candidate_amis": 1,
@@ -318,7 +364,7 @@
         "type": "t3.small"
       }
     ],
-    "live_qualification_status": "Direct Cobalt boot and first RunsOn registration passed; non-root RTDM device permissions need runtime activation before retry. Both failed-attempt instances terminated; finalizer and completion cleanup passed.",
+    "live_qualification_status": "Retained candidate passed direct boot, two fresh non-root Cobalt compile/run jobs, final verification and both cleanup paths. Accepted-image record is ready for standalone application dispatch.",
     "parent_copies": 0,
     "pretrial_inventory_probe": {
       "authorization_scope": "Earlier separately approved parent inventory capture; excluded from the current eight-launch workflow trial",
@@ -377,26 +423,11 @@
     "failed_qualification_allowance_usd": 0.017283561643835616,
     "github_artifact_retention_days": 14,
     "implementation_fixes": [
-      "Grant the preconfigured xenomai group access to the exact Cobalt RTDM memory devices on each fresh runner before the non-root identity check; preserve the existing kernel/AMI and original recipe."
+      "Grant the preconfigured xenomai group access to the exact Cobalt RTDM memory devices on each fresh runner before the non-root identity check; preserve the existing kernel/AMI and original recipe.",
+      "Increase future Packer wait to90 minutes to include observed AWS snapshot preparation; existing accepted AMI retains its original recipe/build provenance."
     ],
     "increase_to_previous_trial_estimate_usd": 0.1466486301369863,
     "instances": [
-      {
-        "count": 1,
-        "estimate_usd": 0.008641780821917808,
-        "hours_each": 0.25,
-        "purpose": "independent Cobalt boot probe",
-        "root_gib_each": 80,
-        "type": "t3.small"
-      },
-      {
-        "count": 2,
-        "estimate_usd": 0.017283561643835616,
-        "hours_each": 0.25,
-        "purpose": "fresh Cobalt qualification runners",
-        "root_gib_each": 80,
-        "type": "t3.small"
-      },
       {
         "count": 1,
         "estimate_usd": 0.008641780821917808,
@@ -406,9 +437,9 @@
         "type": "t3.small"
       }
     ],
-    "launches": 4,
-    "limits": "One retained-image qualification and one standalone application dispatch. Later retries require a recorded estimate and cleanup check within the existing $20 authorization.",
-    "new_execution_compute_ebs_ipv4_estimate_usd": 0.03456712328767123,
+    "launches": 1,
+    "limits": "One application runner, expected15 minutes, job timeout15 minutes, registration deadline15 minutes and independent workflow deadline30 minutes. Any later retry needs an updated estimate within the $20 ceiling.",
+    "new_execution_compute_ebs_ipv4_estimate_usd": 0.008641780821917808,
     "planning_allowance_usd": 3,
     "previous_whole_trial_estimate_usd": 2.3084385273972603,
     "rates_source": "cost_plan.rates, us-east-1, checked2026-09-13",
@@ -416,12 +447,12 @@
     "retained_inputs_and_reports_days": 30,
     "revised_total_trial_launches": 12,
     "revised_trial_estimate_usd": 2.325722089041096,
-    "scope": "Qualify retained candidate ami-0270758ffeab9556c using one direct probe and two RunsOn jobs, then dispatch the standalone Cobalt application; no new compiler or controller EC2 instance.",
+    "scope": "One standalone workflow_dispatch from the accepted retained Cobalt AMI; compile/run the non-root application on one fresh t3.small, then verify exact-instance cleanup.",
     "service_review_or_teardown_due": "2026-09-14T08:33:19Z",
     "source_result_uri": "s3://ami-example-395063532779-us-east-1-artifacts/OptimalCNC/runs-on-ami-example/34757925378-1-one/recovery/image-result.json?versionId=Z4SWe62phrNMX_oNL.5CagfNKK__bdZ9",
     "spending_ceiling_usd": 20,
-    "status": "authorized_runtime_permission_retry_ready_for_publication",
-    "validated_implementation_commit": "ce35e328ccc8bb13d5e819cf89fb92dce8f18914"
+    "status": "authorized_standalone_application_ready_for_publication",
+    "validated_implementation_commit": "50114abd978df24ef46853d6867112d32f98e77e"
   },
   "purpose": "Build and retain one Xenomai Cobalt AMI, prove fresh boot and application execution, then run the same application through a separate manual dispatch on that exact image.",
   "region": "us-east-1",
@@ -1478,6 +1509,6 @@
     "vpc_cidr": "10.60.0.0/16"
   },
   "schema_version": 1,
-  "status": "cobalt_runtime_device_permissions_retry_preparing",
-  "updated_at": "2026-09-13T14:22:54Z"
+  "status": "cobalt_qualified_standalone_application_pending",
+  "updated_at": "2026-09-13T14:41:52Z"
 }
