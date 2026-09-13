@@ -1,13 +1,15 @@
 {
   "account_id": "395063532779",
-  "authorization": "Maintainer approved public publication, main-only execution, resource setup and recording cleanup resources. Trial scope is the single-build path below; two-build reproducibility qualification is a separate dispatch.",
+  "authorization": "Maintainer explicitly approved the remaining eight-instance trial, with a shorter Cobalt build budget. Use a one-hour Packer build deadline and a90-minute controller job limit. Organization-wide RunsOn App installation is authorized.",
   "checks": {
     "controller_read_only_preflight": "passed using the dedicated operator assuming ami-example-controller",
+    "github_app_installation": "Verified installation161327403 with App-authenticated organization and exact repository lookups; repository_selection=all, suspended=false",
     "launch_request_dry_runs": "Administrator RunInstances and instant CreateFleet returned DryRunOperation; this does not prove service-role runtime authorization",
     "live_cobalt_build_and_runner_qualification": "not yet executed",
     "public_repository": "https://github.com/OptimalCNC/runs-on-ami-example",
     "runs_on_deployed_readback": "17/17 policy, trust, profile, launch-template, networking and selected-key checks passed",
     "runs_on_principal_simulations": "52/53 matched expectations; vendor runner self-tagging returned implicitDeny and needs a real EC2-session check",
+    "stock_dispatch": "Started approved run34752517613 on main; runtime qualification pending",
     "validated_commit": "8c3934fb71a04085e3c5a078a12d59111175214b",
     "validation_result": "passed; 63 tests and Terraform/Packer/workflow validation",
     "validation_run": "https://github.com/OptimalCNC/runs-on-ami-example/actions/runs/34748411058"
@@ -23,7 +25,7 @@
   },
   "cost_plan": {
     "components_usd": {
-      "ec2_ebs_ipv4": 0.47845154109589044,
+      "ec2_ebs_ipv4": 0.21424195205479452,
       "internet_egress_one_gib_before_free_allowance": 0.09,
       "logs_one_gib_ingest_and_30_day_retention": 0.53,
       "one_80_gib_snapshot_24_hours_maximum_used_size": 0.13150684931506848,
@@ -36,7 +38,7 @@
       "two_secrets_one_day": 0.026301369863013704
     },
     "currency": "USD",
-    "estimated_total_usd": 2.42599948630137,
+    "estimated_total_usd": 2.161789897260274,
     "excluded": "Existing RunsOn license charges and any GitHub charges under the organization plan. This public repository uses standard Linux GitHub-hosted control jobs; verify applicable plan billing before dispatch.",
     "limits": "Planning quantities and estimates are not enforced AWS spending caps. No second reproducibility build is included. Failed live stages must be reviewed before launching replacement instances beyond this resource plan.",
     "monthly_billing_hours_used": 730,
@@ -57,7 +59,17 @@
   },
   "execution": {
     "accepted_image_file": "accepted-image.json",
-    "actual_runs": [],
+    "actual_runs": [
+      {
+        "head_sha": "0ff05660bc22cc55009856161dfd39a09a9b19f2",
+        "instance_ids": [],
+        "run_attempt": 1,
+        "run_id": 34752517613,
+        "stage": "stock",
+        "status": "in_progress",
+        "url": "https://github.com/OptimalCNC/runs-on-ami-example/actions/runs/34752517613"
+      }
+    ],
     "burstable_cpu_credits": "standard",
     "candidate_amis": 1,
     "candidate_retention_hours_after_build": 24,
@@ -83,16 +95,16 @@
       },
       {
         "count": 1,
-        "estimate_usd": 0.1018068493150685,
-        "hours_each": 3.5,
+        "estimate_usd": 0.04363150684931507,
+        "hours_each": 1.5,
         "purpose": "kernel build controller",
         "root_gib_each": 30,
         "type": "t3.small"
       },
       {
         "count": 1,
-        "estimate_usd": 0.30905136986301374,
-        "hours_each": 3,
+        "estimate_usd": 0.10301712328767124,
+        "hours_each": 1,
         "purpose": "kernel Packer builder",
         "root_gib_each": 80,
         "type": "c7i.large"
@@ -190,9 +202,9 @@
     "ecs_service_linked_role_arn": "arn:aws:iam::395063532779:role/aws-service-role/ecs.amazonaws.com/AWSServiceRoleForECS",
     "health": {
       "application_version": "v3.3.1",
-      "github_app": "awaiting owner registration and selected-repository installation",
+      "github_app": "runson-optimalcnc App4928812 installation161327403 verified for all OptimalCNC repositories; exact repository access HTTP200",
       "license_status": "valid",
-      "notification_subscription": "pending confirmation",
+      "notification_subscription": "confirmed",
       "service_running_tasks": 1
     },
     "interface_vpc_endpoints": 0,
@@ -1216,6 +1228,6 @@
     "vpc_cidr": "10.60.0.0/16"
   },
   "schema_version": 1,
-  "status": "runs_on_deployed_awaiting_github_app_installation",
-  "updated_at": "2026-09-13T08:48:53Z"
+  "status": "approved_stock_dispatch_started",
+  "updated_at": "2026-09-13T10:42:10Z"
 }

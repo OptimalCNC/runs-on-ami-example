@@ -43,7 +43,7 @@ jobs:
     needs: configure
     runs-on: ${{ needs.configure.outputs.controller_label }}
     environment: ${{ needs.configure.outputs.environment }}
-    timeout-minutes: 210
+    timeout-minutes: 90
     permissions:
       contents: read
       id-token: write

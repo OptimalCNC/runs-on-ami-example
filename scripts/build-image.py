@@ -101,7 +101,7 @@ def main():
         subprocess.run(["packer", "validate", f"-var-file={variable_file}", template], check=True, cwd=ROOT)
         with (destination / "packer.log").open("w") as log:
             subprocess.run(["packer", "build", "-color=false", "-on-error=cleanup", f"-var-file={variable_file}", template],
-                           cwd=ROOT, stdout=log, stderr=subprocess.STDOUT, timeout=3 * 3600, check=True)
+                           cwd=ROOT, stdout=log, stderr=subprocess.STDOUT, timeout=3600, check=True)
         if args.variant == "stock":
             write_json(destination / "stock-result.json", {"status": "passed", "build_id": build,
                                                         "controller": controller["instance_id"], "recipe_id": recipe_id})
