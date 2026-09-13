@@ -1,0 +1,683 @@
+[
+  {
+    "op": "add",
+    "path": "/Resources/EC2FleetLaunchTemplateLinuxDefault/Properties/LaunchTemplateData/TagSpecifications/0/Tags/-",
+    "value": {
+      "Key": "ami-example:runs-on-repository",
+      "Value": "OptimalCNC/runs-on-ami-example"
+    }
+  },
+  {
+    "op": "replace",
+    "path": "/Resources/RunsOnServiceRole/Properties/Policies/0/PolicyDocument",
+    "value": {
+      "Version": "2012-10-17",
+      "Statement": [
+        {
+          "Sid": "InspectRegionalEc2",
+          "Effect": "Allow",
+          "Action": [
+            "ec2:DescribeImages",
+            "ec2:DescribeInstanceTypes",
+            "ec2:DescribeInstances",
+            "ec2:DescribeSubnets",
+            "ec2:DescribeRouteTables",
+            "ec2:DescribeSpotPriceHistory",
+            "ec2:DescribeVolumes",
+            "ec2:DescribeSnapshots",
+            "ec2:DescribeLaunchTemplateVersions"
+          ],
+          "Resource": "*",
+          "Condition": {
+            "StringEquals": {
+              "aws:RequestedRegion": "us-east-1"
+            }
+          }
+        },
+        {
+          "Sid": "RegionalDiagnostics",
+          "Effect": "Allow",
+          "Action": [
+            "cloudwatch:GetMetricData",
+            "cloudwatch:DescribeAlarms",
+            "cloudtrail:LookupEvents"
+          ],
+          "Resource": "*",
+          "Condition": {
+            "StringEquals": {
+              "aws:RequestedRegion": "us-east-1"
+            }
+          }
+        },
+        {
+          "Effect": "Allow",
+          "Action": [
+            "pricing:GetProducts"
+          ],
+          "Resource": "*"
+        },
+        {
+          "Effect": "Allow",
+          "Action": [
+            "sns:ListSubscriptionsByTopic"
+          ],
+          "Resource": {
+            "Ref": "AlertTopic"
+          }
+        },
+        {
+          "Effect": "Allow",
+          "Action": [
+            "iam:GetRole"
+          ],
+          "Resource": {
+            "Fn::Sub": "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/aws-service-role/spot.amazonaws.com/AWSServiceRoleForEC2Spot"
+          }
+        },
+        {
+          "Effect": "Allow",
+          "Action": [
+            "ssm:GetParameter"
+          ],
+          "Resource": {
+            "Fn::Sub": "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${AWS::StackName}/license-key"
+          }
+        },
+        {
+          "Effect": "Allow",
+          "Action": [
+            "ssm:PutParameter",
+            "ssm:GetParameter",
+            "ssm:GetParameters"
+          ],
+          "Resource": {
+            "Fn::Sub": "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${AWS::StackName}/license/status"
+          }
+        },
+        {
+          "Effect": "Allow",
+          "Action": [
+            "secretsmanager:GetSecretValue"
+          ],
+          "Resource": [
+            {
+              "Ref": "RunsOnStackConfigSecret"
+            },
+            {
+              "Ref": "RunsOnGitHubAppsSecret"
+            }
+          ]
+        },
+        {
+          "Effect": "Allow",
+          "Action": [
+            "ec2:TerminateInstances",
+            "ec2:StopInstances",
+            "ec2:StartInstances"
+          ],
+          "Resource": {
+            "Fn::Sub": "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/*"
+          },
+          "Condition": {
+            "StringEquals": {
+              "aws:ResourceTag/runs-on-stack-name": {
+                "Ref": "AWS::StackName"
+              }
+            }
+          }
+        },
+        {
+          "Effect": "Allow",
+          "Action": [
+            "ec2:DeleteVolume",
+            "ec2:DeleteSnapshot"
+          ],
+          "Resource": [
+            {
+              "Fn::Sub": "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:volume/*"
+            },
+            {
+              "Fn::Sub": "arn:${AWS::Partition}:ec2:${AWS::Region}::snapshot/*"
+            }
+          ],
+          "Condition": {
+            "StringEquals": {
+              "aws:ResourceTag/runs-on-stack-name": {
+                "Ref": "AWS::StackName"
+              }
+            }
+          }
+        },
+        {
+          "Effect": "Allow",
+          "Action": [
+            "s3:ListBucket"
+          ],
+          "Resource": {
+            "Fn::Sub": "arn:${AWS::Partition}:s3:::${S3BucketCache}"
+          },
+          "Condition": {
+            "StringLike": {
+              "s3:prefix": [
+                "cache",
+                "cache/*",
+                "agents",
+                "agents/*",
+                "runners",
+                "runners/*"
+              ]
+            }
+          }
+        },
+        {
+          "Effect": "Allow",
+          "Action": [
+            "s3:GetObject",
+            "s3:PutObject"
+          ],
+          "Resource": [
+            {
+              "Fn::Sub": "arn:${AWS::Partition}:s3:::${S3BucketCache}/cache/*"
+            },
+            {
+              "Fn::Sub": "arn:${AWS::Partition}:s3:::${S3BucketCache}/runners/*"
+            },
+            {
+              "Fn::Sub": "arn:${AWS::Partition}:s3:::${S3BucketCache}/agents/*"
+            }
+          ]
+        },
+        {
+          "Effect": "Allow",
+          "Action": [
+            "s3:DeleteObject"
+          ],
+          "Resource": [
+            {
+              "Fn::Sub": "arn:${AWS::Partition}:s3:::${S3BucketCache}/runners/*"
+            }
+          ]
+        },
+        {
+          "Effect": "Allow",
+          "Action": [
+            "sns:Publish"
+          ],
+          "Resource": {
+            "Ref": "AlertTopic"
+          }
+        },
+        {
+          "Effect": "Allow",
+          "Action": [
+            "sqs:SendMessage",
+            "sqs:ReceiveMessage",
+            "sqs:ChangeMessageVisibility",
+            "sqs:DeleteMessage",
+            "sqs:GetQueueAttributes"
+          ],
+          "Resource": [
+            {
+              "Fn::GetAtt": [
+                "RunsOnQueueWebhooks",
+                "Arn"
+              ]
+            },
+            {
+              "Fn::GetAtt": [
+                "RunsOnQueueSystem",
+                "Arn"
+              ]
+            },
+            {
+              "Fn::GetAtt": [
+                "RunsOnQueueEvents",
+                "Arn"
+              ]
+            }
+          ]
+        },
+        {
+          "Effect": "Allow",
+          "Action": [
+            "dynamodb:PutItem",
+            "dynamodb:GetItem",
+            "dynamodb:UpdateItem",
+            "dynamodb:DeleteItem"
+          ],
+          "Resource": {
+            "Fn::GetAtt": [
+              "RunsOnLocksTable",
+              "Arn"
+            ]
+          }
+        },
+        {
+          "Effect": "Allow",
+          "Action": [
+            "dynamodb:PutItem",
+            "dynamodb:GetItem",
+            "dynamodb:Query",
+            "dynamodb:BatchGetItem",
+            "dynamodb:UpdateItem",
+            "dynamodb:Scan"
+          ],
+          "Resource": [
+            {
+              "Fn::GetAtt": [
+                "RunsOnWorkflowJobsTable",
+                "Arn"
+              ]
+            },
+            {
+              "Fn::Sub": "${RunsOnWorkflowJobsTable.Arn}/index/reconcile-index"
+            },
+            {
+              "Fn::Sub": "${RunsOnWorkflowJobsTable.Arn}/index/pending-work-index"
+            },
+            {
+              "Fn::Sub": "${RunsOnWorkflowJobsTable.Arn}/index/daily-activity-index"
+            }
+          ]
+        },
+        {
+          "Effect": "Allow",
+          "Action": [
+            "logs:CreateLogStream",
+            "logs:PutLogEvents",
+            "logs:DescribeLogStreams"
+          ],
+          "Resource": [
+            {
+              "Fn::Sub": "${RunsOnWorkerLogGroup.Arn}:*"
+            }
+          ]
+        },
+        {
+          "Sid": "PinnedPublicParent",
+          "Effect": "Allow",
+          "Action": [
+            "ec2:RunInstances",
+            "ec2:CreateFleet"
+          ],
+          "Resource": {
+            "Fn::Sub": "arn:${AWS::Partition}:ec2:${AWS::Region}::image/ami-0c360acf17031b055"
+          }
+        },
+        {
+          "Sid": "OwnedRepositoryImages",
+          "Effect": "Allow",
+          "Action": [
+            "ec2:RunInstances",
+            "ec2:CreateFleet"
+          ],
+          "Resource": {
+            "Fn::Sub": "arn:${AWS::Partition}:ec2:${AWS::Region}::image/*"
+          },
+          "Condition": {
+            "StringEquals": {
+              "ec2:Owner": "395063532779",
+              "ec2:ResourceTag/ami-example:owner": "OptimalCNC/runs-on-ami-example"
+            }
+          }
+        },
+        {
+          "Sid": "SelectedSubnets",
+          "Effect": "Allow",
+          "Action": [
+            "ec2:RunInstances",
+            "ec2:CreateFleet"
+          ],
+          "Resource": [
+            {
+              "Fn::Sub": "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:subnet/${PublicSubnet1}"
+            },
+            {
+              "Fn::Sub": "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:subnet/${PublicSubnet2}"
+            }
+          ]
+        },
+        {
+          "Sid": "SelectedSecurityGroup",
+          "Effect": "Allow",
+          "Action": "ec2:RunInstances",
+          "Resource": {
+            "Fn::Sub": "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:security-group/${SecurityGroup}"
+          }
+        },
+        {
+          "Sid": "SelectedLinuxTemplate",
+          "Effect": "Allow",
+          "Action": [
+            "ec2:RunInstances",
+            "ec2:CreateFleet"
+          ],
+          "Resource": {
+            "Fn::Sub": "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:launch-template/${EC2FleetLaunchTemplateLinuxDefault}"
+          }
+        },
+        {
+          "Sid": "TaggedRunnerInstances",
+          "Effect": "Allow",
+          "Action": "ec2:RunInstances",
+          "Resource": {
+            "Fn::Sub": "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/*"
+          },
+          "Condition": {
+            "StringEquals": {
+              "aws:RequestTag/runs-on-stack-name": {
+                "Ref": "AWS::StackName"
+              },
+              "aws:RequestTag/ami-example:runs-on-repository": "OptimalCNC/runs-on-ami-example",
+              "ec2:InstanceType": "t3.small",
+              "ec2:InstanceMarketType": "on-demand",
+              "ec2:MetadataHttpTokens": "required"
+            },
+            "ArnEquals": {
+              "ec2:InstanceProfile": {
+                "Fn::GetAtt": [
+                  "EC2InstanceProfile",
+                  "Arn"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "Sid": "TaggedFleetInstances",
+          "Effect": "Allow",
+          "Action": "ec2:CreateFleet",
+          "Resource": {
+            "Fn::Sub": "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/*"
+          },
+          "Condition": {
+            "StringEquals": {
+              "aws:RequestTag/runs-on-stack-name": {
+                "Ref": "AWS::StackName"
+              },
+              "ec2:InstanceType": "t3.small"
+            },
+            "ArnEquals": {
+              "ec2:InstanceProfile": {
+                "Fn::GetAtt": [
+                  "EC2InstanceProfile",
+                  "Arn"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "Sid": "NewInterfacesInSelectedSubnets",
+          "Effect": "Allow",
+          "Action": "ec2:RunInstances",
+          "Resource": {
+            "Fn::Sub": "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:network-interface/*"
+          },
+          "Condition": {
+            "StringEquals": {
+              "aws:RequestTag/runs-on-stack-name": {
+                "Ref": "AWS::StackName"
+              }
+            },
+            "ArnEquals": {
+              "ec2:Subnet": [
+                {
+                  "Fn::Sub": "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:subnet/${PublicSubnet1}"
+                },
+                {
+                  "Fn::Sub": "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:subnet/${PublicSubnet2}"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "Sid": "TaggedEncryptedRoot",
+          "Effect": "Allow",
+          "Action": [
+            "ec2:RunInstances",
+            "ec2:CreateFleet"
+          ],
+          "Resource": {
+            "Fn::Sub": "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:volume/*"
+          },
+          "Condition": {
+            "StringEquals": {
+              "aws:RequestTag/runs-on-stack-name": {
+                "Ref": "AWS::StackName"
+              },
+              "ec2:VolumeType": "gp3"
+            },
+            "Bool": {
+              "ec2:Encrypted": "true"
+            },
+            "NumericLessThanEquals": {
+              "ec2:VolumeSize": "80",
+              "ec2:VolumeIops": "3000",
+              "ec2:VolumeThroughput": "125"
+            }
+          }
+        },
+        {
+          "Sid": "RegionalFleetCreation",
+          "Effect": "Allow",
+          "Action": "ec2:CreateFleet",
+          "Resource": {
+            "Fn::Sub": "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:fleet/*"
+          }
+        },
+        {
+          "Sid": "DeleteOnlyOwnedFleets",
+          "Effect": "Allow",
+          "Action": "ec2:DeleteFleets",
+          "Resource": {
+            "Fn::Sub": "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:fleet/*"
+          },
+          "Condition": {
+            "StringEquals": {
+              "aws:ResourceTag/runs-on-stack-name": {
+                "Ref": "AWS::StackName"
+              }
+            }
+          }
+        },
+        {
+          "Sid": "LaunchTagsOnly",
+          "Effect": "Allow",
+          "Action": "ec2:CreateTags",
+          "Resource": [
+            {
+              "Fn::Sub": "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/*"
+            },
+            {
+              "Fn::Sub": "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:volume/*"
+            },
+            {
+              "Fn::Sub": "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:network-interface/*"
+            },
+            {
+              "Fn::Sub": "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:fleet/*"
+            }
+          ],
+          "Condition": {
+            "StringEquals": {
+              "ec2:CreateAction": [
+                "RunInstances",
+                "CreateFleet"
+              ],
+              "aws:RequestTag/runs-on-stack-name": {
+                "Ref": "AWS::StackName"
+              }
+            }
+          }
+        },
+        {
+          "Sid": "UpdateOwnedRunnerTags",
+          "Effect": "Allow",
+          "Action": "ec2:CreateTags",
+          "Resource": {
+            "Fn::Sub": "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/*"
+          },
+          "Condition": {
+            "StringEquals": {
+              "aws:ResourceTag/runs-on-stack-name": {
+                "Ref": "AWS::StackName"
+              }
+            }
+          }
+        },
+        {
+          "Sid": "PassOnlyRunnerRole",
+          "Effect": "Allow",
+          "Action": "iam:PassRole",
+          "Resource": {
+            "Fn::GetAtt": [
+              "EC2InstanceRole",
+              "Arn"
+            ]
+          },
+          "Condition": {
+            "StringEquals": {
+              "iam:PassedToService": "ec2.amazonaws.com"
+            }
+          }
+        },
+        {
+          "Sid": "ReadRunnerRole",
+          "Effect": "Allow",
+          "Action": "iam:GetRole",
+          "Resource": {
+            "Fn::GetAtt": [
+              "EC2InstanceRole",
+              "Arn"
+            ]
+          }
+        },
+        {
+          "Sid": "DescribeSelectedEbsKey",
+          "Effect": "Allow",
+          "Action": "kms:DescribeKey",
+          "Resource": "arn:aws:kms:us-east-1:395063532779:key/a8b7b837-3485-4591-ad38-2072e0f78562"
+        },
+        {
+          "Sid": "UseSelectedEbsKey",
+          "Effect": "Allow",
+          "Action": [
+            "kms:Decrypt",
+            "kms:GenerateDataKeyWithoutPlaintext",
+            "kms:ReEncryptFrom",
+            "kms:ReEncryptTo"
+          ],
+          "Resource": "arn:aws:kms:us-east-1:395063532779:key/a8b7b837-3485-4591-ad38-2072e0f78562",
+          "Condition": {
+            "StringEquals": {
+              "kms:ViaService": "ec2.us-east-1.amazonaws.com",
+              "kms:CallerAccount": "395063532779"
+            }
+          }
+        },
+        {
+          "Sid": "SelectedKeyResourceGrants",
+          "Effect": "Allow",
+          "Action": "kms:CreateGrant",
+          "Resource": "arn:aws:kms:us-east-1:395063532779:key/a8b7b837-3485-4591-ad38-2072e0f78562",
+          "Condition": {
+            "Bool": {
+              "kms:GrantIsForAWSResource": "true"
+            },
+            "StringEquals": {
+              "kms:ViaService": "ec2.us-east-1.amazonaws.com",
+              "kms:CallerAccount": "395063532779"
+            }
+          }
+        },
+        {
+          "Sid": "DenyOtherEbsEncryptionKeys",
+          "Effect": "Deny",
+          "Action": [
+            "kms:Decrypt",
+            "kms:Encrypt",
+            "kms:GenerateDataKey*",
+            "kms:ReEncrypt*",
+            "kms:CreateGrant"
+          ],
+          "Condition": {
+            "StringEquals": {
+              "kms:ViaService": "ec2.us-east-1.amazonaws.com"
+            }
+          },
+          "NotResource": "arn:aws:kms:us-east-1:395063532779:key/a8b7b837-3485-4591-ad38-2072e0f78562"
+        }
+      ]
+    }
+  },
+  {
+    "op": "add",
+    "path": "/Resources/EC2InstanceRole/Properties/Policies/-",
+    "value": {
+      "PolicyName": "NoImagePublishingOrCredentialEscalation",
+      "PolicyDocument": {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Sid": "NoImagePublishing",
+            "Effect": "Deny",
+            "Action": [
+              "ec2:CreateImage",
+              "ec2:CopyImage",
+              "ec2:RegisterImage",
+              "ec2:DeregisterImage",
+              "ec2:ModifyImageAttribute",
+              "ec2:CreateSnapshot",
+              "ec2:CreateSnapshots",
+              "ec2:CopySnapshot",
+              "ec2:DeleteSnapshot",
+              "ec2:ModifySnapshotAttribute"
+            ],
+            "Resource": "*"
+          },
+          {
+            "Sid": "NoPublisherAssumption",
+            "Effect": "Deny",
+            "Action": "sts:AssumeRole",
+            "Resource": [
+              "arn:aws:iam::395063532779:role/ami-example-controller",
+              "arn:aws:iam::395063532779:role/ami-example-builder",
+              "arn:aws:iam::395063532779:role/ami-example-probe"
+            ]
+          },
+          {
+            "Sid": "PreserveOwnershipTags",
+            "Effect": "Deny",
+            "Action": [
+              "ec2:CreateTags",
+              "ec2:DeleteTags"
+            ],
+            "Resource": "*",
+            "Condition": {
+              "ForAnyValue:StringLike": {
+                "aws:TagKeys": [
+                  "ami-example:*",
+                  "runs-on-stack-name"
+                ]
+              }
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "op": "add",
+    "path": "/Resources/EC2FleetLaunchTemplateLinuxDefault/Properties/LaunchTemplateData/CreditSpecification",
+    "value": {
+      "CpuCredits": "standard"
+    }
+  },
+  {
+    "op": "replace",
+    "path": "/Resources/StackConfigMaterializer/Properties/StackConfigBase/EbsEncryptionKey",
+    "value": "arn:aws:kms:us-east-1:395063532779:key/a8b7b837-3485-4591-ad38-2072e0f78562"
+  }
+]

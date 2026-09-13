@@ -1,0 +1,243 @@
+name: Qualify one Cobalt image
+
+on:
+  workflow_call:
+    inputs:
+      variant:
+        type: string
+        required: true
+      retain:
+        type: boolean
+        required: true
+      fault:
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  BUILD_VARIANT: ${{ inputs.variant }}
+
+jobs:
+  configure:
+    name: ${{ inputs.variant }} / configure
+    runs-on: ubuntu-24.04
+    outputs:
+      build_id: ${{ steps.config.outputs.build_id }}
+      controller_label: ${{ steps.config.outputs.controller_label }}
+      region: ${{ steps.config.outputs.region }}
+      role_arn: ${{ steps.config.outputs.role_arn }}
+      environment: ${{ steps.config.outputs.environment }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - id: config
+        run: python3 scripts/workflow.py configure
+        env:
+          CLOUD_ENABLED: ${{ vars.AMI_EXAMPLE_CLOUD_ENABLED }}
+
+  build:
+    name: ${{ inputs.variant }} / build
+    needs: configure
+    runs-on: ${{ needs.configure.outputs.controller_label }}
+    environment: ${{ needs.configure.outputs.environment }}
+    timeout-minutes: 210
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      ami_id: ${{ steps.build.outputs.ami_id }}
+      recipe_id: ${{ steps.build.outputs.recipe_id }}
+      kernel_release: ${{ steps.build.outputs.kernel_release }}
+      label_a: ${{ steps.build.outputs.label_a }}
+      label_b: ${{ steps.build.outputs.label_b }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - run: python3 scripts/install-tools.py --group build
+      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
+        with:
+          role-session-name: ami-example-${{ github.run_id }}-${{ github.run_attempt }}
+          role-to-assume: ${{ needs.configure.outputs.role_arn }}
+          aws-region: ${{ needs.configure.outputs.region }}
+          role-duration-seconds: 14400
+      - id: build
+        run: python3 scripts/workflow.py build
+        env:
+          RETAIN: ${{ inputs.retain }}
+          CONFIGURED_BUILD_ID: ${{ needs.configure.outputs.build_id }}
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ needs.configure.outputs.build_id }}-build
+          path: |
+            artifacts/${{ needs.configure.outputs.build_id }}
+            !artifacts/**/inputs.tar
+          retention-days: 14
+          if-no-files-found: warn
+
+  probe:
+    name: ${{ inputs.variant }} / probe
+    if: inputs.variant != 'stock'
+    needs: [configure, build]
+    runs-on: ubuntu-24.04
+    environment: ${{ needs.configure.outputs.environment }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ needs.configure.outputs.build_id }}-build
+          path: artifacts/${{ needs.configure.outputs.build_id }}
+      - run: python3 scripts/install-tools.py --group cloud
+      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
+        with:
+          role-session-name: ami-example-${{ github.run_id }}-${{ github.run_attempt }}
+          role-to-assume: ${{ needs.configure.outputs.role_arn }}
+          aws-region: ${{ needs.configure.outputs.region }}
+      - run: python3 scripts/workflow.py probe
+        env:
+          BUILD_ID: ${{ needs.configure.outputs.build_id }}
+          FAULT: ${{ inputs.fault }}
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ needs.configure.outputs.build_id }}-probe
+          path: artifacts/${{ needs.configure.outputs.build_id }}/probe
+          retention-days: 14
+          if-no-files-found: warn
+
+  smoke-a:
+    name: ${{ inputs.variant }} / smoke-a
+    needs: [configure, build, probe]
+    runs-on: ${{ needs.build.outputs.label_a }}
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    env:
+      EXPECTED_KERNEL_RELEASE: ${{ needs.build.outputs.kernel_release }}
+      EXPECTED_RECIPE_ID: ${{ needs.build.outputs.recipe_id }}
+      BUILD_ID: ${{ needs.configure.outputs.build_id }}
+      SMOKE_STAGE: a
+    steps:
+      - name: Check running Cobalt kernel and fresh image before checkout
+        run: ami-example-smoke identity
+      - name: Activate image environment for subsequent steps
+        run: runner-image-env --github
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - run: ami-example-smoke test
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ needs.configure.outputs.build_id }}-smoke-a
+          path: ${{ runner.temp }}/ami-example-smoke
+          retention-days: 14
+          if-no-files-found: error
+
+  smoke-b:
+    name: ${{ inputs.variant }} / smoke-b
+    needs: [configure, build, probe, smoke-a]
+    runs-on: ${{ needs.build.outputs.label_b }}
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    env:
+      EXPECTED_KERNEL_RELEASE: ${{ needs.build.outputs.kernel_release }}
+      EXPECTED_RECIPE_ID: ${{ needs.build.outputs.recipe_id }}
+      BUILD_ID: ${{ needs.configure.outputs.build_id }}
+      SMOKE_STAGE: b
+    steps:
+      - name: Check running Cobalt kernel and absence of job A sentinel
+        run: ami-example-smoke identity
+      - name: Activate image environment for subsequent steps
+        run: runner-image-env --github
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - run: ami-example-smoke test
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ needs.configure.outputs.build_id }}-smoke-b
+          path: ${{ runner.temp }}/ami-example-smoke
+          retention-days: 14
+          if-no-files-found: error
+
+  watchdog:
+    name: ${{ inputs.variant }} / watchdog
+    needs: configure
+    runs-on: ubuntu-24.04
+    environment: ${{ needs.configure.outputs.environment }}
+    timeout-minutes: 300
+    permissions:
+      contents: read
+      id-token: write
+      actions: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - run: python3 scripts/install-tools.py --group cloud
+      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
+        with:
+          role-session-name: ami-example-${{ github.run_id }}-${{ github.run_attempt }}
+          role-to-assume: ${{ needs.configure.outputs.role_arn }}
+          aws-region: ${{ needs.configure.outputs.region }}
+          role-duration-seconds: 18000
+      - run: python3 scripts/watchdog.py --variant "$BUILD_VARIANT"
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ needs.configure.outputs.build_id }}-watchdog
+          path: artifacts/watchdog
+          retention-days: 14
+          if-no-files-found: warn
+
+  finalize:
+    name: ${{ inputs.variant }} / finalize
+    if: always() && needs.configure.result == 'success'
+    needs: [configure, build, probe, smoke-a, smoke-b, watchdog]
+    runs-on: ubuntu-24.04
+    environment: ${{ needs.configure.outputs.environment }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+      actions: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        continue-on-error: true
+        with:
+          pattern: ${{ needs.configure.outputs.build_id }}-*
+          path: artifacts/handoff
+      - run: python3 scripts/install-tools.py --group cloud
+      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
+        with:
+          role-session-name: ami-example-${{ github.run_id }}-${{ github.run_attempt }}
+          role-to-assume: ${{ needs.configure.outputs.role_arn }}
+          aws-region: ${{ needs.configure.outputs.region }}
+      - run: python3 scripts/workflow.py finalize
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ needs.configure.outputs.build_id }}-final
+          path: artifacts/final/${{ needs.configure.outputs.build_id }}
+          retention-days: 14
+          if-no-files-found: error

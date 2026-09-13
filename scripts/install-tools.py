@@ -1,0 +1,76 @@
+#!/usr/bin/env python3
+"""Install exact, checksum-verified tools in an unprivileged local directory."""
+import argparse
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import tarfile
+import urllib.request
+import zipfile
+
+from example import ROOT, file_sha, read_json, require
+
+
+def install(name, spec, destination):
+    cache = destination / "downloads"
+    cache.mkdir(parents=True, exist_ok=True)
+    archive = cache / spec["url"].rsplit("/", 1)[-1]
+    if not archive.exists() or file_sha(archive) != spec["sha256"]:
+        with urllib.request.urlopen(spec["url"], timeout=60) as source, archive.open("wb") as target:
+            shutil.copyfileobj(source, target)
+    require(file_sha(archive) == spec["sha256"], f"download checksum mismatch: {name}")
+    unpacked = destination / name
+    unpacked.mkdir(parents=True, exist_ok=True)
+    if archive.suffix == ".zip":
+        with zipfile.ZipFile(archive) as source:
+            source.extractall(unpacked)
+            for member in source.infolist():
+                path = unpacked / member.filename
+                if path.is_file():
+                    path.chmod((member.external_attr >> 16) & 0o777 or 0o644)
+    elif archive.name.endswith(".tar.gz"):
+        with tarfile.open(archive) as source:
+            source.extractall(unpacked, filter="data")
+    else:
+        subprocess.run(["dpkg-deb", "-x", str(archive), str(unpacked)], check=True)
+    binary_dir = destination / "bin"
+    binary_dir.mkdir(exist_ok=True)
+    if name == "aws_cli":
+        subprocess.run([str(unpacked / "aws/install"), "--install-dir", str(destination / "aws-installed"),
+                        "--bin-dir", str(binary_dir), "--update"], check=True)
+    elif name == "amazon_plugin":
+        binary = next(unpacked.glob("packer-plugin-amazon_v*"))
+        subprocess.run([str(binary_dir / "packer"), "plugins", "install", "--path", str(binary),
+                        "github.com/hashicorp/amazon"], check=True)
+    else:
+        source = unpacked / spec["binary"]
+        source.chmod(0o755)
+        target = binary_dir / ("session-manager-plugin" if name == "session_manager" else name)
+        target.unlink(missing_ok=True)
+        target.symlink_to(source)
+    print(f"Installed {name} {spec['version']}")
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--directory", default=".tools")
+    parser.add_argument("--group", choices=("build", "cloud", "validation"), default="build")
+    args = parser.parse_args()
+    destination = Path(args.directory).resolve()
+    os.environ.setdefault("PACKER_PLUGIN_PATH", str(destination / "plugins"))
+    pins = read_json(ROOT / "images/xenomai-cobalt/inputs.lock.json")["tools"]
+    groups = {"cloud": ["aws_cli"], "build": ["packer", "amazon_plugin", "session_manager", "aws_cli"],
+              "validation": ["packer", "amazon_plugin", "terraform", "actionlint"]}
+    for name in groups[args.group]:
+        install(name, pins[name], destination)
+    if os.environ.get("GITHUB_PATH"):
+        with open(os.environ["GITHUB_PATH"], "a") as stream:
+            stream.write(str(destination / "bin") + "\n")
+    if os.environ.get("GITHUB_ENV"):
+        with open(os.environ["GITHUB_ENV"], "a") as stream:
+            stream.write("PACKER_PLUGIN_PATH=" + os.environ["PACKER_PLUGIN_PATH"] + "\n")
+
+
+if __name__ == "__main__":
+    main()

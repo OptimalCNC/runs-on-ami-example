@@ -1,0 +1,70 @@
+name: Clean up custom AMI resources
+
+on:
+  workflow_run:
+    workflows: [Build and test Cobalt AMIs, Run Cobalt application]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: Clean the latest completed attempt of this run; empty sweeps expired resources
+        type: string
+        default: ''
+  schedule:
+    - cron: '23 * * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ami-example-cleanup
+  cancel-in-progress: false
+
+jobs:
+  configure:
+    if: vars.AMI_EXAMPLE_CLOUD_ENABLED == 'true' && (github.event_name != 'workflow_run' || github.event.workflow_run.event == 'workflow_dispatch')
+    runs-on: ubuntu-24.04
+    outputs:
+      region: ${{ steps.config.outputs.region }}
+      role_arn: ${{ steps.config.outputs.role_arn }}
+      environment: ${{ steps.config.outputs.environment }}
+    steps:
+      # Always use the trusted default branch, including after a cancelled run.
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - id: config
+        run: python3 scripts/workflow.py cleanup-config
+  cleanup:
+    needs: configure
+    runs-on: ubuntu-24.04
+    environment: ${{ needs.configure.outputs.environment }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+      actions: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - run: python3 scripts/install-tools.py --group cloud
+      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
+        with:
+          role-session-name: ami-example-${{ github.run_id }}-${{ github.run_attempt }}
+          role-to-assume: ${{ needs.configure.outputs.role_arn }}
+          aws-region: ${{ needs.configure.outputs.region }}
+      - run: python3 scripts/workflow.py cleanup
+        env:
+          CLEANUP_RUN_ID: ${{ github.event.workflow_run.id || inputs.run_id || '' }}
+          CLEANUP_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt || '' }}
+          GH_TOKEN: ${{ github.token }}
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: cleanup-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/cleanup
+          retention-days: 14
+          if-no-files-found: warn

@@ -1,0 +1,15 @@
+.tools/
+.work/
+/.aws-local/
+artifacts/
+__pycache__/
+*.pyc
+infra/.terraform/
+infra/*.tfstate*
+infra/*.tfplan
+infra/*.auto.tfvars.json
+infra/operator/.terraform/
+infra/operator/*.tfstate*
+infra/operator/*.tfplan
+infra/operator/*.auto.tfvars.json
+*Zone.Identifier

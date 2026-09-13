@@ -1,0 +1,7 @@
+{
+  "version": "3.3.1",
+  "url": "https://runs-on.s3.eu-west-1.amazonaws.com/cloudformation/template.yaml",
+  "sha256": "fe2b3d81a69d3686795021497722fbaf2661c1e5cff15c57af4da726f572ccb6",
+  "service_image": "public.ecr.aws/c5h5o9k1/runs-on/runs-on:v3.3.1@sha256:d5194302c11127f8158e21154c6daeed4343d34615e0f98d6270ed6ff506c929",
+  "bootstrap_version": "0.1.12"
+}
