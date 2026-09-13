@@ -89,6 +89,7 @@
       "type": "object",
       "required": ["direct_boot", "runs_on", "reproducibility"],
       "properties": {
+        "qualification": {"$ref": "#/$defs/qualification_run"},
         "direct_boot": {"$ref": "#/$defs/check"},
         "runs_on": {"type": "array", "maxItems": 2, "items": {"$ref": "#/$defs/check"}},
         "reproducibility": {"$ref": "#/$defs/check"},
@@ -120,6 +121,15 @@
     }}
   }],
   "$defs": {
+    "qualification_run": {
+      "type": "object", "required": ["build_id", "run_id", "run_attempt", "workflow_ref"], "additionalProperties": false,
+      "properties": {
+        "build_id": {"type": "string", "pattern": "^[1-9][0-9]*-[1-9][0-9]*-(one|two)$"},
+        "run_id": {"type": "string", "pattern": "^[1-9][0-9]*$"},
+        "run_attempt": {"type": "string", "pattern": "^[1-9][0-9]*$"},
+        "workflow_ref": {"type": "string", "minLength": 1, "pattern": "\\S"}
+      }
+    },
     "cobalt_guest": {"type": "object", "required": ["xenomai"], "properties": {"xenomai": {"$ref": "#/$defs/cobalt"}}},
     "cobalt": {
       "type": "object", "required": ["version", "core", "prefix"], "additionalProperties": false,

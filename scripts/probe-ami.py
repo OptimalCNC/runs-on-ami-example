@@ -13,6 +13,7 @@ from urllib.parse import unquote, urlparse
 from example import (ROOT, AwsCommandError, Cloud, CobaltIdentity, load_deployment, read_json, require, resource_tags, run,
                      OWNER_TAG, BUILD_TAG, tags_of, timestamp, utcnow, write_json)
 from preflight import inspect_ami, inspect_instance_type, inspect_management, inspect_root_volume
+from qualification import QualificationRun
 
 
 def wait_online(cloud, instance_id, deadline):
@@ -101,7 +102,8 @@ def probe(cloud, identity, build, output, result=None, fault=False):
     inspect_management(cloud, (d.probe_profile_name,))
     if result:
         require(result["cloud"]["account_id"] == d.account_id and result["cloud"]["region"] == d.region, "candidate deployment differs")
-        require(tags_of(image).get(OWNER_TAG) == d.repository and tags_of(image).get(BUILD_TAG) == build, "candidate ownership differs")
+        require(tags_of(image).get(OWNER_TAG) == d.repository
+                and tags_of(image).get(BUILD_TAG) == result["execution"]["build_id"], "candidate ownership differs")
         require(tags_of(image).get("ami-example:recipe-id") == result["source"]["recipe_id"], "candidate recipe tag differs")
     expiry = timestamp(utcnow() + dt.timedelta(hours=2))
     tags = resource_tags(d, build, "probe", expiry)
@@ -123,7 +125,8 @@ def probe(cloud, identity, build, output, result=None, fault=False):
     write_json(output / "launch-request.json", launch)
     response = cloud.call("ec2", "run-instances", launch)
     instance_id = response["Instances"][0]["InstanceId"]
-    observation = {"status": "failed", "instance_id": instance_id, "ami_id": identity.id, "started_at": timestamp()}
+    observation = {"status": "failed", "build_id": build, "instance_id": instance_id,
+                   "ami_id": identity.id, "started_at": timestamp()}
     write_json(output / "launch.json", response)
     try:
         deadline = time.monotonic() + d.deadlines["boot_seconds"]
@@ -187,7 +190,7 @@ def main():
         print("Would launch one disposable on-demand EC2 probe with an EBS root disk. Supply --execute only after cost approval.")
         return
     result = read_json(args.result) if args.result else None
-    build = result["execution"]["build_id"] if result else args.build_id
+    build = args.build_id or (QualificationRun.from_result(result).build_id if result else None)
     require(bool(build), "inventory capture requires a unique --build-id such as 1789200000-1-stock")
     identity = dataclasses.replace(d.source_ami, id=result["cloud"]["ami_id"], owner=d.account_id,
                                    boot_mode=result["cloud"]["ami_boot_mode"]) if result else getattr(d, args.capture_inventory + "_ami")

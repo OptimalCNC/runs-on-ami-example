@@ -1,15 +1,10 @@
-name: Qualify one Cobalt image
+name: Qualify retained Cobalt image
 
 on:
-  workflow_call:
+  workflow_dispatch:
     inputs:
-      variant:
-        type: string
-        required: true
-      retain:
-        type: boolean
-        required: true
-      fault:
+      candidate_result_uri:
+        description: Immutable versioned S3 URI of the retained candidate result
         type: string
         required: true
 
@@ -17,15 +12,17 @@ permissions:
   contents: read
 
 env:
-  BUILD_VARIANT: ${{ inputs.variant }}
+  BUILD_VARIANT: one
+
+concurrency:
+  group: retained-ami-${{ github.run_id }}-${{ github.run_attempt }}
+  cancel-in-progress: false
 
 jobs:
   configure:
-    name: ${{ inputs.variant }} / configure
     runs-on: ubuntu-24.04
     outputs:
       build_id: ${{ steps.config.outputs.build_id }}
-      controller_label: ${{ steps.config.outputs.controller_label }}
       region: ${{ steps.config.outputs.region }}
       role_arn: ${{ steps.config.outputs.role_arn }}
       environment: ${{ steps.config.outputs.environment }}
@@ -34,40 +31,39 @@ jobs:
         with:
           persist-credentials: false
       - id: config
-        run: python3 scripts/workflow.py configure
+        run: python3 scripts/workflow.py qualification-config
         env:
           CLOUD_ENABLED: ${{ vars.AMI_EXAMPLE_CLOUD_ENABLED }}
 
-  build:
-    name: ${{ inputs.variant }} / build
+  prepare:
+    name: one / configure
     needs: configure
-    runs-on: ${{ needs.configure.outputs.controller_label }}
+    runs-on: ubuntu-24.04
     environment: ${{ needs.configure.outputs.environment }}
-    timeout-minutes: 105
+    timeout-minutes: 10
     permissions:
       contents: read
       id-token: write
     outputs:
-      ami_id: ${{ steps.build.outputs.ami_id }}
-      recipe_id: ${{ steps.build.outputs.recipe_id }}
-      kernel_release: ${{ steps.build.outputs.kernel_release }}
-      label_a: ${{ steps.build.outputs.label_a }}
-      label_b: ${{ steps.build.outputs.label_b }}
+      ami_id: ${{ steps.prepare.outputs.ami_id }}
+      recipe_id: ${{ steps.prepare.outputs.recipe_id }}
+      kernel_release: ${{ steps.prepare.outputs.kernel_release }}
+      label_a: ${{ steps.prepare.outputs.label_a }}
+      label_b: ${{ steps.prepare.outputs.label_b }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - run: python3 scripts/install-tools.py --group build
+      - run: python3 scripts/install-tools.py --group cloud
       - uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
         with:
           role-session-name: ami-example-${{ github.run_id }}-${{ github.run_attempt }}
           role-to-assume: ${{ needs.configure.outputs.role_arn }}
           aws-region: ${{ needs.configure.outputs.region }}
-          role-duration-seconds: 14400
-      - id: build
-        run: python3 scripts/workflow.py build
+      - id: prepare
+        run: python3 scripts/workflow.py qualification-prepare
         env:
-          RETAIN: ${{ inputs.retain }}
+          CANDIDATE_RESULT_URI: ${{ inputs.candidate_result_uri }}
           CONFIGURED_BUILD_ID: ${{ needs.configure.outputs.build_id }}
       - if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -80,9 +76,8 @@ jobs:
           if-no-files-found: warn
 
   probe:
-    name: ${{ inputs.variant }} / probe
-    if: inputs.variant != 'stock'
-    needs: [configure, build]
+    name: one / probe
+    needs: [configure, prepare]
     runs-on: ubuntu-24.04
     environment: ${{ needs.configure.outputs.environment }}
     timeout-minutes: 30
@@ -106,7 +101,7 @@ jobs:
       - run: python3 scripts/workflow.py probe
         env:
           BUILD_ID: ${{ needs.configure.outputs.build_id }}
-          FAULT: ${{ inputs.fault }}
+          FAULT: none
       - if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -116,15 +111,15 @@ jobs:
           if-no-files-found: warn
 
   smoke-a:
-    name: ${{ inputs.variant }} / smoke-a
-    needs: [configure, build, probe]
-    runs-on: ${{ needs.build.outputs.label_a }}
+    name: one / smoke-a
+    needs: [configure, prepare, probe]
+    runs-on: ${{ needs.prepare.outputs.label_a }}
     timeout-minutes: 15
     permissions:
       contents: read
     env:
-      EXPECTED_KERNEL_RELEASE: ${{ needs.build.outputs.kernel_release }}
-      EXPECTED_RECIPE_ID: ${{ needs.build.outputs.recipe_id }}
+      EXPECTED_KERNEL_RELEASE: ${{ needs.prepare.outputs.kernel_release }}
+      EXPECTED_RECIPE_ID: ${{ needs.prepare.outputs.recipe_id }}
       BUILD_ID: ${{ needs.configure.outputs.build_id }}
       SMOKE_STAGE: a
     steps:
@@ -145,15 +140,15 @@ jobs:
           if-no-files-found: error
 
   smoke-b:
-    name: ${{ inputs.variant }} / smoke-b
-    needs: [configure, build, probe, smoke-a]
-    runs-on: ${{ needs.build.outputs.label_b }}
+    name: one / smoke-b
+    needs: [configure, prepare, probe, smoke-a]
+    runs-on: ${{ needs.prepare.outputs.label_b }}
     timeout-minutes: 15
     permissions:
       contents: read
     env:
-      EXPECTED_KERNEL_RELEASE: ${{ needs.build.outputs.kernel_release }}
-      EXPECTED_RECIPE_ID: ${{ needs.build.outputs.recipe_id }}
+      EXPECTED_KERNEL_RELEASE: ${{ needs.prepare.outputs.kernel_release }}
+      EXPECTED_RECIPE_ID: ${{ needs.prepare.outputs.recipe_id }}
       BUILD_ID: ${{ needs.configure.outputs.build_id }}
       SMOKE_STAGE: b
     steps:
@@ -174,11 +169,11 @@ jobs:
           if-no-files-found: error
 
   watchdog:
-    name: ${{ inputs.variant }} / watchdog
-    needs: configure
+    name: one / watchdog
+    needs: [configure, prepare]
     runs-on: ubuntu-24.04
     environment: ${{ needs.configure.outputs.environment }}
-    timeout-minutes: 300
+    timeout-minutes: 60
     permissions:
       contents: read
       id-token: write
@@ -187,15 +182,20 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.configure.outputs.build_id }}-build
+          path: artifacts/${{ needs.configure.outputs.build_id }}
       - run: python3 scripts/install-tools.py --group cloud
       - uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
         with:
           role-session-name: ami-example-${{ github.run_id }}-${{ github.run_attempt }}
           role-to-assume: ${{ needs.configure.outputs.role_arn }}
           aws-region: ${{ needs.configure.outputs.region }}
-          role-duration-seconds: 18000
-      - run: python3 scripts/watchdog.py --variant "$BUILD_VARIANT"
+          role-duration-seconds: 7200
+      - run: python3 scripts/watchdog.py --variant one --result "artifacts/$BUILD_ID/image-result.json"
         env:
+          BUILD_ID: ${{ needs.configure.outputs.build_id }}
           GH_TOKEN: ${{ github.token }}
       - if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -206,9 +206,9 @@ jobs:
           if-no-files-found: warn
 
   finalize:
-    name: ${{ inputs.variant }} / finalize
-    if: always() && needs.configure.result == 'success'
-    needs: [configure, build, probe, smoke-a, smoke-b, watchdog]
+    name: one / finalize
+    if: always() && needs.prepare.result == 'success'
+    needs: [configure, prepare, probe, smoke-a, smoke-b, watchdog]
     runs-on: ubuntu-24.04
     environment: ${{ needs.configure.outputs.environment }}
     timeout-minutes: 30

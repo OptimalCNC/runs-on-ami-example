@@ -13,11 +13,10 @@ kernel, modules, Xenomai payload, configuration, packages, and unpacked
 initramfs content. The application test checks functional execution; there is
 no latency target.
 
-**Status: scoped IAM and stock RunsOn qualification passed in AWS. The first
-Cobalt kernel and SDK compiled successfully; image finalization then failed
-while clearing an inherited PostgreSQL log. All trial instances were cleaned
-up, and no candidate AMI was created. Retries are authorized within the recorded $20 ceiling in
-[infra/resources.json](infra/resources.json).** An AMI creation
+**Status: scoped IAM and stock RunsOn qualification passed in AWS. The Cobalt
+kernel and SDK compiled, and the custom AMI is available. Its boot and RunsOn
+qualification are pending. Retries are authorized within the recorded $20
+ceiling in [infra/resources.json](infra/resources.json).** An AMI creation
 record is not a qualification result.
 
 The image build controller uses a separately pinned stock RunsOn AMI. It is
@@ -119,6 +118,13 @@ baked identity, activate the image's `/usr/xenomai` development environment
 for a later step, and build and run the Cobalt application's one CTest test.
 The application starts and joins an Alchemy task and verifies that the task
 runs in Cobalt primary mode; a stock kernel cannot satisfy it.
+
+To qualify an already retained candidate, dispatch **Qualify retained Cobalt
+image** on `main` with the immutable versioned S3 URI of its candidate
+`image-result.json`. It verifies the original build identity and configured
+recipe, then runs the same probe and two fresh jobs without recompiling. New
+instances and reports belong to the qualification dispatch; the image keeps
+its original build identity and expiry.
 
 Download the final qualified `image-result.json` and record the accepted image:
 

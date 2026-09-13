@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Qualify candidate evidence against EC2 and GitHub control-plane observations."""
 import argparse
-import importlib.util
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
-from example import (ROOT, BUILD_TAG, OWNER_TAG, RUNS_ON_TAG, Cloud, CobaltIdentity, load_deployment, parse_time, read_json,
+from example import (BUILD_TAG, OWNER_TAG, RUNS_ON_TAG, Cloud, CobaltIdentity, load_deployment, parse_time, read_json,
                      require, tags_of, write_json)
-from watchdog import runner_instance_id
+from qualification import QualificationRun
+from watchdog import github, runner_instance_id, selected_jobs
 
 
 def verify_guest(guest, result, deployment):
@@ -31,7 +31,10 @@ def verify_guest(guest, result, deployment):
 
 def verify(cloud, result, probe, a, b, job_evidence):
     d = cloud.deployment
+    qualification = QualificationRun.from_result(result)
     require(probe["status"] == "passed" and probe.get("terminated") is True, "direct boot has not passed and terminated")
+    if "qualification" in result["validation"]:
+        require(probe.get("build_id") == qualification.build_id, "direct boot belongs to another qualification dispatch")
     probe_id = verify_guest(probe["guest"], result, d)
     ids = []
     machines = []
@@ -40,10 +43,12 @@ def verify(cloud, result, probe, a, b, job_evidence):
         identity = report["identity"]
         instance_id = verify_guest(identity, result, d)
         require(identity["stage"] == stage and identity["sentinel_absent_at_start"] is True, "sentinel check failed")
-        expected_sentinel = f"/var/tmp/ami-example-{result['execution']['build_id']}-sentinel"
+        expected_sentinel = f"/var/tmp/ami-example-{qualification.build_id}-sentinel"
         require(identity["sentinel"] == expected_sentinel, "sentinel path differs")
         environment = report["environment"]
         require(environment.get("environment_passed") is True, "later-step environment test failed")
+        require(environment["stage"] == stage and environment["sentinel"] == expected_sentinel,
+                "later-step qualification sentinel differs")
         require(verify_guest(environment, result, d) == instance_id, "instance changed between test steps")
         require(report["ctest_passed"], "Cobalt application failed")
         job = job_evidence[f"smoke-{stage}"]
@@ -57,7 +62,7 @@ def verify(cloud, result, probe, a, b, job_evidence):
         tags = tags_of(actual)
         require(tags.get(RUNS_ON_TAG) == d.repository
                 and tags.get(OWNER_TAG) in (None, d.repository)
-                and tags.get(BUILD_TAG) in (None, result["execution"]["build_id"]),
+                and tags.get(BUILD_TAG) in (None, qualification.build_id),
                 "test instance ownership differs")
         require(parse_time(actual["LaunchTime"]) >= parse_time(result["lifecycle"]["created_at"]), "instance predates the candidate")
         ids.append(instance_id)
@@ -93,11 +98,9 @@ def main():
     args = parser.parse_args()
     d = load_deployment(args.deployment)
     result = read_json(args.result)
-    spec = importlib.util.spec_from_file_location("watchdog", ROOT / "scripts/watchdog.py")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    execution = result["execution"]
-    jobs = module.selected_jobs(module.github.jobs(d.repository, execution["run_id"], execution["run_attempt"]), execution["build_id"].rsplit("-", 1)[-1])
+    qualification = QualificationRun.from_result(result)
+    jobs = selected_jobs(github.jobs(d.repository, qualification.run_id, qualification.run_attempt),
+                         qualification.build_id.rsplit("-", 1)[-1])
     updated = verify(Cloud(d), result, read_json(args.probe), read_smoke(args.smoke_a), read_smoke(args.smoke_b), jobs)
     write_json(args.result, updated)
     print("Cobalt boot, two fresh RunsOn instances, environment, Cobalt application and artifact uploads verified.")

@@ -27,6 +27,7 @@ authorize Terraform apply, AMI copies, probes, or workflow dispatches.
 | Parent inventory | Launch directly from pinned public RunsOn AMIs; one short EC2 inventory probe, or two if the controller differs | Probes terminate in `finally`, delete their root volumes, and are tagged for orphan sweeping; no parent copy or new snapshot is needed |
 | Stock qualification | One RunsOn controller plus one temporary Packer builder, each with a root EBS volume | Terminated when the job completes; no candidate AMI is created |
 | Single-build qualification | One controller, one builder, one direct probe, two fresh RunsOn smoke instances, and one candidate AMI/snapshot set | Instances terminate after testing; the approved trial retains the candidate for 24 hours |
+| Retained-image qualification | One direct probe and two fresh RunsOn smoke instances from an existing retained candidate | Verifies the immutable candidate record before launching; terminates new instances and preserves the original image expiry |
 | Accepted-image application | One fresh RunsOn instance from the committed accepted AMI | Compiles and runs the Cobalt test, retains evidence, then terminates; does not extend image retention |
 | Full qualification | Two sequential repetitions, each with one controller, one builder, one direct probe, two separate RunsOn smoke instances, and one candidate AMI/snapshot set | Probe and tests are short; candidates deleted after reports unless explicitly retained |
 | Failure drills | One controlled probe failure and one manually interrupted build, in separate approved dispatches | Verify diagnostic retention and both independent cleanup paths |
@@ -200,8 +201,10 @@ fallback in the build.
 The deployment defaults to a 15-minute direct-boot deadline, a 15-minute
 launch/registration deadline per runnable controller/smoke job, and a 4-hour
 independent deadline per candidate. Registration time starts only after that
-job's prerequisites succeed. Packer has a 3-hour subprocess bound; its job has
-a 210-minute timeout. These are runtime limits, not hard AWS billing caps.
+job's prerequisites succeed. Packer has a 60-minute subprocess bound; its job
+has a 105-minute timeout. Retained-image qualification has a 45-minute
+independent deadline inside a 60-minute watchdog job. These are runtime limits,
+not hard AWS billing caps.
 
 The independent watchdog uses GitHub's supported workflow cancellation API.
 A job that never acquires a runner does not need to run a timeout handler.

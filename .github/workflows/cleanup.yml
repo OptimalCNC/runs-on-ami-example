@@ -2,7 +2,7 @@ name: Clean up custom AMI resources
 
 on:
   workflow_run:
-    workflows: [Build and test Cobalt AMIs, Run Cobalt application]
+    workflows: [Build and test Cobalt AMIs, Qualify retained Cobalt image, Run Cobalt application]
     types: [completed]
   workflow_dispatch:
     inputs:

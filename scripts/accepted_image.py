@@ -10,6 +10,7 @@ import time
 from example import (AMI, BUILD_TAG, EXPIRY_TAG, OWNER_TAG, PURPOSE_TAG, ROOT, SHA256, Cloud,
                      build_id, file_sha, load_deployment, match, outputs, parse_time,
                      read_json, require, tags_of, timestamp, utcnow, write_json)
+from qualification import QualificationRun
 
 
 @dataclasses.dataclass(frozen=True)
@@ -23,6 +24,8 @@ class AcceptedImage:
     recipe_id: str
     kernel_release: str
     expires_at: str
+    qualification_run_id: str
+    qualification_run_attempt: str
     qualification_url: str
     qualification_sha256: str
 
@@ -40,8 +43,10 @@ class AcceptedImage:
         match(value["recipe_id"], SHA256, "accepted recipe")
         match(value["qualification_sha256"], SHA256, "qualification digest")
         match(value["kernel_release"], r"[A-Za-z0-9.+_-]+", "accepted kernel release")
-        require(value["qualification_url"] == f"https://github.com/{deployment.repository}/actions/runs/{value['build_id'].split('-')[0]}/attempts/{value['build_id'].split('-')[1]}",
-                "qualification URL differs from image build")
+        match(value["qualification_run_id"], r"[1-9][0-9]*", "accepted qualification run ID")
+        match(value["qualification_run_attempt"], r"[1-9][0-9]*", "accepted qualification run attempt")
+        require(value["qualification_url"] == f"https://github.com/{deployment.repository}/actions/runs/{value['qualification_run_id']}/attempts/{value['qualification_run_attempt']}",
+                "qualification URL differs from qualification run")
         expires_at = parse_time(value["expires_at"])
         require(allow_expired or expires_at > utcnow(), "accepted image has expired; qualify and accept a new image")
         return cls(**value)
@@ -73,12 +78,14 @@ def selected_record(result, deployment, checksum):
             and all(value["status"] == "passed" for value in result["validation"]["runs_on"]), "image qualification evidence is incomplete")
     require(result["cloud"]["boot_mode"] == "uefi", "accepted image must have qualified with actual UEFI boot")
     execution = result["execution"]
+    qualification = QualificationRun.from_result(result)
     value = {"repository": deployment.repository, "account_id": result["cloud"]["account_id"],
              "region": result["cloud"]["region"], "ami_id": result["cloud"]["ami_id"],
              "ami_boot_mode": result["cloud"]["ami_boot_mode"], "build_id": execution["build_id"],
              "recipe_id": result["source"]["recipe_id"], "kernel_release": result["payload"]["kernel_release"],
              "expires_at": result["lifecycle"]["expires_at"], "qualification_sha256": checksum,
-             "qualification_url": f"https://github.com/{deployment.repository}/actions/runs/{execution['run_id']}/attempts/{execution['run_attempt']}"}
+             "qualification_run_id": qualification.run_id, "qualification_run_attempt": qualification.run_attempt,
+             "qualification_url": f"https://github.com/{deployment.repository}/actions/runs/{qualification.run_id}/attempts/{qualification.run_attempt}"}
     record = {"schema_version": 1, "image": value}
     AcceptedImage.parse(record, deployment)
     return record
