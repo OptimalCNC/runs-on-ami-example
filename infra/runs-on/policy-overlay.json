@@ -392,6 +392,14 @@
           }
         },
         {
+          "Sid": "FleetInterfaceAuthorization",
+          "Effect": "Allow",
+          "Action": "ec2:CreateFleet",
+          "Resource": {
+            "Fn::Sub": "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:network-interface/*"
+          }
+        },
+        {
           "Sid": "NewInterfacesInSelectedSubnets",
           "Effect": "Allow",
           "Action": "ec2:RunInstances",
