@@ -3,6 +3,7 @@
 import argparse
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 
@@ -35,9 +36,25 @@ def main():
             print("Cobalt application build and execution require the Cobalt SDK and kernel; not run locally.", flush=True)
         if args.tools:
             subprocess.run(["actionlint", "-shellcheck=", *map(str, (ROOT / ".github/workflows").glob("*.yml"))], check=True)
-            subprocess.run(["terraform", f"-chdir={ROOT / 'infra'}", "fmt", "-check"], check=True)
-            subprocess.run(["terraform", f"-chdir={ROOT / 'infra'}", "init", "-backend=false", "-input=false", "-lockfile=readonly"], check=True)
-            subprocess.run(["terraform", f"-chdir={ROOT / 'infra'}", "validate"], check=True)
+            terraform_cache = ROOT / "infra/.terraform/providers"
+            for terraform_root in ("infra/foundation", "infra", "infra/operator"):
+                source = ROOT / terraform_root
+                target = directory / terraform_root
+                target.mkdir(parents=True, exist_ok=True)
+                # Validate reusable source with synthetic inputs, independent of local state/tfvars.
+                for pattern in ("*.tf", ".terraform.lock.hcl", "*.tfvars.json.example"):
+                    for path in source.glob(pattern):
+                        shutil.copyfile(path, target / path.name)
+                if (source / "tests").is_dir():
+                    shutil.copytree(source / "tests", target / "tests")
+                command = ["terraform", f"-chdir={target}"]
+                subprocess.run([*command, "fmt", "-check", "-recursive"], check=True)
+                plugins = [f"-plugin-dir={terraform_cache}"] if terraform_cache.is_dir() else []
+                subprocess.run([*command, "init", "-backend=false", "-input=false", "-lockfile=readonly", *plugins], check=True)
+                terraform_cache = target / ".terraform/providers"
+                subprocess.run([*command, "validate"], check=True)
+                if (target / "tests").is_dir():
+                    subprocess.run([*command, "test", "-no-color"], check=True)
             template = "images/xenomai-cobalt/image.pkr.hcl"
             subprocess.run(["packer", "fmt", "-check", template], cwd=ROOT, check=True)
             key = directory / "dummy-key"

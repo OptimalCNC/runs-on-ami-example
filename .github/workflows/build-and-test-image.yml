@@ -6,7 +6,10 @@ on:
       stage:
         description: Stock management, one qualified Cobalt image, or two-build reproducibility
         type: choice
-        options: [stock, single, qualification]
+        options:
+          - stock
+          - single
+          - qualification
         default: stock
       retain:
         description: Retain candidates until the configured expiry for debugging
@@ -15,36 +18,80 @@ on:
       fault:
         description: Optional controlled probe failure for cleanup qualification
         type: choice
-        options: [none, probe-identity]
+        options:
+          - none
+          - probe-identity
         default: none
 
 permissions:
   contents: read
 
-# Independent dispatches may overlap; none automatically cancels an older build.
 concurrency:
   group: custom-ami-${{ github.run_id }}-${{ github.run_attempt }}
   cancel-in-progress: false
 
 jobs:
+
   prepare:
     if: vars.AMI_EXAMPLE_CLOUD_ENABLED == 'true' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
+    environment: ${{ vars.AMI_DEPLOYMENT_ENVIRONMENT || 'ami-build' }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
     outputs:
+      deployment_uri: ${{ steps.deployment.outputs.uri }}
+      deployment_sha256: ${{ steps.deployment.outputs.sha256 }}
       matrix: ${{ steps.configure.outputs.matrix }}
-      region: ${{ steps.configure.outputs.region }}
-      role_arn: ${{ steps.configure.outputs.role_arn }}
-      environment: ${{ steps.configure.outputs.environment }}
     steps:
       - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
-      - run: python3 scripts/validate-inputs.py --deployment infra/deployment.json
+      - run: |
+          python3 scripts/install-tools.py --group cloud
+          echo "$GITHUB_WORKSPACE/.tools/bin" >> "$GITHUB_PATH"
+          echo "PACKER_PLUGIN_PATH=$GITHUB_WORKSPACE/.tools/plugins" >> "$GITHUB_ENV"
+      - id: bootstrap
+        name: Resolve bootstrap identity
+        run: |
+          test -n "$ROLE_ARN" && test -n "$REGION"
+          [[ "$STATE_URI" == s3://*/* ]]
+          account_id="$(cut -d: -f5 <<< "$ROLE_ARN")"
+          [[ "$account_id" =~ ^[0-9]{12}$ ]]
+          state_path="${STATE_URI#s3://}"
+          bucket="${state_path%%/*}"
+          mkdir -p .execution
+          jq -n --arg repository "$GITHUB_REPOSITORY" --arg account_id "$account_id" \
+            --arg region "$REGION" --arg artifact_bucket "$bucket" \
+            '{repository:$repository,account_id:$account_id,region:$region,artifact_bucket:$artifact_bucket}' \
+            > .execution/cleanup-context.json
+          echo "account_id=$account_id" >> "$GITHUB_OUTPUT"
+        env:
+          ROLE_ARN: ${{ vars.AMI_CONTROLLER_ROLE_ARN }}
+          REGION: ${{ vars.AMI_REGION }}
+          STATE_URI: ${{ vars.AMI_STATE_URI }}
+      - id: auth
+        uses: aws-actions/configure-aws-credentials@v6.2.4
+        with:
+          role-session-name: ami-example-${{ github.run_id }}-${{ github.run_attempt }}
+          role-to-assume: ${{ vars.AMI_CONTROLLER_ROLE_ARN }}
+          aws-region: ${{ vars.AMI_REGION }}
+          allowed-account-ids: ${{ steps.bootstrap.outputs.account_id }}
+      - id: deployment
+        name: Fetch the immutable deployment bundle
+        run: |
+          python3 scripts/deployment-state.py fetch --state-root "$STATE_URI" \
+            --account-id "$ACCOUNT_ID" --region "$REGION" --repository "$GITHUB_REPOSITORY" --output .deployment
+          jq -r 'to_entries[] | "\(.key)=\(.value)"' .deployment/binding.json >> "$GITHUB_OUTPUT"
+        env:
+          ACCOUNT_ID: ${{ steps.bootstrap.outputs.account_id }}
+          REGION: ${{ vars.AMI_REGION }}
+          STATE_URI: ${{ vars.AMI_STATE_URI }}
       - id: configure
         run: |
-          python3 scripts/image-config.py --output artifacts/config.json
-          jq -r 'to_entries[] | "\(.key)=\(.value)"' artifacts/config.json >> "$GITHUB_OUTPUT"
-          test "$(jq -r .repository infra/deployment.json)" = "$GITHUB_REPOSITORY"
+          python3 scripts/validate-inputs.py --deployment .deployment/deployment.json
+          python3 scripts/preflight.py --deployment .deployment/deployment.json --output .preflight/preflight.json
           case "$BUILD_STAGE:$FAULT" in
             stock:*) matrix='["stock"]' ;;
             single:*|*:probe-identity) matrix='["one"]' ;;
@@ -54,37 +101,15 @@ jobs:
         env:
           BUILD_STAGE: ${{ inputs.stage }}
           FAULT: ${{ inputs.fault }}
-
-  preflight:
-    needs: prepare
-    runs-on: ubuntu-24.04
-    environment: ${{ needs.prepare.outputs.environment }}
-    permissions:
-      contents: read
-      id-token: write
-    steps:
-      - uses: actions/checkout@v7.0.1
-        with:
-          persist-credentials: false
-      - run: |
-          python3 scripts/install-tools.py --group cloud
-          echo "$GITHUB_WORKSPACE/.tools/bin" >> "$GITHUB_PATH"
-          echo "PACKER_PLUGIN_PATH=$GITHUB_WORKSPACE/.tools/plugins" >> "$GITHUB_ENV"
-      - uses: aws-actions/configure-aws-credentials@v6.2.4
-        with:
-          role-session-name: ami-example-${{ github.run_id }}-${{ github.run_attempt }}
-          role-to-assume: ${{ needs.prepare.outputs.role_arn }}
-          aws-region: ${{ needs.prepare.outputs.region }}
-      - run: python3 scripts/preflight.py
-      - if: always()
-        uses: actions/upload-artifact@v7.0.1
-        with:
-          name: admission-${{ github.run_id }}-${{ github.run_attempt }}
-          path: artifacts/preflight.json
-          if-no-files-found: warn
+      - if: always() && steps.auth.outcome == 'success'
+        run: |
+          if [[ -f .preflight/preflight.json ]]; then
+            python3 scripts/retain-artifacts.py --cleanup-context .execution/cleanup-context.json \
+              --directory .preflight --prefix "admission/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" --output .preflight/artifact-index.json
+          fi
 
   qualify:
-    needs: [prepare, preflight]
+    needs: prepare
     strategy:
       fail-fast: false
       max-parallel: 1
@@ -97,15 +122,19 @@ jobs:
     uses: ./.github/workflows/qualify-image.yml
     with:
       variant: ${{ matrix.variant }}
-      job_prefix: "qualify (${{ matrix.variant }}) / "
+      job_prefix: 'qualify (${{ matrix.variant }}) / '
       retain: ${{ inputs.retain }}
       fault: ${{ inputs.fault }}
+      deployment_uri: ${{ needs.prepare.outputs.deployment_uri }}
+      deployment_sha256: ${{ needs.prepare.outputs.deployment_sha256 }}
 
   compare:
     if: inputs.stage == 'qualification'
-    needs: [prepare, qualify]
+    needs:
+      - prepare
+      - qualify
     runs-on: ubuntu-24.04
-    environment: ${{ needs.prepare.outputs.environment }}
+    environment: ${{ vars.AMI_DEPLOYMENT_ENVIRONMENT || 'ami-build' }}
     permissions:
       contents: read
       id-token: write
@@ -113,29 +142,62 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
+      - run: |
+          python3 scripts/install-tools.py --group cloud
+          echo "$GITHUB_WORKSPACE/.tools/bin" >> "$GITHUB_PATH"
+          echo "PACKER_PLUGIN_PATH=$GITHUB_WORKSPACE/.tools/plugins" >> "$GITHUB_ENV"
+      - id: bootstrap
+        name: Resolve bootstrap identity
+        run: |
+          test -n "$ROLE_ARN" && test -n "$REGION"
+          [[ "$STATE_URI" == s3://*/* ]]
+          account_id="$(cut -d: -f5 <<< "$ROLE_ARN")"
+          [[ "$account_id" =~ ^[0-9]{12}$ ]]
+          state_path="${STATE_URI#s3://}"
+          bucket="${state_path%%/*}"
+          mkdir -p .execution
+          jq -n --arg repository "$GITHUB_REPOSITORY" --arg account_id "$account_id" \
+            --arg region "$REGION" --arg artifact_bucket "$bucket" \
+            '{repository:$repository,account_id:$account_id,region:$region,artifact_bucket:$artifact_bucket}' \
+            > .execution/cleanup-context.json
+          echo "account_id=$account_id" >> "$GITHUB_OUTPUT"
+        env:
+          ROLE_ARN: ${{ vars.AMI_CONTROLLER_ROLE_ARN }}
+          REGION: ${{ vars.AMI_REGION }}
+          STATE_URI: ${{ vars.AMI_STATE_URI }}
+      - id: auth
+        uses: aws-actions/configure-aws-credentials@v6.2.4
+        with:
+          role-session-name: ami-example-${{ github.run_id }}-${{ github.run_attempt }}
+          role-to-assume: ${{ vars.AMI_CONTROLLER_ROLE_ARN }}
+          aws-region: ${{ vars.AMI_REGION }}
+          allowed-account-ids: ${{ steps.bootstrap.outputs.account_id }}
+      - id: deployment
+        name: Fetch the immutable deployment bundle
+        run: |
+          python3 scripts/deployment-state.py fetch --uri "$DEPLOYMENT_URI" --sha256 "$DEPLOYMENT_SHA256" \
+            --account-id "$ACCOUNT_ID" --region "$REGION" --repository "$GITHUB_REPOSITORY" --output .deployment
+          jq -r 'to_entries[] | "\(.key)=\(.value)"' .deployment/binding.json >> "$GITHUB_OUTPUT"
+        env:
+          ACCOUNT_ID: ${{ steps.bootstrap.outputs.account_id }}
+          REGION: ${{ vars.AMI_REGION }}
+          DEPLOYMENT_URI: ${{ needs.prepare.outputs.deployment_uri }}
+          DEPLOYMENT_SHA256: ${{ needs.prepare.outputs.deployment_sha256 }}
       - uses: actions/download-artifact@v8.0.1
         with:
           pattern: ${{ github.run_id }}-${{ github.run_attempt }}-*-final
           path: artifacts/comparison
       - run: |
-          python3 scripts/install-tools.py --group cloud
-          echo "$GITHUB_WORKSPACE/.tools/bin" >> "$GITHUB_PATH"
-          echo "PACKER_PLUGIN_PATH=$GITHUB_WORKSPACE/.tools/plugins" >> "$GITHUB_ENV"
-      - uses: aws-actions/configure-aws-credentials@v6.2.4
-        with:
-          role-session-name: ami-example-${{ github.run_id }}-${{ github.run_attempt }}
-          role-to-assume: ${{ needs.prepare.outputs.role_arn }}
-          aws-region: ${{ needs.prepare.outputs.region }}
-      - run: |
-          python3 scripts/compare-builds.py \
+          python3 scripts/compare-builds.py --deployment .deployment/deployment.json \
             "artifacts/comparison/$RUN_ID-$ATTEMPT-one-final/image-result.json" \
-            "artifacts/comparison/$RUN_ID-$ATTEMPT-two-final/image-result.json" \
-            --output artifacts/comparison/reproducibility.json
+            "artifacts/comparison/$RUN_ID-$ATTEMPT-two-final/image-result.json" --output artifacts/comparison/reproducibility.json
         env:
           RUN_ID: ${{ github.run_id }}
           ATTEMPT: ${{ github.run_attempt }}
-      - if: always()
-        run: python3 scripts/retain-artifacts.py --directory artifacts/comparison --prefix "comparisons/$RUN_ID-$ATTEMPT"
+      - if: always() && steps.auth.outcome == 'success'
+        run: |
+          python3 scripts/retain-artifacts.py --cleanup-context .execution/cleanup-context.json \
+            --directory artifacts/comparison --prefix "comparisons/$RUN_ID-$ATTEMPT" --output artifacts/comparison/artifact-index.json
         env:
           RUN_ID: ${{ github.run_id }}
           ATTEMPT: ${{ github.run_attempt }}

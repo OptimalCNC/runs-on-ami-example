@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """Register, observe, or recover the ownership of explicitly planned GitHub jobs."""
 import argparse
+import dataclasses
 import importlib.util
 from pathlib import Path
 import time
 
-from example import ROOT, Cloud, load_deployment, read_json, require, timestamp, write_json
-from execution_record import ExecutionRecord, registered_records, retain_record
+from example import ROOT, Cloud, file_sha, load_cleanup_context, load_deployment, read_json, require, timestamp, write_json
+from deployment_state import ConfigurationBinding, verify_materialized
+from execution_record import ExecutionRecord, ImageSnapshot, registered_records, retain_record
 from runner_instances import adopt_test_instances
 
 spec = importlib.util.spec_from_file_location("github_api", ROOT / "scripts/github-api.py")
@@ -14,13 +16,16 @@ github = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(github)
 
 
-def register(cloud, record, output):
-    record.require_deployment(cloud.deployment)
+def register(cloud, record, output, binding_output=None):
+    record.require_context(cloud.deployment)
     require(record.instance_type == cloud.deployment.instance_type, "execution instance type differs from deployment")
     if record.image is not None:
         record.image.inspect(cloud)
     write_json(output, record.as_dict())
-    return retain_record(cloud, record, output)
+    uri = retain_record(cloud, record, output)
+    if binding_output is not None:
+        write_json(binding_output, {"uri": uri, "sha256": file_sha(output)})
+    return uri
 
 
 def registration_waiting(jobs, plan):
@@ -34,14 +39,15 @@ def instance_ids(jobs):
 
 
 def monitor(cloud, record, output, poll=15):
-    record.require_deployment(cloud.deployment)
+    record.require_context(cloud.deployment)
     require(poll > 0, "poll interval must be positive")
     attempt = record.attempt
     started = time.monotonic()
     queued_since = {}
     report = {"status": "failed", "build_id": record.build_id, "started_at": timestamp(), "observed_instances": {}}
     try:
-        image, expiry, _ = record.image.inspect(cloud) if record.image else (None, None, None)
+        image = record.image.inspect(cloud) if record.image else None
+        expiry = record.image.expires_at if record.image else None
         while True:
             current = github.selected_jobs(github.jobs(attempt.repository, attempt.run_id, attempt.run_attempt), record.plan)
             report["jobs"] = current
@@ -78,16 +84,18 @@ def recover(cloud, repository, run_id, attempt, output):
               "observed_instances": {}, "errors": []}
     try:
         records = registered_records(cloud, completed, output / "records")
+        require(bool(records), "execution recovery records are missing; runner ownership cannot be inferred")
         jobs = github.jobs(repository, completed.run_id, completed.run_attempt)
         for record in records:
             try:
-                record.require_deployment(cloud.deployment)
+                record.require_context(cloud.deployment)
                 selected = github.selected_jobs(jobs, record.plan)
                 active = [identifier for identifier in instance_ids(selected)
                           if cloud.instance(identifier)["State"]["Name"] != "terminated"]
                 if not active:
                     continue
-                image, expiry, _ = record.image.inspect(cloud, recovery=True) if record.image else (None, None, None)
+                image = record.image.inspect(cloud) if record.image else None
+                expiry = record.image.expires_at if record.image else None
                 for instance in adopt_test_instances(cloud, record.build_id, active, image=image,
                                                       expiry=expiry, instance_type=record.instance_type):
                     report["observed_instances"][instance["InstanceId"]] = instance
@@ -109,7 +117,6 @@ def main():
     commands = parser.add_subparsers(dest="command", required=True)
     for name in ("register", "monitor", "recover"):
         command = commands.add_parser(name)
-        command.add_argument("--deployment", default="infra/deployment.json")
         command.add_argument("--output", type=Path, required=True,
                              help="execution JSON file" if name == "register" else "report directory")
         if name == "monitor":
@@ -120,6 +127,9 @@ def main():
             command.add_argument("--run-id", required=True)
             command.add_argument("--run-attempt", required=True)
         if name == "register":
+            command.add_argument("--deployment", required=True)
+            command.add_argument("--configuration-binding", help="exact configuration bundle version and digest")
+            command.add_argument("--binding-output", type=Path, required=True, help="registered execution version and digest JSON")
             command.add_argument("--build-id", required=True)
             command.add_argument("--plan", required=True, help="JSON mapping stages to explicit name, needs, and adopt fields")
             command.add_argument("--terminal", required=True)
@@ -128,23 +138,37 @@ def main():
             image = command.add_mutually_exclusive_group()
             image.add_argument("--accepted", help="accepted image record to snapshot")
             image.add_argument("--result", help="retained candidate result to snapshot")
+        if name == "recover":
+            command.add_argument("--cleanup-context", required=True)
     args = parser.parse_args()
-    cloud = Cloud(load_deployment(args.deployment, inventories=args.command != "recover"))
     if args.command == "register":
-        selection = ({"kind": "accepted" if args.accepted else "candidate", "record": read_json(args.accepted or args.result)}
-                     if args.accepted or args.result else None)
+        configuration = ConfigurationBinding.parse(read_json(args.configuration_binding)) if args.configuration_binding else None
+        deployment = verify_materialized(Path(args.deployment), configuration) if configuration else load_deployment(args.deployment)
+        cloud = Cloud(deployment)
+        selection = None
+        if args.accepted:
+            from accepted_image import AcceptedImage
+            image = AcceptedImage.parse(read_json(args.accepted), deployment).inspect(cloud)
+            selection = ImageSnapshot.capture(image)
+        elif args.result:
+            from retained_candidate import inspect_candidate, validate_source
+            result = read_json(args.result)
+            validate_source(result, deployment)
+            selection = ImageSnapshot.capture(inspect_candidate(cloud, result))
         record = ExecutionRecord.parse({"schema_version": 1, "repository": args.repository,
             "run_id": args.run_id, "run_attempt": args.run_attempt, "build_id": args.build_id,
-            "account_id": cloud.deployment.account_id, "region": cloud.deployment.region,
+            "cleanup": dataclasses.asdict(deployment.cleanup()),
             "instance_type": cloud.deployment.instance_type,
             "plan": read_json(args.plan), "terminal": args.terminal, "deadline_seconds": args.deadline_seconds,
-            "registration_seconds": args.registration_seconds, "image": selection})
-        register(cloud, record, args.output)
+            "registration_seconds": args.registration_seconds, "configuration": configuration.as_dict() if configuration else None,
+            "image": selection.as_dict() if selection else None})
+        register(cloud, record, args.output, args.binding_output)
     elif args.command == "monitor":
-        report = monitor(cloud, ExecutionRecord.parse(read_json(args.record)), args.output, args.poll_seconds)
+        record = ExecutionRecord.parse(read_json(args.record))
+        report = monitor(Cloud(record.cleanup), record, args.output, args.poll_seconds)
         require(report["status"] == "passed", "monitored jobs did not complete successfully")
     else:
-        recover(cloud, args.repository, args.run_id, args.run_attempt, args.output)
+        recover(Cloud(load_cleanup_context(args.cleanup_context)), args.repository, args.run_id, args.run_attempt, args.output)
 
 
 if __name__ == "__main__":

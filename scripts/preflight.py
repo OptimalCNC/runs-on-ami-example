@@ -2,7 +2,18 @@
 """Read-only AWS admission checks before launching any candidate resources."""
 import argparse
 
-from example import Cloud, load_deployment, parse_time, require, utcnow, write_json
+from example import Cloud, ImageIdentity, load_deployment, parse_time, require, utcnow, write_json
+
+
+def resolve_parent(cloud, selection):
+    images = cloud.call("ec2", "describe-images", {"ImageIds": [selection.id], "Owners": [selection.owner]})["Images"]
+    require(len(images) == 1, f"AMI owner/visibility mismatch: {selection.id}")
+    image = images[0]
+    require(image.get("ImageId") == selection.id and image.get("OwnerId") == selection.owner,
+            "parent AMI selection differs from AWS")
+    return ImageIdentity.parse({"id": selection.id, "owner": selection.owner,
+                                "architecture": image["Architecture"],
+                                "boot_mode": image.get("BootMode", "legacy-bios")}, "selected parent")
 
 
 def inspect_ami(cloud, identity):
@@ -77,8 +88,8 @@ def inspect_deployment(cloud):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--deployment", default="infra/deployment.json")
-    parser.add_argument("--output", default="artifacts/preflight.json")
+    parser.add_argument("--deployment", required=True, help="resolved deployment manifest")
+    parser.add_argument("--output", required=True)
     args = parser.parse_args()
     result = inspect_deployment(Cloud(load_deployment(args.deployment)))
     write_json(args.output, result)

@@ -7,9 +7,9 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from support import ROOT, FakeCloud, deployment, guest, module, result, tags
-from example import BUILD_TAG, InvalidInput, file_sha, read_json, recipe, tags_of, write_json
+from example import BUILD_TAG, Cloud, InvalidInput, file_sha, read_json, recipe, tags_of, write_json
 from qualification import QualificationRun
-from execution_record import ExecutionRecord, RunAttempt
+from execution_record import ExecutionRecord, ImageSnapshot, RunAttempt
 import retained_candidate as retained
 
 
@@ -81,6 +81,41 @@ class RetainedCandidateContract(unittest.TestCase):
         with self.assertRaisesRegex(InvalidInput, "recipe identities"):
             retained.validate_source(candidate, deployment(), for_launch=False)
 
+    def test_parent_inventory_location_is_not_a_recipe_or_admission_identity(self):
+        candidate = source_candidate()
+        relocated = dataclasses.replace(deployment(), source_ami=dataclasses.replace(
+            deployment().source_ami, inventory_file="another/location/inventory.json"))
+        self.assertEqual(recipe(read_json(ROOT / "images/xenomai-cobalt/inputs.lock.json"), relocated)[0],
+                         candidate["source"]["recipe_id"])
+        self.assertEqual(retained.validate_source(candidate, relocated).build_id, "123-1-one")
+        candidate["source"]["parent_ami"]["inventory_sha256"] = "9" * 64
+        with self.assertRaisesRegex(InvalidInput, "candidate parent identity differs"):
+            retained.validate_source(candidate, relocated)
+
+    def test_generated_and_historical_input_uris_identify_the_original_build(self):
+        d = deployment()
+        candidate = source_candidate()
+        historical = candidate["lifecycle"]["artifact_locations"][0]
+        responses = {"get-caller-identity": {"Account": d.account_id}, "get-bucket-versioning": {"Status": "Enabled"},
+                     "get-bucket-location": {"LocationConstraint": None}, "head-object": {"VersionId": "generated-version"}}
+        with tempfile.TemporaryDirectory() as temporary, patch("example.run"), \
+             patch.object(Cloud, "call", side_effect=lambda _service, operation, *_: responses[operation]):
+            archive = Path(temporary) / "inputs.tar"
+            archive.write_bytes(b"locked source archive")
+            generated = Cloud(d).retain(archive, "123-1-one/inputs.tar")
+        self.assertEqual(generated,
+                         "s3://example-artifacts/example/repo/reports/123-1-one/inputs.tar?versionId=generated-version")
+        for uri in (generated, historical):
+            candidate["lifecycle"]["artifact_locations"] = [uri]
+            with self.subTest(uri=uri):
+                self.assertEqual(retained.validate_source(candidate, d).build_id, "123-1-one")
+                self.assertEqual(candidate["lifecycle"]["artifact_locations"], [uri])
+        for uri in (generated.replace("123-1-one", "124-1-one"), generated.replace("example/repo/", "other/repo/"),
+                    generated.replace("example-artifacts", "other-bucket"), generated.replace("/reports/", "/state/")):
+            candidate["lifecycle"]["artifact_locations"] = [uri]
+            with self.subTest(uri=uri), self.assertRaises(InvalidInput):
+                retained.validate_source(candidate, d)
+
     def test_preparation_preserves_source_execution_and_writes_explicit_configuration(self):
         original = source_candidate()
         cloud = MagicMock(deployment=deployment())
@@ -116,11 +151,13 @@ class RetainedCandidateContract(unittest.TestCase):
         image = candidate_image(candidate)
         with patch.object(retained, "inspect_ami", return_value=image), patch.object(retained, "inspect_instance_type"):
             self.assertIs(retained.inspect_candidate(cloud, candidate), image)
+        cloud.deployment = deployment().cleanup()
         with patch.object(retained, "inspect_ami", return_value=image), patch.object(retained, "inspect_instance_type") as runtime, \
              patch.object(retained, "inspect_root_volume") as root_volume:
             self.assertIs(retained.inspect_candidate(cloud, candidate, minimum_seconds=None, for_launch=False), image)
             runtime.assert_not_called()
             root_volume.assert_not_called()
+        cloud.deployment = deployment()
         for fault in ("build", "retention", "recipe", "snapshot", "creation", "expiry"):
             candidate = source_candidate()
             image = candidate_image(candidate)
@@ -139,13 +176,14 @@ class RetainedCandidateContract(unittest.TestCase):
                 retained.inspect_candidate(cloud, candidate)
 
     def execution_record(self, candidate):
+        image = {**candidate_image(candidate), "BootMode": candidate["cloud"]["ami_boot_mode"]}
         return ExecutionRecord.parse({"schema_version": 1, "repository": "example/repo", "run_id": "124", "run_attempt": "2",
-            "account_id": "123456789012", "region": "us-east-1", "instance_type": "t3.small",
+            "cleanup": dataclasses.asdict(deployment().cleanup()), "configuration": None, "instance_type": "t3.small",
             "build_id": CONTEXT.build_id, "deadline_seconds": 45 * 60, "registration_seconds": 600,
             "plan": {"configure": {"name": "Prepare selected image", "needs": [], "adopt": False},
                      "probe": {"name": "Boot selected image", "needs": ["configure"], "adopt": False},
                      "test": {"name": "Run selected image", "needs": ["probe"], "adopt": True}},
-            "terminal": "test", "image": {"kind": "candidate", "record": candidate}})
+            "terminal": "test", "image": ImageSnapshot.capture(image).as_dict()})
 
     def test_retained_monitor_uses_only_the_explicit_plan_and_retains_admission_failures(self):
         watchdog = module("watchdog")
@@ -155,12 +193,12 @@ class RetainedCandidateContract(unittest.TestCase):
         self.assertEqual(watchdog.registration_waiting(jobs, record.plan), [])
         cloud = FakeCloud()
         with tempfile.TemporaryDirectory() as temporary, \
-             patch.object(retained, "inspect_candidate", side_effect=InvalidInput("expired")), \
-             self.assertRaisesRegex(InvalidInput, "expired"):
+             patch.object(ImageSnapshot, "inspect", side_effect=InvalidInput("ownership changed")), \
+             self.assertRaisesRegex(InvalidInput, "ownership changed"):
             try:
                 watchdog.monitor(cloud, record, Path(temporary))
             finally:
-                self.assertEqual(read_json(Path(temporary) / "watchdog.json")["error"], "expired")
+                self.assertEqual(read_json(Path(temporary) / "watchdog.json")["error"], "ownership changed")
         self.assertEqual(cloud.retained, ["124-2-one/watchdog.json"])
 
     def test_recovery_uses_registered_historical_image_and_exact_instance(self):
@@ -169,8 +207,7 @@ class RetainedCandidateContract(unittest.TestCase):
         candidate["source"]["recipe_files"]["historical-recipe"] = "f" * 64
         record = self.execution_record(candidate)
         cloud = FakeCloud()
-        cloud.deployment = dataclasses.replace(cloud.deployment, instance_type="t3.medium",
-                                                source_ami=dataclasses.replace(cloud.deployment.source_ami, id="ami-" + "9" * 17))
+        cloud.deployment = cloud.deployment.cleanup()
         cloud.machines[0]["Tags"] = [{"Key": "ami-example:runs-on-repository", "Value": "example/repo"}]
         job = {"name": "Run selected image", "runner_name": "runs-on--i-22222222222222222--124"}
         attempt = RunAttempt.parse("example/repo", "124", "2")
@@ -178,12 +215,11 @@ class RetainedCandidateContract(unittest.TestCase):
              patch.object(watchdog.github, "completed", return_value=attempt) as completed, \
              patch.object(watchdog.github, "jobs", return_value=[job]) as jobs, \
              patch.object(watchdog, "registered_records", return_value=[record]), \
-             patch.object(retained, "inspect_candidate", return_value=candidate_image(candidate)) as inspect:
+             patch.object(ImageSnapshot, "inspect", return_value=candidate_image(candidate)) as inspect:
             watchdog.recover(cloud, "example/repo", "124", "2", Path(temporary))
         completed.assert_called_once_with("example/repo", "124", "2")
         jobs.assert_called_once_with("example/repo", "124", "2")
-        self.assertFalse(inspect.call_args.kwargs["for_launch"])
-        self.assertIsNone(inspect.call_args.kwargs["minimum_seconds"])
+        inspect.assert_called_once_with(cloud)
         self.assertEqual(tags_of(cloud.machines[0])[BUILD_TAG], CONTEXT.build_id)
         self.assertEqual(tags_of(cloud.machines[1])[BUILD_TAG], "123-1-one")
         self.assertEqual(tags_of(cloud.images[0])[BUILD_TAG], "123-1-one")
@@ -195,7 +231,7 @@ class RetainedCandidateContract(unittest.TestCase):
         cloud = FakeCloud()
         jobs = [{"name": "Prepare selected image", "conclusion": "success"},
                 {"name": "Boot selected image", "status": "in_progress"}]
-        with tempfile.TemporaryDirectory() as temporary, patch.object(retained, "inspect_candidate", return_value=candidate_image(candidate)), \
+        with tempfile.TemporaryDirectory() as temporary, patch.object(ImageSnapshot, "inspect", return_value=candidate_image(candidate)), \
              patch.object(watchdog.github, "jobs", return_value=jobs), \
              patch.object(watchdog, "adopt_test_instances", return_value=[]), \
              patch.object(watchdog.time, "monotonic", side_effect=[0, record.deadline_seconds]):
@@ -303,7 +339,8 @@ class Finalization(unittest.TestCase):
             source = root / "verified.json"
             destination = root / "final.json"
             write_json(source, self.candidate)
-            args = ["finalize-image.py", "--build-id", CONTEXT.build_id, "--result", str(source),
+            args = ["finalize-image.py", "--deployment", str(root / "deployment.json"),
+                    "--build-id", CONTEXT.build_id, "--result", str(source),
                     "--cleanup", str(root / "missing.json"), "--output", str(destination)]
             with patch("sys.argv", args), self.assertRaisesRegex(InvalidInput, "qualification failed"):
                 self.finalizer.main()

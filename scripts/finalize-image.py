@@ -5,7 +5,7 @@ import copy
 import dataclasses
 from pathlib import Path
 
-from example import Cloud, INSTANCE, load_deployment, match, read_json, require, write_json
+from example import Cloud, INSTANCE, load_cleanup_context, match, read_json, require, write_json
 from qualification import QualificationRun
 from retained_candidate import inspect_candidate
 
@@ -92,7 +92,7 @@ def finalize(cloud, build, result, cleanup_report):
         errors.append(f"verification: {error}")
     if not errors and verified.result["execution"]["build_id"] != verified.qualification.build_id:
         try:
-            inspect_candidate(cloud, verified.result)
+            inspect_candidate(cloud, verified.result, for_launch=False)
             cleanup_status["retained_images"] = [verified.result["cloud"]["ami_id"]]
         except Exception as error:
             errors.append(f"source image retention: {error}")
@@ -119,7 +119,7 @@ def record_errors(result, errors):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--deployment", default="infra/deployment.json")
+    parser.add_argument("--deployment", required=True)
     parser.add_argument("--build-id", required=True)
     parser.add_argument("--result", type=Path, required=True)
     parser.add_argument("--cleanup", type=Path, required=True)
@@ -132,7 +132,7 @@ def main():
         require(isinstance(loaded, dict), "image result must be an object")
         result = loaded
         cleanup_report = read_json(args.cleanup)
-        result = finalize(Cloud(load_deployment(args.deployment)), context.build_id, result, cleanup_report)
+        result = finalize(Cloud(load_cleanup_context(args.deployment)), context.build_id, result, cleanup_report)
     except Exception as error:
         record_errors(result, [str(error)])
     write_json(args.output, result)

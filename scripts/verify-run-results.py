@@ -90,7 +90,7 @@ def read_smoke(directory):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--deployment", default="infra/deployment.json")
+    parser.add_argument("--deployment", required=True, help="resolved deployment manifest")
     parser.add_argument("--result", required=True)
     parser.add_argument("--probe", required=True)
     parser.add_argument("--smoke-a", type=Path, required=True)

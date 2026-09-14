@@ -10,10 +10,11 @@ compiled payloads. Those claims require the live stages below.
 
 ## Cost approval and execution stages
 
-The selected account's [resource inventory](../infra/resources.json) records
-the current resource IDs, the approved trial scope and regional estimates,
-retention deadlines, and cleanup ownership. Update its observed resources
-and workflow IDs after each cloud stage.
+Keep resource inventories, approvals, regional estimates, retention deadlines,
+and cleanup ownership in the deployment's private `state/` and `runs/`
+records. Generate observed infrastructure identities from Terraform and
+CloudFormation outputs. Record each execution's evidence and cleanup result
+without editing reusable source files.
 
 Before any billable action, review the actual account, region, exact instance
 type, parent AMI size, existing network path, retention, and expected duration.
@@ -26,9 +27,9 @@ authorize Terraform apply, AMI copies, probes, or workflow dispatches.
 | Supporting infrastructure | IAM/OIDC roles, SSM profiles, no-ingress security group, versioned S3 bucket; reuse existing equivalents where selected | Persistent until explicit teardown; IAM and security groups have no direct usage charge, S3 data/requests do |
 | Parent inventory | Launch directly from pinned public RunsOn AMIs; one short EC2 inventory probe, or two if the controller differs | Probes terminate in `finally`, delete their root volumes, and are tagged for orphan sweeping; no parent copy or new snapshot is needed |
 | Stock qualification | One RunsOn controller plus one temporary Packer builder, each with a root EBS volume | Terminated when the job completes; no candidate AMI is created |
-| Single-build qualification | One controller, one builder, one direct probe, two fresh RunsOn smoke instances, and one candidate AMI/snapshot set | Instances terminate after testing; the approved trial retains the candidate for 24 hours |
+| Single-build qualification | One controller, one builder, one direct probe, two fresh RunsOn smoke instances, and one candidate AMI/snapshot set | Instances terminate after testing; candidate retention follows the explicit deployment policy |
 | Retained-image qualification | One direct probe and two fresh RunsOn smoke instances from an existing retained candidate | Verifies the immutable candidate record before launching; terminates new instances and preserves the original image expiry |
-| Accepted-image application | One fresh RunsOn instance from the committed accepted AMI | Compiles and runs the Cobalt test, retains evidence, then terminates; does not extend image retention |
+| Accepted-image application | One fresh RunsOn instance from the frozen accepted-image selection | Compiles and runs the Cobalt test, retains evidence, then terminates; does not extend image retention |
 | Full qualification | Two sequential repetitions, each with one controller, one builder, one direct probe, two separate RunsOn smoke instances, and one candidate AMI/snapshot set | Probe and tests are short; candidates deleted after reports unless explicitly retained |
 | Failure drills | One controlled probe failure and one manually interrupted build, in separate approved dispatches | Verify diagnostic retention and both independent cleanup paths |
 
@@ -85,53 +86,61 @@ the SSM agent, and `/usr/local/bin/runs-on-bootstrap-[v]<version>` matching
 `runs_on.bootstrap_version`. Record that bootstrap version separately from
 the service's `runs_on.version`; they have independent version numbers.
 GitHub's agent freshness requirements still apply;
-refresh the reviewed parent and lock together when needed. The current build
-uses Ubuntu's immutable `20260911T000000Z` snapshot. Choose a compatible parent
-whose packages do not require downgrades; installations refuse downgrades and
+refresh the reviewed parent and lock together when needed. The image input lock
+selects an immutable Ubuntu snapshot. Choose a compatible parent whose
+packages do not require downgrades; installations refuse downgrades and
 any unreviewed package-state change.
 
-After the supporting infrastructure and probe costs are approved, fill the
-actual deployment fields. RunsOn need not be installed for this direct probe:
-leave `runs_on` as `null` until the actual environment and version are known.
-During initial inventory capture only, the two
-inventory hashes may temporarily be 64 zeroes; the normal build rejects them
-because they will not match the inventory files. Run with credentials for the
-intended controller role and an `ami-example-` role-session name:
+After provisioning or importing the foundation, RunsOn installation, and
+management access, resolve their actual identities into `bindings.json`.
+Inventory capture takes bindings and a parent selection directly; it does not
+require the final manifest. Generate a selection from the specification; it
+contains the exact parent `id` and `owner`.
 
 ```sh
 python3 scripts/install-tools.py --group cloud
 export PATH="$PWD/.tools/bin:$PATH"
-python3 scripts/probe-ami.py --capture-inventory source --build-id 1789171200-1-stock --execute
+python3 scripts/deployment-config.py selection \
+  --spec .deployment/spec.json --parent source \
+  --output .deployment/source-selection.json
+python3 scripts/probe-ami.py --capture-inventory \
+  --bindings .deployment/bindings.json \
+  --selection .deployment/source-selection.json \
+  --build-id 123456789-1-stock \
+  --output .deployment/parents/source --execute
 ```
 
-The initial inventory uses `instance_type=t3.small`, `vcpus=2`, and
-`parent_root_volume_gib=30` for the selected 30 GiB public parent. Direct
-burstable probes request Standard CPU credits. In `us-east-1`, prices checked
-on 2026-09-13 give approximately $0.0073 for 15 minutes of compute, a baseline
-gp3 root volume, and one public IPv4 address; report storage and requests are
-additional. Retain those reports for the approved period, then remove all
-their S3 versions under the repository prefix. This estimate authorizes no
-additional probes, builds, or RunsOn deployment.
+Use controller credentials with an `ami-example-` role-session name. Review
+the selected parent disk size, probe instance type, network path, and expected
+duration before launching. Direct burstable probes request Standard CPU
+credits. Calculate compute, root-volume, public-IPv4, and report-storage costs
+for the actual region using the rates reviewed for this deployment.
 
-Use a unique numeric build ID for every capture. The full JSON inventory is in
-`artifacts/<build-id>/probe/parent-inventory.json`, with initialization logs in
-the bucket's `<repository>/ssm/<build-id>/` prefix. Copy the inventory to
-`infra/source-inventory.json`. Capture the controller with
-`--capture-inventory controller` and another build ID, or copy the inventory
-when both AMIs are the same clean image. A registered controller's runtime
-workspace and registration state are intentionally not the clean-parent
-inventory source.
+Capture writes a `parent.json` identity and `inventory.json` evidence into
+the requested output directory. Use a unique build ID for every capture.
+Generate the controller selection with `--parent controller` and capture it
+into a separate directory, or reuse the same parent record when source and
+controller select the same clean image. A registered controller's runtime
+workspace is not clean-parent evidence.
 
-Calculate each file's SHA-256 with `sha256sum`, put it in the corresponding
-deployment identity, and commit the deployment and both inventory files. The
-inventory includes package versions, the runner version and binary digest,
-bootstrap paths/digests, and checks for registration, workspaces and Secure
-Boot. Validate the configuration locally, then perform the read-only cloud
-admission check:
+The inventory contains package versions, runner version and binary digest,
+bootstrap paths and digests, and registration, workspace, and Secure Boot
+checks. Resolve the deployment manifest only after these records exist;
+resolution verifies their hashes and selected identities. The manifest uses
+relative references to the captured inventories. Keep those files together
+when moving a deployment; publishing snapshots the complete input bundle.
+For separate source/controller records, resolve and validate it before
+performing read-only cloud admission:
 
 ```sh
-python3 scripts/validate-inputs.py --deployment infra/deployment.json
-python3 scripts/preflight.py
+python3 scripts/deployment-config.py manifest \
+  --bindings .deployment/bindings.json \
+  --source-parent .deployment/parents/source/parent.json \
+  --controller-parent .deployment/parents/controller/parent.json \
+  --output .deployment/manifest.json
+python3 scripts/validate-inputs.py --deployment .deployment/manifest.json
+python3 scripts/preflight.py --deployment .deployment/manifest.json \
+  --output .deployment/runs/preflight.json
 ```
 
 AMI state, owners, architecture, boot mode, encryption key access, instance
@@ -141,10 +150,12 @@ are then established by the approved stock stage.
 
 ## Refresh immutable inputs
 
-Input refresh is a separate reviewed change. Update the compatible Linux,
+Input refresh is a separate reviewed change. Recipe locks belong to source;
+operator choices and resolved parent evidence belong to the deployment. Update the compatible Linux,
 Dovetail, and Xenomai source pins and checksums together, plus Ubuntu
-snapshot/package versions/checksums, tools, action SHAs, parent identities,
-and inventory files as needed. Use upstream checksum
+snapshot/package versions/checksums, tools, and workflow release tags in
+source. Refresh selected parent identities and inventories in the deployment
+records as needed. Use upstream checksum
 metadata and the signed Ubuntu package indexes; do not resolve new values
 during an image build. Package indexes and every downloaded `.deb`, including
 dependencies, are retained with the source archives in `inputs.tar` in S3.
@@ -188,7 +199,9 @@ test builds the small Cobalt application and proves it can execute using the
 Cobalt kernel. It does not measure latency.
 
 S3 source retention is finite and configured through
-`artifact_retention_days` (365 by default). Choose any optional parent-copy
+`artifact_retention_days` (365 by default) for the `reports/` prefix.
+The separate `state/` prefix is retained for deployment selection and recovery;
+retire its old versions explicitly after all dependent resources are gone. Choose any optional parent-copy
 retention and preserved source/package retention to cover the required
 reproduction period. If
 the upstream snapshot service becomes unavailable, its preserved signed
@@ -206,9 +219,9 @@ has a 105-minute timeout. Retained-image qualification has a 45-minute
 independent deadline inside a 60-minute watchdog job. These are runtime limits,
 not hard AWS billing caps.
 
-The live Cobalt trial compiled the kernel in about 20 minutes on `c7i.large`,
-then needed over 30 minutes for AWS snapshot preparation. The Packer bound
-covers preparation, compilation, input transfer, and snapshot availability.
+The Packer bound covers preparation, compilation, input transfer, and AWS
+snapshot availability. Size the builder and choose deadlines for the selected
+parent, image payload, and regional conditions.
 
 The independent watchdog reports job failures and deadline violations. Its
 workflow calls GitHub's cancellation API when monitoring fails or a deadline
@@ -234,9 +247,9 @@ After normal qualification, approve and run both drills:
    hourly sweep too, or invoke its expired-resource path after a deliberately
    short test expiry in a reviewed deployment change.
 
-Record the exact workflow IDs and evidence for success, controlled failure,
-and interruption. These live drills have not yet been executed for this
-repository.
+Record exact execution IDs and evidence for success, controlled failure,
+and interruption in the deployment's private records. Report which drills
+were actually completed for that deployment.
 
 ## Artifacts and cleanup
 
@@ -246,14 +259,15 @@ produces the qualification record. Reproducibility is a separate validation
 field populated only after both builds finish. The S3 layout is:
 
 ```text
-<repository>/<build-id>/                 Packer logs, input archive, creation record
-<repository>/<build-id>/probe/           Direct boot observations and EC2 diagnostics
-<repository>/ssm/<build-id>/             Complete SSM stdout/stderr and initialization logs
-<repository>/<build-id>/watchdog.json    Independent job/resource observations
-<repository>/<build-id>/final/          Qualification and cleanup results
-<repository>/executions/<run>/<attempt>/ Explicit job plans and selected image records
-<repository>/comparisons/<run-attempt>/ Reproducibility results
-<repository>/cleanup/                   Live resource inventories and cleanup diagnostics
+<repository>/reports/<build-id>/          Packer logs, inputs, creation record
+<repository>/reports/<build-id>/probe/    Direct boot observations and diagnostics
+<repository>/reports/ssm/<build-id>/      SSM stdout/stderr and initialization logs
+<repository>/reports/<build-id>/final/    Qualification and cleanup results
+<repository>/reports/comparisons/         Reproducibility results
+<repository>/reports/cleanup/             Live inventories and cleanup diagnostics
+<repository>/state/configuration/current.tar Current deployment bundle
+<repository>/state/acceptance/current.json Current accepted-image selection
+<repository>/state/executions/<run>/<attempt>/ Saved execution context
 ```
 
 The build and final `artifact-index.json` files record exact S3 object versions
@@ -262,18 +276,27 @@ specific version with `aws s3api get-object --bucket BUCKET --key KEY
 --version-id VERSION LOCAL_FILE`, using the decoded version ID from the index.
 The input archive's versioned location is also in the image result.
 
-Review cleanup without mutations:
+Review cleanup using the saved cleanup context. It contains the owning
+repository, account, region, and artifact bucket and remains usable without
+parent inventories or an accepted image. A workflow saves this context when
+it fetches the deployment bundle. Standalone cleanup can take the bindings
+file, from which it reads only these four fields, or a saved minimal context.
+The following commands only review resources:
 
 ```sh
-python3 scripts/cleanup.py --run-id 123456789
-python3 scripts/cleanup.py --expired
+python3 scripts/cleanup.py --cleanup-context .deployment/bindings.json \
+  --run-id 123456789 --output .deployment/runs/cleanup-review
+python3 scripts/cleanup.py --cleanup-context .deployment/bindings.json \
+  --expired --output .deployment/runs/expiry-review
 ```
 
 Apply cleanup to that explicit scope after its resource list is understood:
 
 ```sh
-python3 scripts/cleanup.py --run-id 123456789 --apply
-python3 scripts/cleanup.py --expired --apply
+python3 scripts/cleanup.py --cleanup-context .deployment/bindings.json \
+  --run-id 123456789 --apply --output .deployment/runs/cleanup
+python3 scripts/cleanup.py --cleanup-context .deployment/bindings.json \
+  --expired --apply --output .deployment/runs/expiry
 ```
 
 Cleanup verifies account identity and live owner/build/purpose tags, retains
@@ -284,9 +307,44 @@ unavailable; image/snapshot evidence is preserved for recovery. Snapshots
 referenced by any remaining account AMI are never deleted. Missing or malformed
 expiry tags are reported through inventory review rather than guessed.
 
-Each workflow saves its explicit execution record before launching runners.
-Completed-run recovery reads that record and the exact attempt's GitHub jobs;
-it does not inspect workflow files or retrieve configuration by commit.
+Each workflow freezes the deployment bundle's exact S3 version and SHA-256
+before launching runners, then saves an explicit execution record. An
+application run also freezes the accepted-image record's exact version and
+digest. Later jobs fetch those exact objects; publishing a new deployment or
+promoting a new image does not change an existing run attempt.
+
+Bundles contain the manifest and parent evidence and remain in the private,
+versioned S3 state prefix. Current deployment and accepted-image pointers are
+operator state, not public workflow artifacts. Promotion verifies the live
+AMI against the supplied qualification evidence and requires the previous
+accepted-selection version, or an explicit empty initial selection, before a
+conditional update.
+
+After creating an accepted-image record from a qualified result, promote the
+initial selection with that exact qualification file:
+
+```sh
+python3 scripts/deployment-state.py promote \
+  --record .deployment/state/accepted-image.json \
+  --qualification /path/to/final/image-result.json \
+  --deployment .deployment/manifest.json \
+  --state-root s3://example-artifacts/example/image-runners/state \
+  --account-id 123456789012 --region us-east-1 \
+  --repository example/image-runners --empty \
+  --output .deployment/state/promotion.json
+```
+
+For replacement, pass `--previous-version VERSION` from the reviewed current
+selection instead of `--empty`. Substitute this deployment's actual identity
+and state prefix for the neutral example values. Promotion rejects concurrent
+selection changes; refresh and review the current selection before retrying.
+
+Completed-run recovery uses the saved context and the exact attempt's GitHub
+jobs. Historical cleanup retains the original resource ownership and runtime
+selection when current deployment settings change. Keep previous state
+objects, required permissions, and cleanup access for every live execution;
+after rotating account, region, role, or state prefix, operate the old scope
+through its saved context until its resources have been cleared.
 
 Test instances initially receive the RunsOn common ownership marker. The
 monitor and application verifier add the build's owner, build ID, purpose and

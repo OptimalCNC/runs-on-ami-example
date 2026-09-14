@@ -26,7 +26,7 @@ def controller_identity(cloud):
             "controller must run on the independently pinned stock AMI and qualified type")
     require(tags_of(observed).get(RUNS_ON_TAG) == d.repository, "configure the RunsOn stack ownership marker first")
     require(observed.get("CurrentInstanceBootMode") == d.controller_ami.effective_boot_mode, "controller boot mode differs")
-    expected = read_json(ROOT / d.controller_ami.inventory_file)
+    expected = d.controller_ami.inventory
     actual = json.loads(run(["sudo", "python3", str(ROOT / "images/common/inventory.py")]))
     for key in ("os_version", "packages_sha256", "runner_version", "runner_listener_sha256", "bootstrap_files", "snap_hashes", "secure_boot"):
         require(actual[key] == expected[key], f"controller inventory differs: {key}")
@@ -35,16 +35,16 @@ def controller_identity(cloud):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--deployment", default="infra/deployment.json")
+    parser.add_argument("--deployment", required=True, help="resolved deployment manifest")
     parser.add_argument("--build-id", required=True, help="unique execution ID: NUMBER-ATTEMPT-one, -two, or -stock")
-    parser.add_argument("--output", type=Path, help="artifact directory (default: artifacts/BUILD_ID)")
+    parser.add_argument("--output", type=Path, required=True, help="new artifact directory for this build")
     parser.add_argument("--config-output", type=Path, help="image configuration JSON (default: OUTPUT/image-config.json)")
     parser.add_argument("--retain", action="store_true")
     parser.add_argument("--execute", action="store_true")
     args = parser.parse_args(argv)
     build = match(args.build_id, r"[1-9][0-9]*-[1-9][0-9]*-(one|two|stock)", "build ID")
     variant = build.rsplit("-", 1)[1]
-    destination = args.output.resolve() if args.output else ROOT / "artifacts" / build
+    destination = args.output.resolve()
     config_output = args.config_output or destination / "image-config.json"
     d = load_deployment(args.deployment)
     lock = read_json(ROOT / "images/xenomai-cobalt/inputs.lock.json")
@@ -53,25 +53,25 @@ def main(argv=None):
         print("Would launch one on-demand Packer builder; a full build also creates an AMI and EBS snapshots.")
         print("Review the deployment and cost plan before supplying --execute.")
         return
-    tracked = [*hashes, "images/xenomai-cobalt/inputs.lock.json", args.deployment,
-               d.source_ami.inventory_file, d.controller_ami.inventory_file]
+    tracked = [*hashes, "images/xenomai-cobalt/inputs.lock.json"]
     run(["git", "ls-files", "--error-unmatch", *tracked], cwd=ROOT)
     require(not run(["git", "status", "--porcelain", "--", *tracked], cwd=ROOT), "commit all locked build inputs first")
     commit = run(["git", "rev-parse", "HEAD"], cwd=ROOT)
     destination.mkdir(parents=True, exist_ok=False)
+    d = load_deployment(d.snapshot(destination / "deployment"))
     cloud = Cloud(d)
     preflight = inspect_deployment(cloud)
     write_json(destination / "preflight.json", preflight)
     controller = controller_identity(cloud)
     write_json(destination / "controller.json", controller)
     expiry = timestamp(utcnow() + dt.timedelta(hours=6))
-    stage = ROOT / ".work" / build / "recipe"
+    stage = destination / "work" / "recipe"
     stage.mkdir(parents=True, exist_ok=False)
     for name in [*hashes, "images/xenomai-cobalt/inputs.lock.json"]:
         target = stage / name
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(ROOT / name, target)
-    shutil.copy2(ROOT / d.source_ami.inventory_file, stage / "source-inventory.json")
+    shutil.copy2(d.source_ami.inventory_path, stage / "source-inventory.json")
     write_json(stage / "recipe.json", {"recipe_id": recipe_id})
     candidate_tags = {v["Key"]: v["Value"] for v in resource_tags(d, build, "candidate", expiry)}
     candidate_tags.update({"ami-example:recipe-id": recipe_id, "ami-example:retain": str(args.retain).lower()})
@@ -135,7 +135,7 @@ def main(argv=None):
             "schema_version": 1, "status": "candidate",
             "source": {"recipe_id": recipe_id, "recipe_commit": commit, "recipe_files": hashes,
                        "input_lock_sha256": file_sha(ROOT / "images/xenomai-cobalt/inputs.lock.json"),
-                       "parent_ami": dataclasses.asdict(d.source_ami)},
+                       "parent_ami": d.source_ami.record()},
             "payload": image,
             "cloud": {"account_id": d.account_id, "region": d.region, "ami_id": ami_id, "snapshot_ids": snapshots,
                       "architecture": "x86_64", "boot_mode": d.source_ami.effective_boot_mode, "instance_type": d.instance_type},
@@ -162,12 +162,14 @@ def main(argv=None):
         except Exception as error:
             failures.append(f"temporary key cleanup: {error}")
         # Durable diagnostics are attempted before any cleanup is permitted to remove images.
-        for path in sorted(destination.glob("*")):
-            if path.is_file() and path.name not in locations:
+        diagnostics = [*destination.glob("*"), *(destination / "deployment").rglob("*")]
+        for path in sorted(diagnostics):
+            relative = path.relative_to(destination).as_posix()
+            if path.is_file() and relative not in locations:
                 try:
-                    locations[path.name] = cloud.retain(path, f"{build}/{path.name}")
+                    locations[relative] = cloud.retain(path, f"{build}/{relative}")
                 except (subprocess.SubprocessError, OSError, InvalidInput) as error:
-                    failures.append(f"{path.name}: {error}")
+                    failures.append(f"{relative}: {error}")
         write_json(destination / "artifact-index.json", locations)
         cloud.retain(destination / "artifact-index.json", f"{build}/artifact-index.json")
         require(not failures, f"artifact retention failed: {failures}")

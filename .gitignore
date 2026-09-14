@@ -13,3 +13,9 @@ infra/operator/*.tfstate*
 infra/operator/*.tfplan
 infra/operator/*.auto.tfvars.json
 *Zone.Identifier
+/.deployment/
+/.execution/
+infra/foundation/.terraform/
+infra/foundation/*.tfstate*
+infra/foundation/*.tfplan
+infra/foundation/*.auto.tfvars.json

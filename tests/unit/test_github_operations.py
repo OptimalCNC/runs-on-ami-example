@@ -1,4 +1,3 @@
-import dataclasses
 import json
 from pathlib import Path
 import subprocess
@@ -7,8 +6,8 @@ import unittest
 from unittest.mock import patch
 
 from support import FakeCloud, module
-from example import BUILD_TAG, InvalidInput, OWNER_TAG, RUNS_ON_TAG, VersionedBucket, read_json, tags_of, write_json
-from execution_record import ExecutionRecord, ImageSelection, JobPlan, RunAttempt, registered_records, retain_record
+from example import BUILD_TAG, CleanupContext, InvalidInput, OWNER_TAG, RUNS_ON_TAG, VersionedBucket, file_sha, read_json, tags_of, write_json
+from execution_record import ExecutionRecord, ImageSnapshot, JobPlan, RunAttempt, registered_records, retain_record
 
 github = module("github-api")
 watchdog = module("watchdog")
@@ -16,13 +15,20 @@ watchdog = module("watchdog")
 
 def record(**changes):
     value = {"schema_version": 1, "repository": "example/repo", "run_id": "123", "run_attempt": "1",
-             "account_id": "123456789012", "region": "us-east-1", "instance_type": "t3.small",
+             "cleanup": {"account_id": "123456789012", "region": "us-east-1", "repository": "example/repo", "artifact_bucket": "example-artifacts"},
+             "instance_type": "t3.small", "configuration": None,
              "build_id": "123-1-one", "plan": {
                  "ready": {"name": "Admission", "needs": [], "adopt": False},
                  "check": {"name": "Runtime acceptance", "needs": ["ready"], "adopt": True}},
              "terminal": "check", "deadline_seconds": 600, "registration_seconds": 60, "image": None}
     value.update(changes)
     return ExecutionRecord.parse(value)
+
+
+def image_snapshot(cloud):
+    cloud.images[0]["BootMode"] = "uefi"
+    cloud.images[0]["Tags"].append({"Key": "ami-example:recipe-id", "Value": "1" * 64})
+    return ImageSnapshot.capture(cloud.images[0]).as_dict()
 
 
 def job(name="Runtime acceptance", digit="2", **changes):
@@ -92,13 +98,13 @@ class ExecutionRecords(unittest.TestCase):
 
     def test_registration_retains_exact_plan_and_image_selection(self):
         cloud = FakeCloud()
-        selected = record(image={"kind": "candidate", "record": {"selected_image": "fixture"}})
-        with tempfile.TemporaryDirectory() as temporary, patch.object(ImageSelection, "inspect") as inspect, \
-             patch.object(watchdog, "retain_record") as retain:
+        selected = record(image=image_snapshot(cloud))
+        with tempfile.TemporaryDirectory() as temporary, patch.object(watchdog, "retain_record", return_value="s3://record?versionId=one") as retain:
             target = Path(temporary) / "execution.json"
-            watchdog.register(cloud, selected, target)
+            binding = Path(temporary) / "binding.json"
+            watchdog.register(cloud, selected, target, binding)
             self.assertEqual(ExecutionRecord.parse(read_json(target)), selected)
-        inspect.assert_called_once_with(cloud)
+            self.assertEqual(read_json(binding), {"uri": "s3://record?versionId=one", "sha256": file_sha(target)})
         retain.assert_called_once_with(cloud, selected, target)
 
     def test_registration_creates_once_and_identical_retries_reuse_the_record(self):
@@ -118,13 +124,44 @@ class ExecutionRecords(unittest.TestCase):
                 self.assertEqual(retain_record(cloud, selected, target), first)
                 with self.assertRaisesRegex(InvalidInput, "different plan or image"):
                     retain_record(cloud, record(deadline_seconds=90), target)
+                with self.assertRaisesRegex(InvalidInput, "different plan or image"):
+                    retain_record(cloud, record(configuration={
+                        "uri": "s3://example-artifacts/example/repo/state/configuration/current.tar?versionId=other",
+                        "sha256": "1" * 64}), target)
+
+    def test_configuration_binding_mismatch_prevents_registration_before_cloud_access(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            binding = Path(temporary) / "binding.json"
+            write_json(binding, {"uri": "s3://example-artifacts/example/repo/state/configuration/current.tar?versionId=one",
+                                 "sha256": "1" * 64})
+            with patch.object(watchdog, "verify_materialized", side_effect=InvalidInput("bundle contents differ")), \
+                 patch.object(watchdog, "Cloud") as cloud, patch("sys.argv", ["watchdog.py", "register",
+                    "--deployment", "deployment.json", "--configuration-binding", str(binding), "--output", "execution.json",
+                    "--binding-output", "execution-binding.json", "--repository", "example/repo", "--run-id", "123",
+                    "--run-attempt", "1", "--build-id", "123-1-one", "--plan", "plan.json", "--terminal", "check",
+                    "--deadline-seconds", "600", "--registration-seconds", "60"]), self.assertRaisesRegex(InvalidInput, "bundle contents"):
+                watchdog.main()
+            cloud.assert_not_called()
+
+    def test_selected_image_snapshot_rejects_changed_live_ownership_and_storage(self):
+        changes = ({"OwnerId": "999999999999"}, {"CreationDate": "2026-09-13T01:00:00Z"},
+                   {"BootMode": "legacy-bios"}, {"BlockDeviceMappings": [{"Ebs": {"SnapshotId": "snap-" + "9" * 17}}]},
+                   {"Tags": []})
+        for change in changes:
+            cloud = FakeCloud()
+            selected = ImageSnapshot.parse(image_snapshot(cloud))
+            cloud.deployment = record().cleanup
+            cloud.images[0].update(change)
+            with self.subTest(change=change), self.assertRaises(InvalidInput):
+                selected.inspect(cloud)
+            self.assertEqual(cloud.mutations, [])
 
     def test_recovery_records_are_loaded_from_the_selected_prefix_and_immutable_version(self):
         records_module = module("execution_record")
         selected = record()
         cloud = FakeCloud()
         bucket = VersionedBucket("example-artifacts", "123456789012", "us-east-1")
-        key = "example/repo/executions/123/1/123-1-one.json"
+        key = "example/repo/state/executions/123/1/123-1-one.json"
         calls = []
         def call(service, operation, payload):
             calls.append((operation, payload))
@@ -137,7 +174,7 @@ class ExecutionRecords(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary, patch.object(cloud, "artifacts", return_value=bucket, create=True), \
              patch.object(cloud, "call", side_effect=call), patch.object(records_module, "run", side_effect=download):
             self.assertEqual(registered_records(cloud, selected.attempt, Path(temporary)), [selected])
-        self.assertEqual(calls[0][1]["Prefix"], "example/repo/executions/123/1/")
+        self.assertEqual(calls[0][1]["Prefix"], "example/repo/state/executions/123/1/")
 
 
 class Monitoring(unittest.TestCase):
@@ -191,20 +228,18 @@ class OwnershipRecovery(unittest.TestCase):
 
     def test_completed_attempt_recovers_only_registered_jobs_and_uses_saved_selection(self):
         cloud = FakeCloud()
-        cloud.deployment = dataclasses.replace(cloud.deployment, instance_type="t3.medium")
+        saved_image = image_snapshot(cloud)
+        cloud.deployment = CleanupContext.parse(record().as_dict()["cleanup"])
         for machine in cloud.machines:
             machine["Tags"] = [{"Key": RUNS_ON_TAG, "Value": "example/repo"}]
-        selected = record(run_id="124", run_attempt="2", build_id="124-2-one",
-                          image={"kind": "accepted", "record": {"saved": "selection"}})
+        selected = record(run_id="124", run_attempt="2", build_id="124-2-one", image=saved_image)
         with tempfile.TemporaryDirectory() as temporary, \
              patch.object(watchdog.github, "completed", return_value=selected.attempt) as completed, \
              patch.object(watchdog, "registered_records", return_value=[selected]), \
-             patch.object(watchdog.github, "jobs", return_value=[job(), job(name="Different run", digit="3")]) as jobs, \
-             patch.object(ImageSelection, "inspect", return_value=(cloud.images[0], "2099-01-01T00:00:00Z", "t3.medium")) as inspect:
+             patch.object(watchdog.github, "jobs", return_value=[job(), job(name="Different run", digit="3")]) as jobs:
             report = watchdog.recover(cloud, "example/repo", "124", "2", Path(temporary))
         completed.assert_called_once_with("example/repo", "124", "2")
         jobs.assert_called_once_with("example/repo", "124", "2")
-        inspect.assert_called_once_with(cloud, recovery=True)
         self.assertEqual(report["status"], "passed")
         self.assertEqual(tags_of(cloud.machines[0])[BUILD_TAG], "124-2-one")
         self.assertNotIn(OWNER_TAG, tags_of(cloud.machines[1]))
@@ -213,10 +248,10 @@ class OwnershipRecovery(unittest.TestCase):
     def test_terminated_runner_does_not_require_an_image_that_may_have_been_cleaned_up(self):
         cloud = FakeCloud()
         cloud.machines[0]["State"]["Name"] = "terminated"
-        selected = record(image={"kind": "accepted", "record": {"saved": "selection"}})
+        selected = record(image=image_snapshot(cloud))
         with tempfile.TemporaryDirectory() as temporary, patch.object(watchdog.github, "completed", return_value=selected.attempt), \
              patch.object(watchdog, "registered_records", return_value=[selected]), \
-             patch.object(watchdog.github, "jobs", return_value=[job()]), patch.object(ImageSelection, "inspect") as inspect:
+             patch.object(watchdog.github, "jobs", return_value=[job()]), patch.object(ImageSnapshot, "inspect") as inspect:
             self.assertEqual(watchdog.recover(cloud, "example/repo", "123", "1", Path(temporary))["status"], "passed")
         inspect.assert_not_called()
         self.assertEqual(cloud.mutations, [])
@@ -230,6 +265,15 @@ class OwnershipRecovery(unittest.TestCase):
             self.assertEqual(read_json(Path(temporary) / "recovery.json")["status"], "failed")
         self.assertEqual(cloud.mutations, [])
         self.assertEqual(cloud.retained, ["recovery/123/1/recovery.json"])
+
+    def test_missing_registration_reports_the_gap_without_adopting_any_runner(self):
+        cloud = FakeCloud()
+        with tempfile.TemporaryDirectory() as temporary, patch.object(watchdog.github, "completed", return_value=record().attempt), \
+             patch.object(watchdog, "registered_records", return_value=[]), patch.object(watchdog.github, "jobs") as jobs:
+            with self.assertRaisesRegex(InvalidInput, "records are missing"):
+                watchdog.recover(cloud, "example/repo", "123", "1", Path(temporary))
+        jobs.assert_not_called()
+        self.assertEqual(cloud.mutations, [])
 
 
 if __name__ == "__main__":

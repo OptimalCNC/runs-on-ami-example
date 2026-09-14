@@ -6,7 +6,8 @@ import importlib.util
 from pathlib import Path
 
 from example import (AMI, BUILD_TAG, EXPIRY_TAG, INSTANCE, OWNER_TAG, PURPOSE_TAG, ROOT, SHA256, Cloud,
-                     file_sha, load_deployment, match, parse_time, read_json, require, tags_of, utcnow, write_json)
+                     file_sha, load_bindings, load_cleanup_context, match, parse_time, read_json, require,
+                     tags_of, utcnow, write_json)
 from qualification import QualificationRun
 from runner_instances import adopt_test_instances
 
@@ -113,7 +114,8 @@ def verify(cloud, accepted, smoke, build, instance_id):
         require(guest["stage"] == "a" and guest["sentinel_absent_at_start"] is True
                 and guest["sentinel"] == f"/var/tmp/ami-example-{dispatch}-sentinel", "fresh instance sentinel differs")
     require(smoke["environment"].get("environment_passed") is True, "Cobalt environment did not persist between steps")
-    observed = adopt_test_instances(cloud, dispatch, [expected_instance], image=accepted.inspect(cloud), expiry=accepted.expires_at)
+    observed = adopt_test_instances(cloud, dispatch, [expected_instance], image=accepted.inspect(cloud),
+                                    expiry=accepted.expires_at, instance_type=cloud.deployment.instance_type)
     require(len(observed) == 1 and observed[0]["InstanceId"] == expected_instance, "controller and guest instance identities differ")
     require(observed[0].get("CurrentInstanceBootMode") == "uefi", "test runner boot mode differs")
     return {"status": "passed", "build_id": dispatch, "ami_id": accepted.ami_id, "recipe_id": accepted.recipe_id,
@@ -125,8 +127,9 @@ def main():
     tasks = parser.add_subparsers(dest="task", required=True)
     for task in ("accept", "prepare", "inspect", "verify"):
         command = tasks.add_parser(task)
-        command.add_argument("--deployment", default="infra/deployment.json")
-        command.add_argument("--record", default="accepted-image.json")
+        command.add_argument("--deployment", required=True)
+        command.add_argument("--record", required=True, type=Path,
+                             help="accepted image destination" if task == "accept" else "accepted image record")
         if task == "accept":
             command.add_argument("--result", required=True)
             command.add_argument("--evidence-url", default="")
@@ -140,7 +143,8 @@ def main():
             command.add_argument("--smoke", required=True, type=Path)
             command.add_argument("--instance-id", required=True)
     args = parser.parse_args()
-    deployment = load_deployment(args.deployment, inventories=False)
+    deployment = (load_bindings(args.deployment) if args.task in ("prepare", "verify")
+                  else load_cleanup_context(args.deployment))
     if args.task == "accept":
         write_json(args.record, selected_record(read_json(args.result), deployment, file_sha(Path(args.result)), args.evidence_url))
         return

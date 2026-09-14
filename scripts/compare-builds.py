@@ -59,7 +59,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("first")
     parser.add_argument("second")
-    parser.add_argument("--output", default="artifacts/reproducibility.json")
+    parser.add_argument("--output", required=True)
     args = parser.parse_args()
     first, second = read_json(args.first), read_json(args.second)
     result = compare(first, second)

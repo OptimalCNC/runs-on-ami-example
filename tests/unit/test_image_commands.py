@@ -3,6 +3,7 @@ import functools
 import hashlib
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -38,7 +39,16 @@ class ImageCommands(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
-        self.root = Path(temporary.name)
+        self.directory = Path(temporary.name)
+        self.root = self.directory / "recipe-checkout"
+        self.root.mkdir()
+        self.inputs = self.directory / "external-inputs"
+        self.inputs.mkdir()
+        self.caller = self.directory / "caller"
+        self.caller.mkdir()
+        previous_cwd = Path.cwd()
+        os.chdir(self.caller)
+        self.addCleanup(os.chdir, previous_cwd)
         self.build = module("build-image")
         self.config = module("image-config")
         self.environment = {key: value for key, value in os.environ.items() if not key.startswith("GITHUB_")}
@@ -52,11 +62,13 @@ class ImageCommands(unittest.TestCase):
         inventory["packages_sha256"] = hashlib.sha256(inventory["package_inventory"].encode()).hexdigest()
         deployment = deployment_dict()
         for name in ("source_ami", "controller_ami"):
-            path = self.root / deployment[name]["inventory_file"]
+            path = self.inputs / "inventories" / f"{name}.json"
+            deployment[name]["inventory_file"] = str(path.relative_to(self.inputs))
             write_json(path, inventory)
             deployment[name]["inventory_sha256"] = example.file_sha(path)
-        write_json(self.root / "infra/deployment.json", deployment)
-        self.deployment = example.load_deployment()
+        self.manifest = self.inputs / "manifest.json"
+        write_json(self.manifest, deployment)
+        self.deployment = example.load_deployment(self.manifest)
         self.lock = read_json(ROOT / "images/xenomai-cobalt/inputs.lock.json")
         self.lock["recipe_files"] = ["images/xenomai-cobalt/image.pkr.hcl"]
         self.template = self.root / self.lock["recipe_files"][0]
@@ -106,14 +118,14 @@ class ImageCommands(unittest.TestCase):
         self.enterContext(patch.object(self.build.subprocess, "run", side_effect=run))
 
     def arguments(self, build_id):
-        return ["--build-id", build_id, "--output", str(self.root / "output" / build_id),
-                "--config-output", str(self.root / "config" / f"{build_id}.json"), "--execute"]
+        return ["--deployment", str(self.manifest), "--build-id", build_id, "--output", str(self.directory / "output" / build_id),
+                "--config-output", str(self.directory / "config" / f"{build_id}.json"), "--execute"]
 
     def test_config_writes_explicit_destination_without_github_context(self):
         for build_id in (None, "789-2-stock"):
             with self.subTest(build_id=build_id):
-                path = self.root / "config" / "settings.json"
-                args = ["--deployment", "infra/deployment.json", "--output", str(path)]
+                path = self.directory / "config" / "settings.json"
+                args = ["--deployment", str(self.manifest), "--output", str(path)]
                 if build_id:
                     args += ["--build-id", build_id]
                 self.config.main(args)
@@ -135,10 +147,10 @@ class ImageCommands(unittest.TestCase):
             build_id = "789-2-" + variant
             with self.subTest(variant=variant):
                 self.build.main(self.arguments(build_id))
-                config = read_json(self.root / "config" / f"{build_id}.json")
+                config = read_json(self.directory / "config" / f"{build_id}.json")
                 self.assertEqual(config["build_id"], build_id)
                 self.assertEqual(config["recipe_id"], self.recipe_id)
-                output = self.root / "output" / build_id
+                output = self.directory / "output" / build_id
                 if variant == "stock":
                     value = read_json(output / "stock-result.json")
                     self.assertEqual(value["status"], "passed")
@@ -152,12 +164,18 @@ class ImageCommands(unittest.TestCase):
                     self.assertIn("runs-on=789-2-one-a/", config["label_a"])
                     self.assertEqual(self.cloud.retained_contents[f"{build_id}/inputs.tar"], b"retained build inputs")
                 self.assertEqual(self.cloud.keys, [])
-                self.assertFalse((self.root / ".work" / build_id / "builder-key.pem").exists())
+                self.assertFalse((output / "work/builder-key.pem").exists())
                 index = read_json(output / "artifact-index.json")
                 self.assertIn("packer.log", index)
+                self.assertIn("deployment/manifest.json", index)
+                self.assertTrue(any(name.startswith("deployment/parents/") for name in index))
                 self.assertIn(f"{build_id}/artifact-index.json", self.cloud.retained)
                 self.assertEqual(self.cloud.retained_contents[f"{build_id}/packer.log"], b"packer diagnostics\n")
         self.assertEqual(self.packer_commands, ["validate", "build", "validate", "build"])
+        shutil.rmtree(self.inputs)
+        for variant in ("stock", "one"):
+            snapshot = example.load_deployment(self.directory / "output" / f"789-2-{variant}" / "deployment/manifest.json")
+            self.assertEqual(example.recipe(self.lock, snapshot, self.root), (self.recipe_id, self.recipe_files))
 
     def test_dirty_inputs_stop_before_cloud_or_packer(self):
         self.template.write_text("uncommitted recipe\n")
@@ -165,22 +183,22 @@ class ImageCommands(unittest.TestCase):
             self.build.main(self.arguments("789-2-stock"))
         self.cloud_factory.assert_not_called()
         self.assertEqual(self.packer_commands, [])
-        self.assertFalse((self.root / "output").exists())
+        self.assertFalse((self.directory / "output").exists())
 
     def test_failed_build_cleans_key_and_retains_diagnostics(self):
         self.packer_failure = True
         with self.assertRaises(subprocess.CalledProcessError):
             self.build.main(self.arguments("789-2-stock"))
         self.assertEqual(self.cloud.keys, [])
-        self.assertFalse((self.root / ".work/789-2-stock/builder-key.pem").exists())
+        self.assertFalse((self.directory / "output/789-2-stock/work/builder-key.pem").exists())
         self.assertEqual(self.cloud.retained_contents["789-2-stock/packer.log"], b"packer diagnostics\n")
         self.assertIn("789-2-stock/artifact-index.json", self.cloud.retained)
-        self.assertFalse((self.root / "config/789-2-stock.json").exists())
+        self.assertFalse((self.directory / "config/789-2-stock.json").exists())
 
     def test_malformed_build_id_stops_before_cloud(self):
         for build_id in ("../789-2-stock", "789-0-stock", "789-2-unknown"):
             with self.subTest(build_id=build_id), self.assertRaisesRegex(InvalidInput, "build ID"):
-                self.build.main(["--build-id", build_id, "--execute"])
+                self.build.main(self.arguments(build_id))
         self.cloud_factory.assert_not_called()
         self.assertEqual(self.packer_commands, [])
 

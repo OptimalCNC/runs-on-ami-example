@@ -2,7 +2,7 @@
 """Write deployment settings and optional controller routing as JSON."""
 import argparse
 
-from example import load_deployment, match, write_json
+from example import load_bindings, load_deployment, match, write_json
 
 
 def configuration(deployment, build=None):
@@ -15,11 +15,12 @@ def configuration(deployment, build=None):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--deployment", default="infra/deployment.json")
+    parser.add_argument("--deployment", required=True, help="resolved deployment manifest")
     parser.add_argument("--build-id", help="include controller routing for this execution")
     parser.add_argument("--output", required=True, help="configuration JSON destination")
     args = parser.parse_args(argv)
-    deployment = load_deployment(args.deployment, inventories=args.build_id is not None)
+    deployment = (load_deployment(args.deployment) if args.build_id is not None
+                  else load_bindings(args.deployment))
     write_json(args.output, configuration(deployment, args.build_id))
 
 

@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 
 from support import FakeCloud, deployment, instance, module, result, tags
 from cleanup import CleanupScope, cleanup
-from example import Cloud, InvalidInput, OWNER_TAG, RUNS_ON_TAG, read_json, tags_of, write_json
+from example import CleanupContext, Cloud, InvalidInput, OWNER_TAG, RUNS_ON_TAG, read_json, tags_of, write_json
 
 
 class Lifecycle(unittest.TestCase):
@@ -24,6 +24,20 @@ class Lifecycle(unittest.TestCase):
         cloud = FakeCloud()
         self.assertEqual(cleanup(cloud, self.scope, self.output)["status"], "planned")
         self.assertEqual(cloud.mutations, [])
+
+    def test_expiry_cleanup_cli_needs_only_stable_cleanup_context(self):
+        cleanup_command = module("cleanup")
+        cloud = FakeCloud()
+        cloud.deployment = CleanupContext.parse({"account_id": "123456789012", "region": "us-east-1",
+                                                "repository": "example/repo", "artifact_bucket": "example-artifacts"})
+        source = self.output / "cleanup-context.json"
+        write_json(source, dataclasses.asdict(cloud.deployment))
+        with patch.object(cleanup_command, "Cloud", return_value=cloud), \
+             patch("sys.argv", ["cleanup.py", "--cleanup-context", str(source), "--expired", "--apply",
+                                "--output", str(self.output / "cleanup")]), patch("builtins.print"):
+            cleanup_command.main()
+        self.assertTrue(all(machine["State"]["Name"] == "terminated" for machine in cloud.machines))
+        self.assertEqual(read_json(self.output / "cleanup/cleanup-report.json")["status"], "passed")
 
     def test_attempt_scope_contains_all_variants_but_no_other_attempts(self):
         scope = CleanupScope.parse("example/repo", run_id="123", run_attempt="1")
@@ -86,7 +100,7 @@ class Lifecycle(unittest.TestCase):
         cloud = FakeCloud()
         for machine in cloud.machines:
             machine["Tags"] = [{"Key": RUNS_ON_TAG, "Value": "example/repo"}]
-        observations = runners.adopt_test_instances(cloud, "123-1-one", ["i-22222222222222222"])
+        observations = runners.adopt_test_instances(cloud, "123-1-one", ["i-22222222222222222"], instance_type="t3.small")
         self.assertEqual([instance["InstanceId"] for instance in observations], ["i-22222222222222222"])
         self.assertEqual(tags_of(cloud.machines[0])[OWNER_TAG], "example/repo")
         self.assertNotIn(OWNER_TAG, tags_of(cloud.machines[1]))
@@ -99,7 +113,7 @@ class Lifecycle(unittest.TestCase):
             cloud = FakeCloud()
             cloud.machines[0].update(changes)
             with self.subTest(changes=changes), self.assertRaises(InvalidInput):
-                runners.adopt_test_instances(cloud, "123-1-one", ["i-22222222222222222"])
+                runners.adopt_test_instances(cloud, "123-1-one", ["i-22222222222222222"], instance_type="t3.small")
             self.assertEqual(cloud.mutations, [])
 
     def test_explicit_retention_keeps_image_and_snapshot_but_stops_instances(self):
@@ -225,7 +239,6 @@ class Artifacts(unittest.TestCase):
                 image = result()["payload"]
                 write_json(root / "images/xenomai-cobalt/inputs.lock.json",
                            {"xenomai": image["xenomai"], "kernel": {"release": image["kernel_release"]}, "tools": {}})
-                write_json(root / d.source_ami.inventory_file, {})
                 destination = root / "artifacts/123-1-one"
                 cloud = MagicMock()
                 cloud.call.side_effect = lambda service, operation, payload: {
@@ -258,7 +271,7 @@ class Artifacts(unittest.TestCase):
                      patch.object(build, "controller_identity", return_value={"instance_id": "i-22222222222222222"}), \
                      patch.object(build, "run", side_effect=lambda command, **kwargs: "2" * 40 if command[1] == "rev-parse" else ""), \
                      patch.object(build.subprocess, "run", side_effect=packer), patch("preflight.inspect_ami"), \
-                     patch.dict("os.environ", {}, clear=True), patch("sys.argv", ["build-image.py", "--build-id", "123-1-one", "--execute"]):
+                     patch.dict("os.environ", {}, clear=True), patch("sys.argv", ["build-image.py", "--deployment", "deployment.json", "--build-id", "123-1-one", "--output", str(destination), "--execute"]):
                     if packer_fails:
                         with self.assertRaises(subprocess.CalledProcessError):
                             build.main()
@@ -284,7 +297,7 @@ class Artifacts(unittest.TestCase):
             artifact.write_text("{}\n")
             cloud = Cloud(deployment())
             self.assertEqual(cloud.retain(artifact, "123-1-one/report.json"),
-                             "s3://example-artifacts/example/repo/123-1-one/report.json?versionId=version%2Fone%2Btwo")
+                             "s3://example-artifacts/example/repo/reports/123-1-one/report.json?versionId=version%2Fone%2Btwo")
 
     def test_unversioned_bucket_is_rejected_before_upload(self):
         def responses(service, operation, payload=None):

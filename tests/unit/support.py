@@ -2,12 +2,14 @@ import copy
 import dataclasses
 import importlib.util
 import json
+import hashlib
+import tempfile
 from pathlib import Path
 import sys
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
-from example import Deployment, OWNER_TAG, BUILD_TAG, PURPOSE_TAG, EXPIRY_TAG, RUNS_ON_TAG, tags_of
+from example import BuildInputs, OWNER_TAG, BUILD_TAG, PURPOSE_TAG, EXPIRY_TAG, RUNS_ON_TAG, tags_of
 
 
 def module(name):
@@ -21,19 +23,39 @@ def module(name):
     return result
 
 
+_fixture_directory = tempfile.TemporaryDirectory(prefix="ami-example-fixture-")
+FIXTURE_ROOT = Path(_fixture_directory.name)
+
+
+def parent_inventory():
+    packages = "pkg\t1\tamd64\tinstalled\n"
+    return {"packages_sha256": hashlib.sha256(packages.encode()).hexdigest(), "package_inventory": packages,
+            "runner_version": "2.328.0", "runner_listener_sha256": "1" * 64,
+            "bootstrap_files": {"/usr/local/bin/runs-on-bootstrap-v0.1.12": "1" * 64},
+            "registered": False, "workspaces": [], "secure_boot": False, "os_version": "24.04", "snap_hashes": {}}
+
+
+_fixture_inventory = FIXTURE_ROOT / "parent.json"
+_fixture_inventory.write_text(json.dumps(parent_inventory()) + "\n")
+_fixture_inventory_sha256 = hashlib.sha256(_fixture_inventory.read_bytes()).hexdigest()
+
+
 def deployment_dict():
-    value = json.loads((ROOT / "infra/deployment.example.json").read_text())
-    value.update(repository="example/repo", account_id="123456789012", region="us-east-1",
-                 runs_on={"environment": "ami-example", "version": "3.2.0", "bootstrap_version": "0.1.12"}, vpc_id="vpc-0123456789abcdef0", subnet_id="subnet-0123456789abcdef0",
-                 security_group_id="sg-0123456789abcdef0", controller_role_arn="arn:aws:iam::123456789012:role/example",
-                 builder_profile_name="example-builder", probe_profile_name="example-probe", artifact_bucket="example-artifacts")
-    for ami in ("source_ami", "controller_ami"):
-        value[ami].update(id="ami-0123456789abcdef0", owner="123456789012", inventory_sha256="1" * 64)
-    return value
+    parent = {"id": "ami-0123456789abcdef0", "owner": "123456789012", "architecture": "x86_64", "boot_mode": "uefi",
+              "inventory_file": str(_fixture_inventory), "inventory_sha256": _fixture_inventory_sha256}
+    return {"repository": "example/repo", "account_id": "123456789012", "region": "us-east-1", "environment": "ami-build",
+            "runs_on": {"environment": "ami-example", "version": "3.2.0", "bootstrap_version": "0.1.12"},
+            "source_ami": dict(parent), "controller_ami": dict(parent),
+            "instance_type": "t3.small", "vcpus": 2, "builder_instance_type": "c7i.large",
+            "vpc_id": "vpc-0123456789abcdef0", "subnet_id": "subnet-0123456789abcdef0",
+            "security_group_id": "sg-0123456789abcdef0", "controller_role_arn": "arn:aws:iam::123456789012:role/example",
+            "builder_profile_name": "example-builder", "probe_profile_name": "example-probe", "artifact_bucket": "example-artifacts",
+            "root_volume_gib": 80, "parent_root_volume_gib": 30, "retain_hours": 24, "private": True,
+            "deadlines": {"boot_seconds": 900, "registration_seconds": 900, "workflow_seconds": 14400}}
 
 
 def deployment():
-    return Deployment.parse(deployment_dict())
+    return BuildInputs.parse(deployment_dict())
 
 
 def tags(build="123-1-one", purpose="candidate", owner="example/repo", expiry="2020-01-01T00:00:00Z"):
@@ -51,7 +73,7 @@ def result():
     value = {
         "schema_version": 1, "status": "candidate",
         "source": {"recipe_id": sha, "recipe_commit": "2" * 40, "recipe_files": {"script": sha}, "input_lock_sha256": sha,
-                   "parent_ami": dataclasses.asdict(d.source_ami)},
+                   "parent_ami": d.source_ami.record()},
         "payload": {"schema_version": 1, "recipe_id": sha, "kernel_release": "6.12.90-cip24-xenomai-cobalt", "config_sha256": sha,
                     "payload_hashes": {"/boot/vmlinuz": sha}, "packages_sha256": sha, "package_inventory": "pkg\t1\tamd64\tinstalled\n", "normalized_configuration": {"/etc/fstab": sha},
                     "initramfs_sha256": sha, "initramfs_content": {"main/init": {"sha256": sha, "mode": "0o755"}},

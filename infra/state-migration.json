@@ -1,0 +1,104 @@
+{
+  "schema_version": 1,
+  "purpose": "Move existing Terraform ownership into the network-independent foundation without recreating live resources.",
+  "source_root": "infra",
+  "destination_root": "infra/foundation",
+  "operator_root": "infra/operator",
+  "moves": [
+    {
+      "source": "aws_iam_openid_connect_provider.github[0]",
+      "destination": "aws_iam_openid_connect_provider.github[0]",
+      "when": "Only when this exact address is present in the source state."
+    },
+    {
+      "source": "aws_iam_role.controller[0]",
+      "destination": "aws_iam_role.controller[0]",
+      "when": "Only when this exact address is present in the source state."
+    },
+    {
+      "source": "aws_iam_role.management[\"builder\"]",
+      "destination": "aws_iam_role.management[\"builder\"]",
+      "when": "Only when this exact address is present in the source state."
+    },
+    {
+      "source": "aws_iam_role.management[\"probe\"]",
+      "destination": "aws_iam_role.management[\"probe\"]",
+      "when": "Only when this exact address is present in the source state."
+    },
+    {
+      "source": "aws_iam_instance_profile.management[\"builder\"]",
+      "destination": "aws_iam_instance_profile.management[\"builder\"]",
+      "when": "Only when this exact address is present in the source state."
+    },
+    {
+      "source": "aws_iam_instance_profile.management[\"probe\"]",
+      "destination": "aws_iam_instance_profile.management[\"probe\"]",
+      "when": "Only when this exact address is present in the source state."
+    },
+    {
+      "source": "aws_iam_role_policy.ssm_agent[\"builder\"]",
+      "destination": "aws_iam_role_policy.ssm_agent[\"builder\"]",
+      "when": "Only when this exact address is present in the source state."
+    },
+    {
+      "source": "aws_iam_role_policy.ssm_agent[\"probe\"]",
+      "destination": "aws_iam_role_policy.ssm_agent[\"probe\"]",
+      "when": "Only when this exact address is present in the source state."
+    },
+    {
+      "source": "aws_iam_role_policy.probe_logs[0]",
+      "destination": "aws_iam_role_policy.probe_logs[0]",
+      "when": "Only when this exact address is present in the source state."
+    },
+    {
+      "source": "aws_s3_bucket.artifacts[0]",
+      "destination": "aws_s3_bucket.artifacts[0]",
+      "when": "Only when this exact address is present in the source state."
+    },
+    {
+      "source": "aws_s3_bucket_public_access_block.artifacts[0]",
+      "destination": "aws_s3_bucket_public_access_block.artifacts[0]",
+      "when": "Only when this exact address is present in the source state."
+    },
+    {
+      "source": "aws_s3_bucket_versioning.artifacts[0]",
+      "destination": "aws_s3_bucket_versioning.artifacts[0]",
+      "when": "Only when this exact address is present in the source state."
+    },
+    {
+      "source": "aws_s3_bucket_server_side_encryption_configuration.artifacts[0]",
+      "destination": "aws_s3_bucket_server_side_encryption_configuration.artifacts[0]",
+      "when": "Only when this exact address is present in the source state."
+    },
+    {
+      "source": "aws_s3_bucket_lifecycle_configuration.artifacts[0]",
+      "destination": "aws_s3_bucket_lifecycle_configuration.artifacts[0]",
+      "when": "Only when this exact address is present in the source state."
+    },
+    {
+      "source": "aws_s3_bucket_policy.artifacts[0]",
+      "destination": "aws_s3_bucket_policy.artifacts[0]",
+      "when": "Only when this exact address is present in the source state."
+    }
+  ],
+  "retain_in_source": [
+    "aws_security_group.management[0]",
+    "aws_iam_role_policy.controller[0]"
+  ],
+  "new_resources": [
+    "aws_iam_role_policy.controller_storage[0]"
+  ],
+  "data_sources": "Data sources are observations, not cloud resource ownership. Re-evaluate them in their new owning roots; do not import or create cloud resources for them.",
+  "procedure": [
+    "Pause Terraform writers and deployment changes. Record terraform state list for infra, infra/foundation if it already has state, and infra/operator. Reconcile the actual address list with this mapping; reference-only existing resources have no managed addresses and must not be imported.",
+    "Create a private backup directory outside tracked source. Use terraform -chdir=infra state pull to save the original management state and record its SHA-256. If a foundation state already exists, pull and back it up separately. Preserve backend configuration, lineage and serial metadata. Keep immutable originals and work only on separate copies.",
+    "Run terraform state mv from a separate empty directory without Terraform backend configuration, against offline working state copies for each listed address that exists. Use the source working copy as -state and the foundation working copy as -state-out. These flags require the local backend. Verify the source and destination addresses before each move. Do not execute moves against live backends during preparation.",
+    "Compare the combined managed-resource addresses and physical IDs across the two working copies with the original state. Every original resource must appear exactly once; only the state/root owning the listed addresses changes. The operator state is unchanged.",
+    "Publish reviewed working states to their configured backends under an exclusive maintenance window with appropriate state locking. Preserve serial and lineage safeguards; never use force to bypass a mismatch. Back up the resulting live states again before planning.",
+    "Generate the foundation inputs from the existing resource configuration, preserving names, account, region, repository, optional existing references, retention, trust and operator principal. Prepare a foundation plan using those inputs. Derive initial management bindings from the moved state and selected inputs for review; a newly split state has no newly evaluated foundation outputs until Terraform records them.",
+    "Review plans for both roots before apply. No existing resource may be destroyed or replaced by the split. The new controller storage inline policy is an addition; its grants move out of the existing image-management policy. Apply the approved foundation plan before the approved management plan so storage access remains available. Export foundation outputs after its apply and use those exact bindings in the final management plan. The probe log prefix and bucket lifecycle change in place to repository/reports/; review these policy changes explicitly.",
+    "The new reports lifecycle leaves repository/state/ and legacy reports outside automatic expiration. Preserve historical evidence and execution recovery records; any later retention cleanup is a separate reviewed operation."
+  ],
+  "offline_move_command_template": "terraform -chdir=<private-backup>/offline state mv -state=<private-backup>/management.working.tfstate -state-out=<private-backup>/foundation.working.tfstate <quoted-source-address> <quoted-destination-address>",
+  "rollback": "Before cloud apply, restore both original backend states together under the same exclusive maintenance window and restore the previous Terraform configuration. After cloud changes, review state and live policy changes together; do not blindly restore old state."
+}

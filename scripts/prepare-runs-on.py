@@ -1,34 +1,13 @@
 #!/usr/bin/env python3
-"""Prepare the pinned RunsOn template and a non-secret resource plan; never deploy."""
+"""Render the pinned RunsOn template from explicit deployment inputs; never deploy."""
 import argparse
-from collections import Counter
 import hashlib
 import json
 from pathlib import Path
 import urllib.request
 
-import yaml
-
-from example import ROOT, require, write_json
-
-
-class CloudFormationLoader(yaml.SafeLoader):
-    pass
-
-
-def intrinsic(loader, tag, node):
-    if isinstance(node, yaml.ScalarNode):
-        value = loader.construct_scalar(node)
-    elif isinstance(node, yaml.SequenceNode):
-        value = loader.construct_sequence(node)
-    else:
-        value = loader.construct_mapping(node)
-    if tag == "GetAtt" and isinstance(value, str):
-        value = value.split(".", 1)
-    return {tag if tag in ("Ref", "Condition") else "Fn::" + tag: value}
-
-
-CloudFormationLoader.add_multi_constructor("!", intrinsic)
+from example import ROOT, digest, file_sha, match, read_json, require, write_json
+from runs_on import StackConfig, parse_template, terraform_outputs
 
 
 def patch(template, operations):
@@ -52,72 +31,75 @@ def patch(template, operations):
             parent[key] = operation["value"]
 
 
-def resource_plan(template, config):
-    parameters = {name: value.get("Default") for name, value in template["Parameters"].items()}
-    parameters.update(config["parameters"])
-    parameters.update({"AWS::Region": config["region"], "AWS::AccountId": config["account_id"],
-                       "AWS::Partition": "aws", "AWS::StackName": config["stack_name"]})
+PARAMETERS = {
+    "DeploymentRepository": "String",
+    "DeploymentSourceAmiId": "AWS::EC2::Image::Id",
+    "DeploymentControllerAmiId": "AWS::EC2::Image::Id",
+    "DeploymentInstanceType": "String",
+    "DeploymentRootVolumeGiB": "Number",
+    "DeploymentEbsKeyArn": "String",
+    "DeploymentManagementRoleArns": "CommaDelimitedList",
+}
 
-    def evaluate(value):
-        if isinstance(value, list):
-            return [evaluate(item) for item in value]
-        if not isinstance(value, dict):
-            return value
-        require(len(value) == 1, "unexpected CloudFormation condition expression")
-        operation, item = next(iter(value.items()))
-        if operation == "Ref":
-            return parameters[item]
-        if operation == "Condition":
-            return evaluate(template["Conditions"][item])
-        if operation == "Fn::Equals":
-            left, right = evaluate(item)
-            return left == right
-        if operation == "Fn::Not":
-            return not evaluate(item)[0]
-        if operation == "Fn::And":
-            return all(evaluate(item))
-        if operation == "Fn::Or":
-            return any(evaluate(item))
-        if operation == "Fn::FindInMap":
-            first, second, third = evaluate(item)
-            return template["Mappings"][first][second][third]
-        raise ValueError(f"unsupported CloudFormation condition: {operation}")
 
-    resources = [{"logical_id": name, "type": value["Type"], "physical_id": None,
-                  "deletion_policy": value.get("DeletionPolicy", "Delete"),
-                  "log_retention_days": value.get("Properties", {}).get("RetentionInDays")}
-                 for name, value in template["Resources"].items()
-                 if not value.get("Condition") or evaluate({"Condition": value["Condition"]})]
-    return {"account_id": config["account_id"], "region": config["region"],
-            "stack_name": config["stack_name"], "resource_count": len(resources),
-            "resource_types": dict(sorted(Counter(r["type"] for r in resources).items())),
-            "resources": resources}
+def prepare(config, foundation, source, lock, directory, output):
+    for name in ("account_id", "region", "repository"):
+        require(foundation[name] == getattr(config, name), f"foundation {name} differs from configuration")
+    require(hashlib.sha256(source).hexdigest() == lock["sha256"], "vendor template digest differs")
+    template = parse_template(source)
+    require(isinstance(template, dict), "vendor template must be an object")
+    for name, kind in PARAMETERS.items():
+        require(name not in template["Parameters"], f"vendor parameter conflicts with {name}")
+        template["Parameters"][name] = {"Type": kind}
+    patch(template, read_json(directory / "policy-overlay.json"))
+    if not config.instance_type.startswith(("t2.", "t3.", "t3a.")):
+        template["Resources"]["EC2FleetLaunchTemplateLinuxDefault"]["Properties"]["LaunchTemplateData"].pop("CreditSpecification")
+    values = config.parameters(read_json(directory / "defaults.json"))
+    roles = [foundation["controller_role_arn"], *foundation["management_role_arns"].values()]
+    for role in roles:
+        match(role, rf"arn:aws:iam::{config.account_id}:role/[A-Za-z0-9+=,.@_/-]+", "management role ARN")
+    match(foundation["ebs_key_arn"], rf"arn:aws:kms:{config.region}:{config.account_id}:key/[A-Za-z0-9-]+",
+          "EBS key ARN")
+    match(foundation["artifact_bucket"], r"[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]", "artifact bucket")
+    values.update(DeploymentRepository=config.repository,
+                  DeploymentSourceAmiId=config.source_ami_id,
+                  DeploymentControllerAmiId=config.controller_ami_id,
+                  DeploymentInstanceType=config.instance_type,
+                  DeploymentRootVolumeGiB=config.root_volume_gib,
+                  DeploymentEbsKeyArn=foundation["ebs_key_arn"],
+                  DeploymentManagementRoleArns=roles)
+    require(not (set(values) - set(template["Parameters"])), "unsupported vendor template parameter")
+    target = output / "template.json"
+    write_json(target, template)
+    prepared = {"schema_version": 1, "kind": "runs-on-prepared-template",
+                "account_id": config.account_id, "region": config.region,
+                "repository": config.repository, "stack_name": config.stack_name,
+                "config_sha256": config.sha256, "template_file": "template.json",
+                "template_sha256": file_sha(target), "template_content_sha256": digest(template),
+                "template_bucket": foundation["artifact_bucket"],
+                "template_prefix": config.repository + "/infrastructure/runs-on/",
+                "parameters": values, "vendor_template_sha256": lock["sha256"]}
+    write_json(output / "prepared.json", prepared)
+    return {"template": str(target), "prepared": str(output / "prepared.json"), "cloud_changes": 0}
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--config", type=Path, required=True)
+    parser.add_argument("--foundation", type=Path, required=True)
     parser.add_argument("--vendor-template", type=Path)
-    parser.add_argument("--output", type=Path, default=ROOT / ".work/runs-on")
+    parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     directory = ROOT / "infra/runs-on"
-    lock = json.loads((directory / "template-lock.json").read_text())
-    config = json.loads((directory / "deployment.json").read_text())
+    lock = read_json(directory / "template-lock.json")
+    config = StackConfig.read(args.config)
     if args.vendor_template:
         source = args.vendor_template.read_bytes()
     else:
         with urllib.request.urlopen(lock["url"], timeout=60) as response:
             source = response.read()
-    require(hashlib.sha256(source).hexdigest() == lock["sha256"], "vendor template digest differs")
-    template = yaml.load(source, Loader=CloudFormationLoader)
-    patch(template, json.loads((directory / "policy-overlay.json").read_text()))
-    args.output.mkdir(parents=True, exist_ok=True)
-    target = args.output / "template.json"
-    write_json(target, template)
-    plan = resource_plan(template, config)
-    plan["template_sha256"] = hashlib.sha256(target.read_bytes()).hexdigest()
-    write_json(args.output / "resource-plan.json", plan)
-    print(json.dumps({"template": str(target), "resource_plan": str(args.output / "resource-plan.json"),
-                      "resource_count": plan["resource_count"], "cloud_changes": 0}))
+    print(json.dumps(prepare(config, terraform_outputs(args.foundation), source, lock,
+                             directory, args.output)))
 
 
 if __name__ == "__main__":

@@ -1,4 +1,5 @@
 import copy
+import contextlib
 import dataclasses
 import os
 from pathlib import Path
@@ -8,9 +9,9 @@ from unittest.mock import MagicMock, patch
 
 import jsonschema
 
-from support import ROOT, FakeCloud, deployment, guest, module, result, smoke, tags
+from support import ROOT, FakeCloud, deployment, deployment_dict, guest, module, parent_inventory, result, smoke, tags
 from accepted_image import AcceptedImage, selected_record
-from example import BUILD_TAG, InvalidInput, RUNS_ON_TAG, read_json, tags_of
+from example import BUILD_TAG, InfrastructureBindings, InvalidInput, RUNS_ON_TAG, VerifiedParent, read_json, tags_of, write_json
 from qualification import QualificationRun
 
 
@@ -113,7 +114,7 @@ class QualificationContext(unittest.TestCase):
         probe = module("probe-ami")
         for override, expected in (([], QUALIFICATION.build_id), (["--build-id", "125-1-one"], "125-1-one")):
             with tempfile.TemporaryDirectory() as temporary, patch.object(probe, "ROOT", Path(temporary)), \
-                 patch("sys.argv", ["probe-ami.py", "--result", "candidate.json", "--execute", *override]), \
+                 patch("sys.argv", ["probe-ami.py", "--deployment", "manifest.json", "--result", "candidate.json", "--output", str(Path(temporary) / "probe"), "--execute", *override]), \
                  patch.object(probe, "read_json", return_value=qualification_result()), \
                  patch.object(probe, "load_deployment", return_value=deployment()), patch.object(probe, "Cloud"), \
                  patch.object(probe, "probe", return_value={"instance_id": "i-44444444444444444"}) as operation, \
@@ -121,6 +122,43 @@ class QualificationContext(unittest.TestCase):
                 probe.main()
                 self.assertEqual(operation.call_args.args[2], expected)
                 self.assertEqual(operation.call_args.args[4]["execution"]["build_id"], "123-1-one")
+
+    def test_parent_capture_uses_bindings_and_selection_without_manifest_or_placeholder_evidence(self):
+        probe = module("probe-ami")
+        value = deployment_dict()
+        bindings = {field.name: value[field.name] for field in dataclasses.fields(InfrastructureBindings)}
+        bindings["runs_on"] = None
+        selected = {"id": "ami-55555555555555555", "owner": "111111111111"}
+        image = {"ImageId": selected["id"], "OwnerId": selected["owner"], "Architecture": "x86_64",
+                 "BootMode": "uefi-preferred", "RootDeviceName": "/dev/sda1",
+                 "BlockDeviceMappings": [{"DeviceName": "/dev/sda1", "Ebs": {"VolumeSize": 30}}]}
+        instance = {"InstanceId": "i-44444444444444444", "ImageId": selected["id"],
+                    "InstanceType": bindings["instance_type"], "CurrentInstanceBootMode": "uefi"}
+        cloud = MagicMock()
+        cloud.deployment = InfrastructureBindings.parse(bindings)
+        cloud.instance.return_value = instance
+        cloud.call.side_effect = lambda _service, operation, _payload: (
+            {"Images": [image]} if operation == "describe-images" else {"Instances": [instance]})
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            write_json(directory / "bindings.json", bindings)
+            write_json(directory / "selection.json", selected)
+            output = directory / "capture"
+            with contextlib.chdir(directory), patch.dict(os.environ, {}, clear=True), \
+                 patch.object(probe, "Cloud", return_value=cloud), patch.object(probe, "load_deployment") as manifest, \
+                 patch.object(probe, "inspect_ami", return_value=image), patch.object(probe, "inspect_instance_type", return_value={}), \
+                 patch.object(probe, "inspect_management"), patch.object(probe, "wait_online"), \
+                 patch.object(probe, "command", return_value=parent_inventory()), patch.object(probe, "diagnostics", return_value=[]):
+                probe.main(["--capture-inventory", "--bindings", "bindings.json", "--selection", "selection.json",
+                            "--output", "capture", "--build-id", "125-1-stock", "--execute"])
+            manifest.assert_not_called()
+            parent = VerifiedParent.load(read_json(output / "parent.json"), output, deployment().require_runs_on())
+            self.assertEqual((parent.id, parent.owner, parent.boot_mode),
+                             (selected["id"], selected["owner"], "uefi-preferred"))
+            self.assertEqual(parent.inventory_path, output / "inventory.json")
+            self.assertEqual(parent.inventory, parent_inventory())
+            self.assertTrue(read_json(output / "probe.json")["terminated"])
+            cloud.wait_terminated.assert_called_once_with([instance["InstanceId"]])
 
     def test_verification_uses_new_sentinels_and_expected_instances_without_rewriting_source(self):
         verifier = module("verify-run-results")
@@ -174,7 +212,7 @@ class QualificationContext(unittest.TestCase):
         cloud, probe, reports, instances = qualification_evidence()
         reports[1]["ctest_passed"] = False
         with patch.dict(os.environ, {}, clear=True), \
-             patch("sys.argv", ["verify-run-results.py", "--result", "candidate.json", "--probe", "probe.json",
+             patch("sys.argv", ["verify-run-results.py", "--deployment", "manifest.json", "--result", "candidate.json", "--probe", "probe.json",
                                 "--smoke-a", "smoke-a", "--smoke-b", "smoke-b",
                                 "--instance-a", instances["a"], "--instance-b", instances["b"]]), \
              patch.object(verifier, "load_deployment", return_value=deployment()), patch.object(verifier, "Cloud", return_value=cloud), \

@@ -1,16 +1,17 @@
-output "controller_role_arn" {
-  value = var.existing_controller_role_arn != null ? var.existing_controller_role_arn : aws_iam_role.controller[0].arn
-}
-output "builder_profile_name" { value = local.profiles.builder }
-output "probe_profile_name" { value = local.profiles.probe }
-output "management_role_arns" { value = local.profile_roles }
-output "management_profile_arns" { value = local.profile_arns }
-output "management_trust_json" { value = data.aws_iam_policy_document.ec2_trust.json }
-output "management_policy_json" { value = data.aws_iam_policy_document.ssm_agent.json }
-output "artifact_bucket" { value = local.bucket }
+output "account_id" { value = var.foundation.account_id }
+output "region" { value = var.foundation.region }
+output "repository" { value = var.foundation.repository }
+output "foundation" { value = var.foundation }
 output "security_group_id" { value = local.security_group }
-output "required_runs_on_common_tag" {
-  value = { "ami-example:runs-on-repository" = var.repository }
-}
+output "vpc_id" { value = var.vpc_id }
+output "subnet_id" { value = var.subnet_id }
+output "vpc_cidr" { value = var.vpc_cidr }
+output "source_ami_id" { value = var.source_ami_id }
+output "controller_ami_id" { value = var.controller_ami_id }
+output "instance_type" { value = var.instance_type }
+output "builder_instance_type" { value = var.builder_instance_type }
+output "root_volume_gib" { value = var.root_volume_gib }
 output "controller_policy_json" { value = data.aws_iam_policy_document.controller.json }
-output "controller_trust_json" { value = data.aws_iam_policy_document.github_trust.json }
+output "required_runs_on_common_tag" {
+  value = { "ami-example:runs-on-repository" = var.foundation.repository }
+}

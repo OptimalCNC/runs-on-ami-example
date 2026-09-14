@@ -7,7 +7,7 @@ from pathlib import Path, PurePosixPath
 from urllib.parse import parse_qs, unquote, urlparse
 
 from example import (AMI, BUILD_TAG, EXPIRY_TAG, OWNER_TAG, PURPOSE_TAG, ROOT, SHA256,
-                     Cloud, CobaltIdentity, file_sha, load_deployment, match, parse_time, read_json, recipe,
+                     AmiIdentity, Cloud, CobaltIdentity, ImageIdentity, file_sha, load_deployment, match, parse_time, read_json, recipe,
                      require, run, tags_of, utcnow, write_json)
 from preflight import inspect_ami, inspect_instance_type, inspect_root_volume
 from qualification import QualificationRun
@@ -65,7 +65,9 @@ def validate_source(result, deployment, *, for_launch=True):
         match(checksum, SHA256, "candidate recipe file digest")
     cobalt = CobaltIdentity.parse(result["payload"]["xenomai"])
     if for_launch:
-        require(result["source"]["parent_ami"] == dataclasses.asdict(deployment.source_ami), "candidate parent identity differs")
+        parent = AmiIdentity.parse(result["source"]["parent_ami"], "candidate parent")
+        require(parent.semantic_identity(deployment.region) == deployment.source_ami.semantic_identity(deployment.region),
+                "candidate parent identity differs")
         require(execution["runs_on_version"] == deployment.require_runs_on().version, "candidate RunsOn service version differs")
         require(result["cloud"]["instance_type"] == deployment.instance_type, "candidate runtime instance type differs")
         lock = read_json(ROOT / "images/xenomai-cobalt/inputs.lock.json")
@@ -83,14 +85,18 @@ def validate_source(result, deployment, *, for_launch=True):
     inputs = [uri for uri in result["lifecycle"]["artifact_locations"] if urlparse(uri).path.endswith("/inputs.tar")]
     require(len(inputs) == 1, "candidate must identify its retained input archive")
     archive = VersionedArtifact.parse(inputs[0], deployment)
-    require(archive.key == f"{deployment.repository}/{original.build_id}/inputs.tar", "input archive belongs to another source build")
+    expected_keys = {f"{deployment.repository}/{prefix}{original.build_id}/inputs.tar" for prefix in ("", "reports/")}
+    require(archive.key in expected_keys, "input archive belongs to another source build")
     return original
 
 
 def inspect_candidate(cloud, result, minimum_seconds=0, *, for_launch=True):
     d = cloud.deployment
-    identity = dataclasses.replace(d.source_ami, id=result["cloud"]["ami_id"], owner=d.account_id,
-                                   boot_mode=result["cloud"]["ami_boot_mode"])
+    require(result["cloud"]["account_id"] == d.account_id and result["cloud"]["region"] == d.region,
+            "candidate cloud target differs")
+    identity = ImageIdentity.parse({"id": result["cloud"]["ami_id"], "owner": d.account_id,
+                                    "architecture": result["cloud"]["architecture"],
+                                    "boot_mode": result["cloud"]["ami_boot_mode"]}, "candidate")
     require(identity.boot_mode in ("uefi", "uefi-preferred") and result["cloud"]["boot_mode"] == "uefi",
             "candidate must retain its qualified UEFI boot behavior")
     image = inspect_ami(cloud, identity)
@@ -137,7 +143,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
     preparation = subparsers.add_parser("prepare", help="prepare a retained candidate for qualification")
-    preparation.add_argument("--deployment", default="infra/deployment.json")
+    preparation.add_argument("--deployment", required=True, help="resolved deployment manifest")
     preparation.add_argument("--build-id", required=True)
     preparation.add_argument("--source-uri", required=True, help="versioned S3 URI of the candidate creation record")
     preparation.add_argument("--output", type=Path, required=True)

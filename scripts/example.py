@@ -96,29 +96,83 @@ def run(args: list[str], **kwargs: Any) -> str:
 
 
 @dataclasses.dataclass(frozen=True)
-class AmiIdentity:
+class ParentSelection:
     id: str
     owner: str
-    architecture: str
-    boot_mode: str
-    inventory_file: str
-    inventory_sha256: str
 
     @classmethod
-    def parse(cls, value: dict, name: str) -> AmiIdentity:
-        require(set(value) == {f.name for f in dataclasses.fields(cls)}, f"unexpected {name} fields")
-        match(value["id"], AMI, name + ".id")
-        match(value["owner"], r"\d{12}", name + ".owner")
+    def parse(cls, value: dict, name: str = "parent") -> ParentSelection:
+        require(isinstance(value, dict) and set(value) == {"id", "owner"}, f"unexpected {name} fields")
+        return cls(match(value["id"], AMI, name + ".id"), match(value["owner"], r"\d{12}", name + ".owner"))
+
+
+@dataclasses.dataclass(frozen=True)
+class ImageIdentity(ParentSelection):
+    architecture: str
+    boot_mode: str
+
+    @classmethod
+    def parse(cls, value: dict, name: str = "AMI") -> ImageIdentity:
+        require(isinstance(value, dict) and set(value) == {f.name for f in dataclasses.fields(cls)}, f"unexpected {name} fields")
+        ParentSelection.parse({key: value[key] for key in ("id", "owner")}, name)
         require(value["architecture"] == "x86_64", "only x86_64 is qualified")
         require(value["boot_mode"] in ("uefi", "uefi-preferred", "legacy-bios"), "record the exact AMI boot mode")
-        match(value["inventory_sha256"], SHA256, name + ".inventory_sha256")
-        match(value["inventory_file"], r"infra/[a-z0-9-]+inventory\.json", name + ".inventory_file")
         return cls(**value)
 
     @property
     def effective_boot_mode(self) -> str:
-        # The selected Nitro type must support UEFI, so preference never silently falls back.
         return "legacy-bios" if self.boot_mode == "legacy-bios" else "uefi"
+
+    def semantic_identity(self, region: str) -> dict:
+        return {"id": self.id, "owner": self.owner, "architecture": self.architecture,
+                "boot_mode": self.boot_mode, "region": region}
+
+
+@dataclasses.dataclass(frozen=True)
+class AmiIdentity(ImageIdentity):
+    inventory_file: str
+    inventory_sha256: str
+
+    @classmethod
+    def parse(cls, value: dict, name: str = "AMI") -> AmiIdentity:
+        require(isinstance(value, dict) and set(value) == {f.name for f in dataclasses.fields(cls)}, f"unexpected {name} fields")
+        ImageIdentity.parse({key: value[key] for key in ("id", "owner", "architecture", "boot_mode")}, name)
+        match(value["inventory_sha256"], SHA256, name + ".inventory_sha256")
+        require(isinstance(value["inventory_file"], str) and bool(value["inventory_file"])
+                and "\x00" not in value["inventory_file"], "inventory_file must be a file reference")
+        return cls(**value)
+
+    def record(self) -> dict:
+        return dataclasses.asdict(self)
+
+    def semantic_identity(self, region: str) -> dict:
+        return {**super().semantic_identity(region), "inventory_sha256": self.inventory_sha256}
+
+
+@dataclasses.dataclass(frozen=True)
+class VerifiedParent(AmiIdentity):
+    """An image identity whose captured inventory has been read and verified."""
+
+    @classmethod
+    def load(cls, value: dict, base_dir: Path, installation: RunsOnInstallation, name: str = "parent") -> VerifiedParent:
+        identity = cls.parse(value, name)
+        path = (base_dir / identity.inventory_file).resolve()
+        require(path.is_file(), f"parent inventory is missing: {path}")
+        content = path.read_bytes()
+        require(hashlib.sha256(content).hexdigest() == identity.inventory_sha256, f"inventory hash differs: {path}")
+        inventory = json.loads(content)
+        verify_inventory(inventory, installation)
+        object.__setattr__(identity, "_inventory_path", path)
+        object.__setattr__(identity, "_inventory", inventory)
+        return identity
+
+    @property
+    def inventory_path(self) -> Path:
+        return self._inventory_path
+
+    @property
+    def inventory(self) -> dict:
+        return self._inventory
 
 
 @dataclasses.dataclass(frozen=True)
@@ -153,14 +207,39 @@ class RunsOnInstallation:
 
 
 @dataclasses.dataclass(frozen=True)
-class Deployment:
-    repository: str
+class CloudTarget:
     account_id: str
     region: str
+
+    @classmethod
+    def parse(cls, value: dict) -> CloudTarget:
+        require(isinstance(value, dict) and set(value) == {"account_id", "region"}, "cloud target needs account_id and region")
+        return cls(match(value["account_id"], r"\d{12}", "account_id"),
+                   match(value["region"], r"[a-z]{2}-[a-z]+-\d", "region"))
+
+
+@dataclasses.dataclass(frozen=True)
+class CleanupContext(CloudTarget):
+    repository: str
+    artifact_bucket: str
+
+    @classmethod
+    def parse(cls, value: dict) -> CleanupContext:
+        require(isinstance(value, dict) and set(value) == {f.name for f in dataclasses.fields(CleanupContext)},
+                "cleanup context needs account_id, region, repository and artifact_bucket")
+        CloudTarget.parse({key: value[key] for key in ("account_id", "region")})
+        match(value["repository"], r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", "repository")
+        match(value["artifact_bucket"], r"[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]", "artifact_bucket")
+        return cls(**value)
+
+    def cleanup(self) -> CleanupContext:
+        return CleanupContext(**{f.name: getattr(self, f.name) for f in dataclasses.fields(CleanupContext)})
+
+
+@dataclasses.dataclass(frozen=True)
+class InfrastructureBindings(CleanupContext):
     environment: str
     runs_on: RunsOnInstallation | None
-    source_ami: AmiIdentity
-    controller_ami: AmiIdentity
     instance_type: str
     vcpus: int
     builder_instance_type: str
@@ -170,7 +249,6 @@ class Deployment:
     controller_role_arn: str
     builder_profile_name: str
     probe_profile_name: str
-    artifact_bucket: str
     root_volume_gib: int
     parent_root_volume_gib: int
     deadlines: dict[str, int]
@@ -178,23 +256,19 @@ class Deployment:
     private: bool
 
     @classmethod
-    def parse(cls, value: dict) -> Deployment:
-        expected = {f.name for f in dataclasses.fields(cls)}
-        require(set(value) == expected, f"deployment keys differ: {set(value) ^ expected}")
+    def parse(cls, value: dict) -> InfrastructureBindings:
+        expected = {f.name for f in dataclasses.fields(InfrastructureBindings)}
+        require(isinstance(value, dict) and set(value) == expected, f"binding keys differ: {set(value) ^ expected}")
         value = dict(value)
+        CleanupContext.parse({f.name: value[f.name] for f in dataclasses.fields(CleanupContext)})
         for key, pattern in {
-            "repository": r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", "account_id": r"\d{12}",
-            "region": r"[a-z]{2}-[a-z]+-\d", "environment": r"[A-Za-z0-9_-]+",
-            "instance_type": INSTANCE_TYPE, "builder_instance_type": INSTANCE_TYPE,
+            "environment": r"[A-Za-z0-9_-]+", "instance_type": INSTANCE_TYPE, "builder_instance_type": INSTANCE_TYPE,
             "vpc_id": r"vpc-[0-9a-f]{17}", "subnet_id": r"subnet-[0-9a-f]{17}",
             "security_group_id": r"sg-[0-9a-f]{17}",
             "controller_role_arn": rf"arn:aws:iam::{value['account_id']}:role/[A-Za-z0-9+=,.@_/-]+",
             "builder_profile_name": r"[A-Za-z0-9+=,.@_-]+", "probe_profile_name": r"[A-Za-z0-9+=,.@_-]+",
-            "artifact_bucket": r"[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]",
         }.items():
             match(value[key], pattern, key)
-        for name in ("source_ami", "controller_ami"):
-            value[name] = AmiIdentity.parse(value[name], name)
         value["runs_on"] = RunsOnInstallation.parse(value["runs_on"]) if value["runs_on"] is not None else None
         require(type(value["vcpus"]) is int and 1 <= value["vcpus"] <= 64, "vcpus must be 1..64")
         for name in ("root_volume_gib", "parent_root_volume_gib"):
@@ -202,7 +276,7 @@ class Deployment:
         require(value["root_volume_gib"] >= value["parent_root_volume_gib"], "candidate root must cover the parent root")
         require(type(value["retain_hours"]) is int and 1 <= value["retain_hours"] <= 168, "retention must be 1..168 hours")
         require(type(value["private"]) is bool, "private must be a boolean")
-        require(set(value["deadlines"]) == {"boot_seconds", "registration_seconds", "workflow_seconds"}, "deadline keys differ")
+        require(isinstance(value["deadlines"], dict) and set(value["deadlines"]) == {"boot_seconds", "registration_seconds", "workflow_seconds"}, "deadline keys differ")
         for key, seconds in value["deadlines"].items():
             require(type(seconds) is int and 60 <= seconds <= 18000, f"invalid deadline: {key}")
         require(value["deadlines"]["workflow_seconds"] > value["deadlines"]["registration_seconds"], "workflow deadline too short")
@@ -211,12 +285,6 @@ class Deployment:
     def require_runs_on(self) -> RunsOnInstallation:
         require(self.runs_on is not None, "configure the actual RunsOn installation before building or routing jobs")
         return self.runs_on
-
-    def image_inputs(self) -> dict:
-        return {"source_ami": dataclasses.asdict(self.source_ami), "builder_instance_type": self.builder_instance_type,
-                "root_volume_gib": self.root_volume_gib,
-                "runs_on_version": self.require_runs_on().version,
-                "runs_on_bootstrap_version": self.require_runs_on().bootstrap_version}
 
     def label(self, key: str, ami: str, *, parent: bool = False) -> str:
         installation = self.require_runs_on()
@@ -228,34 +296,89 @@ class Deployment:
                 f"/private={str(self.private).lower()}/volume={volume}gb:gp3:125mbs:3000iops")
 
 
-def load_deployment(path: str = "infra/deployment.json", *, inventories: bool = True) -> Deployment:
-    deployment = Deployment.parse(read_json(ROOT / path))
-    if inventories:
-        installation = deployment.require_runs_on()
-        for identity in (deployment.source_ami, deployment.controller_ami):
-            require(file_sha(ROOT / identity.inventory_file) == identity.inventory_sha256,
-                    f"inventory hash differs: {identity.inventory_file}")
-            inventory = read_json(ROOT / identity.inventory_file)
-            require(inventory["os_version"] == "24.04", "parent must use Ubuntu 24.04")
-            require(inventory["registered"] is False and inventory["workspaces"] == [], "parent is not clean")
-            require(inventory["secure_boot"] is False, "unsigned-kernel qualification requires Secure Boot disabled")
-            match(inventory["packages_sha256"], SHA256, "parent package inventory")
-            require(hashlib.sha256(inventory["package_inventory"].encode()).hexdigest() == inventory["packages_sha256"], "parent package inventory digest is inconsistent")
-            match(inventory["runner_version"], r"\d+\.\d+\.\d+", "inherited runner version")
-            require(bool(inventory["bootstrap_files"]), "missing inherited RunsOn bootstrap")
-            match(inventory["runner_listener_sha256"], SHA256, "inherited runner binary digest")
-            for path, checksum in inventory["snap_hashes"].items():
-                match(path, r"[A-Za-z0-9_.-]+\.snap", "inherited snap file")
-                match(checksum, SHA256, "inherited snap digest")
-            for path, checksum in inventory["bootstrap_files"].items():
-                match(path, r"/usr/local/bin/runs-on-bootstrap-v?\d+\.\d+\.\d+", "inherited bootstrap path")
-                match(checksum, SHA256, "inherited bootstrap digest")
-            require(any(Path(p).name in {f"runs-on-bootstrap-{installation.bootstrap_version}", f"runs-on-bootstrap-v{installation.bootstrap_version}"} for p in inventory["bootstrap_files"]),
-                    "parent must contain the bootstrap version selected by the RunsOn installation")
-    return deployment
+@dataclasses.dataclass(frozen=True)
+class BuildInputs(InfrastructureBindings):
+    source_ami: VerifiedParent
+    controller_ami: VerifiedParent
+
+    @classmethod
+    def parse(cls, value: dict, *, base_dir: Path | None = None) -> BuildInputs:
+        expected = {f.name for f in dataclasses.fields(cls)}
+        require(isinstance(value, dict) and set(value) == expected, f"build input keys differ: {set(value) ^ expected}")
+        bindings = InfrastructureBindings.parse({f.name: value[f.name] for f in dataclasses.fields(InfrastructureBindings)})
+        installation = bindings.require_runs_on()
+        directory = Path.cwd() if base_dir is None else Path(base_dir)
+        parents = {name: VerifiedParent.load(value[name], directory, installation, name)
+                   for name in ("source_ami", "controller_ami")}
+        return cls(**{f.name: getattr(bindings, f.name) for f in dataclasses.fields(InfrastructureBindings)}, **parents)
+
+    def image_inputs(self) -> dict:
+        return {"source_ami": self.source_ami.semantic_identity(self.region), "builder_instance_type": self.builder_instance_type,
+                "root_volume_gib": self.root_volume_gib, "runs_on_version": self.require_runs_on().version,
+                "runs_on_bootstrap_version": self.require_runs_on().bootstrap_version}
+
+    def snapshot(self, output_directory: str | Path) -> Path:
+        """Copy the complete verified input closure with relocatable references."""
+        import shutil
+        destination = Path(output_directory).resolve()
+        destination.mkdir(parents=True, exist_ok=False)
+        value = dataclasses.asdict(self)
+        for name in ("source_ami", "controller_ami"):
+            parent = getattr(self, name)
+            relative = "parents/" + name.removesuffix("_ami") + ".json"
+            target = destination / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(parent.inventory_path, target)
+            require(file_sha(target) == parent.inventory_sha256, "parent inventory changed after loading")
+            value[name]["inventory_file"] = relative
+        path = destination / "manifest.json"
+        write_json(path, value)
+        return path
 
 
-def recipe(lock: dict, deployment: Deployment, root: Path = ROOT) -> tuple[str, dict[str, str]]:
+def verify_inventory(inventory: dict, installation: RunsOnInstallation) -> None:
+    fields = {"os_version", "registered", "workspaces", "secure_boot", "packages_sha256", "package_inventory",
+              "runner_version", "bootstrap_files", "runner_listener_sha256", "snap_hashes"}
+    require(isinstance(inventory, dict) and fields <= set(inventory), "parent inventory fields are missing")
+    require(inventory["os_version"] == "24.04", "parent must use Ubuntu 24.04")
+    require(inventory["registered"] is False and inventory["workspaces"] == [], "parent is not clean")
+    require(inventory["secure_boot"] is False, "unsigned-kernel qualification requires Secure Boot disabled")
+    match(inventory["packages_sha256"], SHA256, "parent package inventory")
+    require(hashlib.sha256(inventory["package_inventory"].encode()).hexdigest() == inventory["packages_sha256"], "parent package inventory digest is inconsistent")
+    match(inventory["runner_version"], r"\d+\.\d+\.\d+", "inherited runner version")
+    require(bool(inventory["bootstrap_files"]), "missing inherited RunsOn bootstrap")
+    match(inventory["runner_listener_sha256"], SHA256, "inherited runner binary digest")
+    for path, checksum in inventory["snap_hashes"].items():
+        match(path, r"[A-Za-z0-9_.-]+\.snap", "inherited snap file")
+        match(checksum, SHA256, "inherited snap digest")
+    for path, checksum in inventory["bootstrap_files"].items():
+        match(path, r"/usr/local/bin/runs-on-bootstrap-v?\d+\.\d+\.\d+", "inherited bootstrap path")
+        match(checksum, SHA256, "inherited bootstrap digest")
+    require(any(Path(p).name in {f"runs-on-bootstrap-{installation.bootstrap_version}", f"runs-on-bootstrap-v{installation.bootstrap_version}"} for p in inventory["bootstrap_files"]),
+            "parent must contain the bootstrap version selected by the RunsOn installation")
+
+
+def load_deployment(path: str | Path) -> BuildInputs:
+    source = Path(path).resolve()
+    return BuildInputs.parse(read_json(source), base_dir=source.parent)
+
+
+def load_bindings(path: str | Path) -> InfrastructureBindings:
+    value = read_json(path)
+    return InfrastructureBindings.parse({f.name: value[f.name] for f in dataclasses.fields(InfrastructureBindings)})
+
+
+def load_cleanup_context(path: str | Path) -> CleanupContext:
+    value = read_json(path)
+    return CleanupContext.parse({f.name: value[f.name] for f in dataclasses.fields(CleanupContext)})
+
+
+def load_parent_record(path: str | Path, installation: RunsOnInstallation) -> VerifiedParent:
+    source = Path(path).resolve()
+    return VerifiedParent.load(read_json(source), source.parent, installation)
+
+
+def recipe(lock: dict, deployment: BuildInputs, root: Path = ROOT) -> tuple[str, dict[str, str]]:
     hashes = {}
     for name in lock["recipe_files"]:
         path = (root / name).resolve()
@@ -268,7 +391,7 @@ def build_id(run_id: str, attempt: str, variant: str) -> str:
     return match(f"{run_id}-{attempt}-{variant}", r"[1-9]\d*-[1-9]\d*-(?:one|two|stock)", "build ID")
 
 
-def resource_tags(deployment: Deployment, build: str, purpose: str, expiry: str) -> list[dict[str, str]]:
+def resource_tags(deployment: CleanupContext, build: str, purpose: str, expiry: str) -> list[dict[str, str]]:
     match(build, r"[1-9]\d*-[1-9]\d*-(?:one|two|stock)", "build ID")
     require(purpose in ("builder", "probe", "candidate", "test"), "invalid resource purpose")
     parse_time(expiry)
@@ -286,7 +409,7 @@ class VersionedBucket:
 
 class Cloud:
     """An AWS CLI boundary bound to a verified account and explicit region."""
-    def __init__(self, deployment: Deployment):
+    def __init__(self, deployment: CloudTarget):
         self.deployment = deployment
         self._artifact_bucket: VersionedBucket | None = None
         account = self.call("sts", "get-caller-identity")["Account"]
@@ -325,7 +448,7 @@ class Cloud:
     def retain(self, local: Path, key: str) -> str:
         require(local.is_file(), f"artifact missing: {local}")
         bucket = self.artifacts()
-        object_key = f"{self.deployment.repository}/{key}"
+        object_key = f"{self.artifact_context().repository}/reports/{key}"
         target = f"s3://{bucket.name}/{object_key}"
         run(["aws", "s3", "cp", str(local), target, "--region", bucket.region,
              "--only-show-errors", "--sse", "AES256"], timeout=1200)
@@ -335,9 +458,14 @@ class Cloud:
         require(bool(version) and version != "null", "artifact upload did not produce an immutable S3 version")
         return target + "?versionId=" + quote(version, safe="")
 
+    def artifact_context(self) -> CleanupContext:
+        if isinstance(self.deployment, CleanupContext):
+            return self.deployment.cleanup()
+        raise InvalidInput("artifact operations require repository and bucket bindings")
+
     def artifacts(self) -> VersionedBucket:
         if self._artifact_bucket is None:
-            d = self.deployment
+            d = self.artifact_context()
             request = {"Bucket": d.artifact_bucket, "ExpectedBucketOwner": d.account_id}
             versioning = self.call("s3api", "get-bucket-versioning", request)
             require(versioning.get("Status") == "Enabled", "artifact bucket versioning must be enabled")

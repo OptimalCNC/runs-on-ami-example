@@ -15,39 +15,34 @@ on:
       fault:
         type: string
         required: true
+      deployment_uri:
+        type: string
+        required: true
+      deployment_sha256:
+        type: string
+        required: true
 
 permissions:
   contents: read
 
 jobs:
-  configure:
-    if: vars.AMI_EXAMPLE_CLOUD_ENABLED == 'true' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
-    name: configure
-    runs-on: ubuntu-24.04
-    outputs:
-      build_id: ${{ steps.config.outputs.build_id }}
-      controller_label: ${{ steps.config.outputs.controller_label }}
-      region: ${{ steps.config.outputs.region }}
-      role_arn: ${{ steps.config.outputs.role_arn }}
-      environment: ${{ steps.config.outputs.environment }}
-    steps:
-      - uses: actions/checkout@v7.0.1
-        with:
-          persist-credentials: false
-      - id: config
-        run: |
-          python3 scripts/image-config.py --build-id "$BUILD_ID" --output artifacts/config.json
-          jq -r 'to_entries[] | "\(.key)=\(.value)"' artifacts/config.json >> "$GITHUB_OUTPUT"
-        env:
-          BUILD_ID: ${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.variant }}
 
-  register:
-    needs: configure
+  configure:
+    name: configure
+    if: vars.AMI_EXAMPLE_CLOUD_ENABLED == 'true' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
-    environment: ${{ needs.configure.outputs.environment }}
+    environment: ${{ vars.AMI_DEPLOYMENT_ENVIRONMENT || 'ami-build' }}
+    timeout-minutes: 30
     permissions:
       contents: read
       id-token: write
+    outputs:
+      deployment_uri: ${{ steps.deployment.outputs.uri }}
+      deployment_sha256: ${{ steps.deployment.outputs.sha256 }}
+      execution_uri: ${{ steps.register.outputs.uri }}
+      execution_sha256: ${{ steps.register.outputs.sha256 }}
+      build_id: ${{ steps.config.outputs.build_id }}
+      controller_label: ${{ steps.config.outputs.controller_label }}
     steps:
       - uses: actions/checkout@v7.0.1
         with:
@@ -56,13 +51,52 @@ jobs:
           python3 scripts/install-tools.py --group cloud
           echo "$GITHUB_WORKSPACE/.tools/bin" >> "$GITHUB_PATH"
           echo "PACKER_PLUGIN_PATH=$GITHUB_WORKSPACE/.tools/plugins" >> "$GITHUB_ENV"
-      - uses: aws-actions/configure-aws-credentials@v6.2.4
+      - id: bootstrap
+        name: Resolve bootstrap identity
+        run: |
+          test -n "$ROLE_ARN" && test -n "$REGION"
+          [[ "$STATE_URI" == s3://*/* ]]
+          account_id="$(cut -d: -f5 <<< "$ROLE_ARN")"
+          [[ "$account_id" =~ ^[0-9]{12}$ ]]
+          state_path="${STATE_URI#s3://}"
+          bucket="${state_path%%/*}"
+          mkdir -p .execution
+          jq -n --arg repository "$GITHUB_REPOSITORY" --arg account_id "$account_id" \
+            --arg region "$REGION" --arg artifact_bucket "$bucket" \
+            '{repository:$repository,account_id:$account_id,region:$region,artifact_bucket:$artifact_bucket}' \
+            > .execution/cleanup-context.json
+          echo "account_id=$account_id" >> "$GITHUB_OUTPUT"
+        env:
+          ROLE_ARN: ${{ vars.AMI_CONTROLLER_ROLE_ARN }}
+          REGION: ${{ vars.AMI_REGION }}
+          STATE_URI: ${{ vars.AMI_STATE_URI }}
+      - id: auth
+        uses: aws-actions/configure-aws-credentials@v6.2.4
         with:
           role-session-name: ami-example-${{ github.run_id }}-${{ github.run_attempt }}
-          role-to-assume: ${{ needs.configure.outputs.role_arn }}
-          aws-region: ${{ needs.configure.outputs.region }}
-      - run: |
-          mkdir -p artifacts
+          role-to-assume: ${{ vars.AMI_CONTROLLER_ROLE_ARN }}
+          aws-region: ${{ vars.AMI_REGION }}
+          allowed-account-ids: ${{ steps.bootstrap.outputs.account_id }}
+      - id: deployment
+        name: Fetch the immutable deployment bundle
+        run: |
+          python3 scripts/deployment-state.py fetch --uri "$DEPLOYMENT_URI" --sha256 "$DEPLOYMENT_SHA256" \
+            --account-id "$ACCOUNT_ID" --region "$REGION" --repository "$GITHUB_REPOSITORY" --output .deployment
+          jq -r 'to_entries[] | "\(.key)=\(.value)"' .deployment/binding.json >> "$GITHUB_OUTPUT"
+        env:
+          ACCOUNT_ID: ${{ steps.bootstrap.outputs.account_id }}
+          REGION: ${{ vars.AMI_REGION }}
+          DEPLOYMENT_URI: ${{ inputs.deployment_uri }}
+          DEPLOYMENT_SHA256: ${{ inputs.deployment_sha256 }}
+      - id: config
+        run: |
+          python3 scripts/image-config.py --deployment .deployment/deployment.json --build-id "$BUILD_ID" --output .deployment/config.json
+          jq -r '{build_id,controller_label} | to_entries[] | "\(.key)=\(.value)"' .deployment/config.json >> "$GITHUB_OUTPUT"
+        env:
+          BUILD_ID: ${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.variant }}
+      - id: register
+        name: Freeze execution before launching runners
+        run: |
           jq -n --arg prefix "$JOB_PREFIX" --arg variant "$VARIANT" '
             {configure: {name: ($prefix + "configure")},
              build: {name: ($prefix + "build"), needs: ["configure"]}} +
@@ -70,29 +104,28 @@ jobs:
              {probe: {name: ($prefix + "probe")},
               "smoke-a": {name: ($prefix + "smoke-a"), needs: ["probe"], adopt: true},
               "smoke-b": {name: ($prefix + "smoke-b"), needs: ["smoke-a"], adopt: true}} end)
-          ' > artifacts/job-plan.json
+          ' > .execution/job-plan.json
           terminal=smoke-b
           if [[ "$VARIANT" == stock ]]; then terminal=build; fi
           test "$BUILD_ID" = "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-${BUILD_ID##*-}"
-          python3 scripts/watchdog.py register --repository "$GITHUB_REPOSITORY" --run-id "$GITHUB_RUN_ID" \
-            --run-attempt "$GITHUB_RUN_ATTEMPT" --build-id "$BUILD_ID" --plan artifacts/job-plan.json \
-            --terminal "$terminal" --deadline-seconds "$(jq .deadlines.workflow_seconds infra/deployment.json)" \
-            --registration-seconds "$(jq .deadlines.registration_seconds infra/deployment.json)" --output artifacts/execution.json
+          python3 scripts/watchdog.py register --deployment .deployment/deployment.json \
+            --configuration-binding .deployment/binding.json --repository "$GITHUB_REPOSITORY" --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" --build-id "$BUILD_ID" --plan .execution/job-plan.json \
+            --terminal "$terminal" --deadline-seconds "$(jq .deadlines.workflow_seconds .deployment/deployment.json)" \
+            --registration-seconds "$(jq .deadlines.registration_seconds .deployment/deployment.json)" \
+            --output .execution/record.json --binding-output .execution/binding.json
+          jq -r 'to_entries[] | "\(.key)=\(.value)"' .execution/binding.json >> "$GITHUB_OUTPUT"
         env:
-          BUILD_ID: ${{ needs.configure.outputs.build_id }}
-          VARIANT: ${{ inputs.variant }}
+          BUILD_ID: ${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.variant }}
           JOB_PREFIX: ${{ inputs.job_prefix }}
-      - uses: actions/upload-artifact@v7.0.1
-        with:
-          name: ${{ needs.configure.outputs.build_id }}-execution
-          path: artifacts/execution.json
-          if-no-files-found: error
+          VARIANT: ${{ inputs.variant }}
 
   build:
     name: build
-    needs: [configure, register]
+    if: startsWith(needs.configure.outputs.build_id, format('{0}-{1}-', github.run_id, github.run_attempt))
+    needs: configure
     runs-on: ${{ needs.configure.outputs.controller_label }}
-    environment: ${{ needs.configure.outputs.environment }}
+    environment: ${{ vars.AMI_DEPLOYMENT_ENVIRONMENT || 'ami-build' }}
     timeout-minutes: 105
     permissions:
       contents: read
@@ -111,19 +144,51 @@ jobs:
           python3 scripts/install-tools.py --group build
           echo "$GITHUB_WORKSPACE/.tools/bin" >> "$GITHUB_PATH"
           echo "PACKER_PLUGIN_PATH=$GITHUB_WORKSPACE/.tools/plugins" >> "$GITHUB_ENV"
-      - uses: aws-actions/configure-aws-credentials@v6.2.4
+      - id: bootstrap
+        name: Resolve bootstrap identity
+        run: |
+          test -n "$ROLE_ARN" && test -n "$REGION"
+          [[ "$STATE_URI" == s3://*/* ]]
+          account_id="$(cut -d: -f5 <<< "$ROLE_ARN")"
+          [[ "$account_id" =~ ^[0-9]{12}$ ]]
+          state_path="${STATE_URI#s3://}"
+          bucket="${state_path%%/*}"
+          mkdir -p .execution
+          jq -n --arg repository "$GITHUB_REPOSITORY" --arg account_id "$account_id" \
+            --arg region "$REGION" --arg artifact_bucket "$bucket" \
+            '{repository:$repository,account_id:$account_id,region:$region,artifact_bucket:$artifact_bucket}' \
+            > .execution/cleanup-context.json
+          echo "account_id=$account_id" >> "$GITHUB_OUTPUT"
+        env:
+          ROLE_ARN: ${{ vars.AMI_CONTROLLER_ROLE_ARN }}
+          REGION: ${{ vars.AMI_REGION }}
+          STATE_URI: ${{ vars.AMI_STATE_URI }}
+      - id: auth
+        uses: aws-actions/configure-aws-credentials@v6.2.4
         with:
           role-session-name: ami-example-${{ github.run_id }}-${{ github.run_attempt }}
-          role-to-assume: ${{ needs.configure.outputs.role_arn }}
-          aws-region: ${{ needs.configure.outputs.region }}
+          role-to-assume: ${{ vars.AMI_CONTROLLER_ROLE_ARN }}
+          aws-region: ${{ vars.AMI_REGION }}
+          allowed-account-ids: ${{ steps.bootstrap.outputs.account_id }}
           role-duration-seconds: 14400
+      - id: deployment
+        name: Fetch the immutable deployment bundle
+        run: |
+          python3 scripts/deployment-state.py fetch --uri "$DEPLOYMENT_URI" --sha256 "$DEPLOYMENT_SHA256" \
+            --account-id "$ACCOUNT_ID" --region "$REGION" --repository "$GITHUB_REPOSITORY" --output .deployment
+          jq -r 'to_entries[] | "\(.key)=\(.value)"' .deployment/binding.json >> "$GITHUB_OUTPUT"
+        env:
+          ACCOUNT_ID: ${{ steps.bootstrap.outputs.account_id }}
+          REGION: ${{ vars.AMI_REGION }}
+          DEPLOYMENT_URI: ${{ needs.configure.outputs.deployment_uri }}
+          DEPLOYMENT_SHA256: ${{ needs.configure.outputs.deployment_sha256 }}
       - id: build
         run: |
-          args=(--build-id "$BUILD_ID" --execute --config-output artifacts/config.json)
+          args=(--deployment .deployment/deployment.json --build-id "$BUILD_ID" --execute --output "artifacts/$BUILD_ID" --config-output .deployment/config.json)
           if [[ "$RETAIN" == true ]]; then args+=(--retain); fi
           test "$BUILD_ID" = "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-${BUILD_ID##*-}"
           python3 scripts/build-image.py "${args[@]}"
-          jq -r 'to_entries[] | "\(.key)=\(.value)"' artifacts/config.json >> "$GITHUB_OUTPUT"
+          jq -r 'to_entries[] | "\(.key)=\(.value)"' .deployment/config.json >> "$GITHUB_OUTPUT"
         env:
           RETAIN: ${{ inputs.retain }}
           BUILD_ID: ${{ needs.configure.outputs.build_id }}
@@ -131,18 +196,20 @@ jobs:
         uses: actions/upload-artifact@v7.0.1
         with:
           name: ${{ needs.configure.outputs.build_id }}-build
-          path: |
-            artifacts/${{ needs.configure.outputs.build_id }}
-            !artifacts/**/inputs.tar
+          path: |-
+            artifacts/${{ needs.configure.outputs.build_id }}/image-result.json
+            artifacts/${{ needs.configure.outputs.build_id }}/stock-result.json
           retention-days: 14
           if-no-files-found: warn
 
   probe:
     name: probe
     if: inputs.variant != 'stock'
-    needs: [configure, build]
+    needs:
+      - configure
+      - build
     runs-on: ubuntu-24.04
-    environment: ${{ needs.configure.outputs.environment }}
+    environment: ${{ vars.AMI_DEPLOYMENT_ENVIRONMENT || 'ami-build' }}
     timeout-minutes: 30
     permissions:
       contents: read
@@ -151,21 +218,53 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
+      - run: |
+          python3 scripts/install-tools.py --group cloud
+          echo "$GITHUB_WORKSPACE/.tools/bin" >> "$GITHUB_PATH"
+          echo "PACKER_PLUGIN_PATH=$GITHUB_WORKSPACE/.tools/plugins" >> "$GITHUB_ENV"
+      - id: bootstrap
+        name: Resolve bootstrap identity
+        run: |
+          test -n "$ROLE_ARN" && test -n "$REGION"
+          [[ "$STATE_URI" == s3://*/* ]]
+          account_id="$(cut -d: -f5 <<< "$ROLE_ARN")"
+          [[ "$account_id" =~ ^[0-9]{12}$ ]]
+          state_path="${STATE_URI#s3://}"
+          bucket="${state_path%%/*}"
+          mkdir -p .execution
+          jq -n --arg repository "$GITHUB_REPOSITORY" --arg account_id "$account_id" \
+            --arg region "$REGION" --arg artifact_bucket "$bucket" \
+            '{repository:$repository,account_id:$account_id,region:$region,artifact_bucket:$artifact_bucket}' \
+            > .execution/cleanup-context.json
+          echo "account_id=$account_id" >> "$GITHUB_OUTPUT"
+        env:
+          ROLE_ARN: ${{ vars.AMI_CONTROLLER_ROLE_ARN }}
+          REGION: ${{ vars.AMI_REGION }}
+          STATE_URI: ${{ vars.AMI_STATE_URI }}
+      - id: auth
+        uses: aws-actions/configure-aws-credentials@v6.2.4
+        with:
+          role-session-name: ami-example-${{ github.run_id }}-${{ github.run_attempt }}
+          role-to-assume: ${{ vars.AMI_CONTROLLER_ROLE_ARN }}
+          aws-region: ${{ vars.AMI_REGION }}
+          allowed-account-ids: ${{ steps.bootstrap.outputs.account_id }}
+      - id: deployment
+        name: Fetch the immutable deployment bundle
+        run: |
+          python3 scripts/deployment-state.py fetch --uri "$DEPLOYMENT_URI" --sha256 "$DEPLOYMENT_SHA256" \
+            --account-id "$ACCOUNT_ID" --region "$REGION" --repository "$GITHUB_REPOSITORY" --output .deployment
+          jq -r 'to_entries[] | "\(.key)=\(.value)"' .deployment/binding.json >> "$GITHUB_OUTPUT"
+        env:
+          ACCOUNT_ID: ${{ steps.bootstrap.outputs.account_id }}
+          REGION: ${{ vars.AMI_REGION }}
+          DEPLOYMENT_URI: ${{ needs.configure.outputs.deployment_uri }}
+          DEPLOYMENT_SHA256: ${{ needs.configure.outputs.deployment_sha256 }}
       - uses: actions/download-artifact@v8.0.1
         with:
           name: ${{ needs.configure.outputs.build_id }}-build
           path: artifacts/${{ needs.configure.outputs.build_id }}
       - run: |
-          python3 scripts/install-tools.py --group cloud
-          echo "$GITHUB_WORKSPACE/.tools/bin" >> "$GITHUB_PATH"
-          echo "PACKER_PLUGIN_PATH=$GITHUB_WORKSPACE/.tools/plugins" >> "$GITHUB_ENV"
-      - uses: aws-actions/configure-aws-credentials@v6.2.4
-        with:
-          role-session-name: ami-example-${{ github.run_id }}-${{ github.run_attempt }}
-          role-to-assume: ${{ needs.configure.outputs.role_arn }}
-          aws-region: ${{ needs.configure.outputs.region }}
-      - run: |
-          args=(--result "artifacts/$BUILD_ID/image-result.json" --build-id "$BUILD_ID" --execute)
+          args=(--deployment .deployment/deployment.json --result "artifacts/$BUILD_ID/image-result.json" --build-id "$BUILD_ID" --execute --output "artifacts/$BUILD_ID/probe")
           if [[ "$FAULT" == probe-identity ]]; then args+=(--fault); fi
           test "$BUILD_ID" = "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-${BUILD_ID##*-}"
           python3 scripts/probe-ami.py "${args[@]}"
@@ -176,13 +275,17 @@ jobs:
         uses: actions/upload-artifact@v7.0.1
         with:
           name: ${{ needs.configure.outputs.build_id }}-probe
-          path: artifacts/${{ needs.configure.outputs.build_id }}/probe
+          path: artifacts/${{ needs.configure.outputs.build_id }}/probe/probe.json
           retention-days: 14
           if-no-files-found: warn
 
   smoke-a:
     name: smoke-a
-    needs: [configure, build, probe]
+    if: startsWith(needs.configure.outputs.build_id, format('{0}-{1}-', github.run_id, github.run_attempt))
+    needs:
+      - configure
+      - build
+      - probe
     runs-on: ${{ needs.build.outputs.label_a }}
     timeout-minutes: 15
     permissions:
@@ -231,7 +334,12 @@ jobs:
 
   smoke-b:
     name: smoke-b
-    needs: [configure, build, probe, smoke-a]
+    if: startsWith(needs.configure.outputs.build_id, format('{0}-{1}-', github.run_id, github.run_attempt))
+    needs:
+      - configure
+      - build
+      - probe
+      - smoke-a
     runs-on: ${{ needs.build.outputs.label_b }}
     timeout-minutes: 15
     permissions:
@@ -280,9 +388,9 @@ jobs:
 
   watchdog:
     name: watchdog
-    needs: [configure, register]
+    needs: configure
     runs-on: ubuntu-24.04
-    environment: ${{ needs.configure.outputs.environment }}
+    environment: ${{ vars.AMI_DEPLOYMENT_ENVIRONMENT || 'ami-build' }}
     timeout-minutes: 300
     permissions:
       contents: read
@@ -296,21 +404,45 @@ jobs:
           python3 scripts/install-tools.py --group cloud
           echo "$GITHUB_WORKSPACE/.tools/bin" >> "$GITHUB_PATH"
           echo "PACKER_PLUGIN_PATH=$GITHUB_WORKSPACE/.tools/plugins" >> "$GITHUB_ENV"
-      - uses: aws-actions/configure-aws-credentials@v6.2.4
+      - id: bootstrap
+        name: Resolve bootstrap identity
+        run: |
+          test -n "$ROLE_ARN" && test -n "$REGION"
+          [[ "$STATE_URI" == s3://*/* ]]
+          account_id="$(cut -d: -f5 <<< "$ROLE_ARN")"
+          [[ "$account_id" =~ ^[0-9]{12}$ ]]
+          state_path="${STATE_URI#s3://}"
+          bucket="${state_path%%/*}"
+          mkdir -p .execution
+          jq -n --arg repository "$GITHUB_REPOSITORY" --arg account_id "$account_id" \
+            --arg region "$REGION" --arg artifact_bucket "$bucket" \
+            '{repository:$repository,account_id:$account_id,region:$region,artifact_bucket:$artifact_bucket}' \
+            > .execution/cleanup-context.json
+          echo "account_id=$account_id" >> "$GITHUB_OUTPUT"
+        env:
+          ROLE_ARN: ${{ vars.AMI_CONTROLLER_ROLE_ARN }}
+          REGION: ${{ vars.AMI_REGION }}
+          STATE_URI: ${{ vars.AMI_STATE_URI }}
+      - id: auth
+        uses: aws-actions/configure-aws-credentials@v6.2.4
         with:
           role-session-name: ami-example-${{ github.run_id }}-${{ github.run_attempt }}
-          role-to-assume: ${{ needs.configure.outputs.role_arn }}
-          aws-region: ${{ needs.configure.outputs.region }}
+          role-to-assume: ${{ vars.AMI_CONTROLLER_ROLE_ARN }}
+          aws-region: ${{ vars.AMI_REGION }}
+          allowed-account-ids: ${{ steps.bootstrap.outputs.account_id }}
           role-duration-seconds: 18000
-      - uses: actions/download-artifact@v8.0.1
-        with:
-          name: ${{ needs.configure.outputs.build_id }}-execution
-          path: artifacts/execution
-      - id: monitor
+      - id: execution
+        name: Fetch the frozen execution
         run: |
-          test "$(jq -r .run_id "artifacts/execution/execution.json")" = "$GITHUB_RUN_ID"
-          test "$(jq -r .run_attempt "artifacts/execution/execution.json")" = "$GITHUB_RUN_ATTEMPT"
-          python3 scripts/watchdog.py monitor --record artifacts/execution/execution.json --output artifacts/watchdog
+          python3 scripts/deployment-state.py download --cleanup-context .execution/cleanup-context.json \
+            --uri "$EXECUTION_URI" --sha256 "$EXECUTION_SHA256" --output .execution/record.json
+          test "$(jq -r .run_id .execution/record.json)" = "$GITHUB_RUN_ID"
+          test "$(jq -r .run_attempt .execution/record.json)" = "$GITHUB_RUN_ATTEMPT"
+        env:
+          EXECUTION_URI: ${{ needs.configure.outputs.execution_uri }}
+          EXECUTION_SHA256: ${{ needs.configure.outputs.execution_sha256 }}
+      - id: monitor
+        run: python3 scripts/watchdog.py monitor --record .execution/record.json --output artifacts/watchdog
         env:
           GH_TOKEN: ${{ github.token }}
       - if: failure()
@@ -320,20 +452,19 @@ jobs:
           fi
         env:
           GH_TOKEN: ${{ github.token }}
-      - if: always()
-        uses: actions/upload-artifact@v7.0.1
-        with:
-          name: ${{ needs.configure.outputs.build_id }}-watchdog
-          path: artifacts/watchdog
-          retention-days: 14
-          if-no-files-found: warn
 
   finalize:
     name: finalize
     if: always() && needs.configure.result == 'success'
-    needs: [configure, build, probe, smoke-a, smoke-b, watchdog]
+    needs:
+      - configure
+      - build
+      - probe
+      - smoke-a
+      - smoke-b
+      - watchdog
     runs-on: ubuntu-24.04
-    environment: ${{ needs.configure.outputs.environment }}
+    environment: ${{ vars.AMI_DEPLOYMENT_ENVIRONMENT || 'ami-build' }}
     timeout-minutes: 30
     permissions:
       contents: read
@@ -347,20 +478,62 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@v8.0.1
-        continue-on-error: true
-        with:
-          pattern: ${{ needs.configure.outputs.build_id }}-*
-          path: artifacts/handoff
       - run: |
           python3 scripts/install-tools.py --group cloud
           echo "$GITHUB_WORKSPACE/.tools/bin" >> "$GITHUB_PATH"
           echo "PACKER_PLUGIN_PATH=$GITHUB_WORKSPACE/.tools/plugins" >> "$GITHUB_ENV"
-      - uses: aws-actions/configure-aws-credentials@v6.2.4
+      - id: bootstrap
+        name: Resolve bootstrap identity
+        run: |
+          test -n "$ROLE_ARN" && test -n "$REGION"
+          [[ "$STATE_URI" == s3://*/* ]]
+          account_id="$(cut -d: -f5 <<< "$ROLE_ARN")"
+          [[ "$account_id" =~ ^[0-9]{12}$ ]]
+          state_path="${STATE_URI#s3://}"
+          bucket="${state_path%%/*}"
+          mkdir -p .execution
+          jq -n --arg repository "$GITHUB_REPOSITORY" --arg account_id "$account_id" \
+            --arg region "$REGION" --arg artifact_bucket "$bucket" \
+            '{repository:$repository,account_id:$account_id,region:$region,artifact_bucket:$artifact_bucket}' \
+            > .execution/cleanup-context.json
+          echo "account_id=$account_id" >> "$GITHUB_OUTPUT"
+        env:
+          ROLE_ARN: ${{ vars.AMI_CONTROLLER_ROLE_ARN }}
+          REGION: ${{ vars.AMI_REGION }}
+          STATE_URI: ${{ vars.AMI_STATE_URI }}
+      - id: auth
+        uses: aws-actions/configure-aws-credentials@v6.2.4
         with:
           role-session-name: ami-example-${{ github.run_id }}-${{ github.run_attempt }}
-          role-to-assume: ${{ needs.configure.outputs.role_arn }}
-          aws-region: ${{ needs.configure.outputs.region }}
+          role-to-assume: ${{ vars.AMI_CONTROLLER_ROLE_ARN }}
+          aws-region: ${{ vars.AMI_REGION }}
+          allowed-account-ids: ${{ steps.bootstrap.outputs.account_id }}
+      - id: execution
+        name: Fetch the frozen execution
+        run: |
+          python3 scripts/deployment-state.py download --cleanup-context .execution/cleanup-context.json \
+            --uri "$EXECUTION_URI" --sha256 "$EXECUTION_SHA256" --output .execution/record.json
+          test "$(jq -r .run_id .execution/record.json)" = "$GITHUB_RUN_ID"
+          test "$(jq -r .run_attempt .execution/record.json)" = "$GITHUB_RUN_ATTEMPT"
+        env:
+          EXECUTION_URI: ${{ needs.configure.outputs.execution_uri }}
+          EXECUTION_SHA256: ${{ needs.configure.outputs.execution_sha256 }}
+      - id: deployment
+        name: Fetch the immutable deployment bundle
+        run: |
+          python3 scripts/deployment-state.py fetch --uri "$DEPLOYMENT_URI" --sha256 "$DEPLOYMENT_SHA256" \
+            --account-id "$ACCOUNT_ID" --region "$REGION" --repository "$GITHUB_REPOSITORY" --output .deployment
+          jq -r 'to_entries[] | "\(.key)=\(.value)"' .deployment/binding.json >> "$GITHUB_OUTPUT"
+        env:
+          ACCOUNT_ID: ${{ steps.bootstrap.outputs.account_id }}
+          REGION: ${{ vars.AMI_REGION }}
+          DEPLOYMENT_URI: ${{ needs.configure.outputs.deployment_uri }}
+          DEPLOYMENT_SHA256: ${{ needs.configure.outputs.deployment_sha256 }}
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          pattern: ${{ needs.configure.outputs.build_id }}-*
+          path: artifacts/handoff
+        continue-on-error: true
       - run: |
           mkdir -p "artifacts/final/$BUILD_ID"
           if [[ "$VARIANT" == stock ]]; then
@@ -374,37 +547,44 @@ jobs:
           VARIANT: ${{ inputs.variant }}
       - if: needs.smoke-a.result == 'success' && needs.smoke-b.result == 'success' && needs.watchdog.result == 'success'
         run: |
-          python3 scripts/github-api.py jobs --record "artifacts/handoff/$BUILD_ID-execution/execution.json" --output artifacts/jobs.json
-          python3 scripts/verify-run-results.py --result "artifacts/final/$BUILD_ID/image-result.json" \
-            --probe "artifacts/handoff/$BUILD_ID-probe/probe.json" \
+          python3 scripts/github-api.py jobs --record .execution/record.json --output .execution/jobs.json
+          python3 scripts/verify-run-results.py --deployment .deployment/deployment.json \
+            --result "artifacts/final/$BUILD_ID/image-result.json" --probe "artifacts/handoff/$BUILD_ID-probe/probe.json" \
             --smoke-a "artifacts/handoff/$BUILD_ID-smoke-a" --smoke-b "artifacts/handoff/$BUILD_ID-smoke-b" \
-            --instance-a "$(jq -er '."smoke-a".instance_id' artifacts/jobs.json)" \
-            --instance-b "$(jq -er '."smoke-b".instance_id' artifacts/jobs.json)"
+            --instance-a "$(jq -er '."smoke-a".instance_id' .execution/jobs.json)" \
+            --instance-b "$(jq -er '."smoke-b".instance_id' .execution/jobs.json)"
         env:
           BUILD_ID: ${{ needs.configure.outputs.build_id }}
           GH_TOKEN: ${{ github.token }}
-      - if: always() && steps.scope.outcome == 'success'
-        run: python3 scripts/cleanup.py --build-id "$BUILD_ID" --apply --output "artifacts/final/$BUILD_ID/cleanup"
+      - if: always() && steps.scope.outcome == 'success' && steps.auth.outcome == 'success'
+        run: |
+          python3 scripts/cleanup.py --cleanup-context .execution/cleanup-context.json \
+            --build-id "$BUILD_ID" --apply --output "artifacts/final/$BUILD_ID/cleanup"
         env:
           BUILD_ID: ${{ needs.configure.outputs.build_id }}
-      - if: always() && steps.scope.outcome == 'success' && inputs.variant != 'stock'
+      - if: always() && steps.scope.outcome == 'success' && steps.auth.outcome == 'success' && inputs.variant != 'stock'
         run: |
-          python3 scripts/finalize-image.py --build-id "$BUILD_ID" --result "artifacts/final/$BUILD_ID/image-result.json" \
+          python3 scripts/finalize-image.py --deployment .deployment/deployment.json \
+            --build-id "$BUILD_ID" --result "artifacts/final/$BUILD_ID/image-result.json" \
             --cleanup "artifacts/final/$BUILD_ID/cleanup/cleanup-report.json" --output "artifacts/final/$BUILD_ID/image-result.json"
         env:
           BUILD_ID: ${{ needs.configure.outputs.build_id }}
-      - if: always() && steps.scope.outcome == 'success'
+      - if: always() && steps.scope.outcome == 'success' && steps.auth.outcome == 'success'
         run: test "$WATCHDOG_RESULT" = success
         env:
           WATCHDOG_RESULT: ${{ needs.watchdog.result }}
-      - if: always() && steps.scope.outcome == 'success'
-        run: python3 scripts/retain-artifacts.py --directory "artifacts/final/$BUILD_ID" --prefix "$BUILD_ID/final"
+      - if: always() && steps.scope.outcome == 'success' && steps.auth.outcome == 'success'
+        run: |
+          python3 scripts/retain-artifacts.py --cleanup-context .execution/cleanup-context.json \
+            --directory "artifacts/final/$BUILD_ID" --prefix "$BUILD_ID/final" --output "artifacts/final/$BUILD_ID/artifact-index.json"
         env:
           BUILD_ID: ${{ needs.configure.outputs.build_id }}
       - if: always() && steps.scope.outcome == 'success'
         uses: actions/upload-artifact@v7.0.1
         with:
           name: ${{ needs.configure.outputs.build_id }}-final
-          path: artifacts/final/${{ needs.configure.outputs.build_id }}
+          path: |-
+            artifacts/final/${{ needs.configure.outputs.build_id }}/image-result.json
+            artifacts/final/${{ needs.configure.outputs.build_id }}/stock-result.json
           retention-days: 14
           if-no-files-found: error

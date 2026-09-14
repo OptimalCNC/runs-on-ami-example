@@ -4,7 +4,9 @@
     "path": "/Resources/EC2FleetLaunchTemplateLinuxDefault/Properties/LaunchTemplateData/TagSpecifications/0/Tags/-",
     "value": {
       "Key": "ami-example:runs-on-repository",
-      "Value": "OptimalCNC/runs-on-ami-example"
+      "Value": {
+        "Ref": "DeploymentRepository"
+      }
     }
   },
   {
@@ -30,7 +32,9 @@
           "Resource": "*",
           "Condition": {
             "StringEquals": {
-              "aws:RequestedRegion": "us-east-1"
+              "aws:RequestedRegion": {
+                "Ref": "AWS::Region"
+              }
             }
           }
         },
@@ -45,7 +49,9 @@
           "Resource": "*",
           "Condition": {
             "StringEquals": {
-              "aws:RequestedRegion": "us-east-1"
+              "aws:RequestedRegion": {
+                "Ref": "AWS::Region"
+              }
             }
           }
         },
@@ -300,9 +306,14 @@
             "ec2:RunInstances",
             "ec2:CreateFleet"
           ],
-          "Resource": {
-            "Fn::Sub": "arn:${AWS::Partition}:ec2:${AWS::Region}::image/ami-0c360acf17031b055"
-          }
+          "Resource": [
+            {
+              "Fn::Sub": "arn:${AWS::Partition}:ec2:${AWS::Region}::image/${DeploymentSourceAmiId}"
+            },
+            {
+              "Fn::Sub": "arn:${AWS::Partition}:ec2:${AWS::Region}::image/${DeploymentControllerAmiId}"
+            }
+          ]
         },
         {
           "Sid": "OwnedRepositoryImages",
@@ -316,8 +327,12 @@
           },
           "Condition": {
             "StringEquals": {
-              "ec2:Owner": "395063532779",
-              "ec2:ResourceTag/ami-example:owner": "OptimalCNC/runs-on-ami-example"
+              "ec2:Owner": {
+                "Ref": "AWS::AccountId"
+              },
+              "ec2:ResourceTag/ami-example:owner": {
+                "Ref": "DeploymentRepository"
+              }
             }
           }
         },
@@ -368,8 +383,12 @@
               "aws:RequestTag/runs-on-stack-name": {
                 "Ref": "AWS::StackName"
               },
-              "aws:RequestTag/ami-example:runs-on-repository": "OptimalCNC/runs-on-ami-example",
-              "ec2:InstanceType": "t3.small",
+              "aws:RequestTag/ami-example:runs-on-repository": {
+                "Ref": "DeploymentRepository"
+              },
+              "ec2:InstanceType": {
+                "Ref": "DeploymentInstanceType"
+              },
               "ec2:InstanceMarketType": "on-demand",
               "ec2:MetadataHttpTokens": "required"
             },
@@ -450,7 +469,9 @@
               "ec2:Encrypted": "true"
             },
             "NumericLessThanEquals": {
-              "ec2:VolumeSize": "80",
+              "ec2:VolumeSize": {
+                "Ref": "DeploymentRootVolumeGiB"
+              },
               "ec2:VolumeIops": "3000",
               "ec2:VolumeThroughput": "125"
             }
@@ -555,7 +576,9 @@
           "Sid": "DescribeSelectedEbsKey",
           "Effect": "Allow",
           "Action": "kms:DescribeKey",
-          "Resource": "arn:aws:kms:us-east-1:395063532779:key/a8b7b837-3485-4591-ad38-2072e0f78562"
+          "Resource": {
+            "Ref": "DeploymentEbsKeyArn"
+          }
         },
         {
           "Sid": "UseSelectedEbsKey",
@@ -566,11 +589,17 @@
             "kms:ReEncryptFrom",
             "kms:ReEncryptTo"
           ],
-          "Resource": "arn:aws:kms:us-east-1:395063532779:key/a8b7b837-3485-4591-ad38-2072e0f78562",
+          "Resource": {
+            "Ref": "DeploymentEbsKeyArn"
+          },
           "Condition": {
             "StringEquals": {
-              "kms:ViaService": "ec2.us-east-1.amazonaws.com",
-              "kms:CallerAccount": "395063532779"
+              "kms:ViaService": {
+                "Fn::Sub": "ec2.${AWS::Region}.${AWS::URLSuffix}"
+              },
+              "kms:CallerAccount": {
+                "Ref": "AWS::AccountId"
+              }
             }
           }
         },
@@ -578,14 +607,20 @@
           "Sid": "SelectedKeyResourceGrants",
           "Effect": "Allow",
           "Action": "kms:CreateGrant",
-          "Resource": "arn:aws:kms:us-east-1:395063532779:key/a8b7b837-3485-4591-ad38-2072e0f78562",
+          "Resource": {
+            "Ref": "DeploymentEbsKeyArn"
+          },
           "Condition": {
             "Bool": {
               "kms:GrantIsForAWSResource": "true"
             },
             "StringEquals": {
-              "kms:ViaService": "ec2.us-east-1.amazonaws.com",
-              "kms:CallerAccount": "395063532779"
+              "kms:ViaService": {
+                "Fn::Sub": "ec2.${AWS::Region}.${AWS::URLSuffix}"
+              },
+              "kms:CallerAccount": {
+                "Ref": "AWS::AccountId"
+              }
             }
           }
         },
@@ -601,10 +636,14 @@
           ],
           "Condition": {
             "StringEquals": {
-              "kms:ViaService": "ec2.us-east-1.amazonaws.com"
+              "kms:ViaService": {
+                "Fn::Sub": "ec2.${AWS::Region}.${AWS::URLSuffix}"
+              }
             }
           },
-          "NotResource": "arn:aws:kms:us-east-1:395063532779:key/a8b7b837-3485-4591-ad38-2072e0f78562"
+          "NotResource": {
+            "Ref": "DeploymentEbsKeyArn"
+          }
         }
       ]
     }
@@ -638,11 +677,9 @@
             "Sid": "NoPublisherAssumption",
             "Effect": "Deny",
             "Action": "sts:AssumeRole",
-            "Resource": [
-              "arn:aws:iam::395063532779:role/ami-example-controller",
-              "arn:aws:iam::395063532779:role/ami-example-builder",
-              "arn:aws:iam::395063532779:role/ami-example-probe"
-            ]
+            "Resource": {
+              "Ref": "DeploymentManagementRoleArns"
+            }
           },
           {
             "Sid": "PreserveOwnershipTags",
@@ -675,6 +712,8 @@
   {
     "op": "replace",
     "path": "/Resources/StackConfigMaterializer/Properties/StackConfigBase/EbsEncryptionKey",
-    "value": "arn:aws:kms:us-east-1:395063532779:key/a8b7b837-3485-4591-ad38-2072e0f78562"
+    "value": {
+      "Ref": "DeploymentEbsKeyArn"
+    }
   }
 ]

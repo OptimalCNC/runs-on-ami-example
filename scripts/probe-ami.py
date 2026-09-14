@@ -10,9 +10,10 @@ import subprocess
 import time
 from urllib.parse import unquote, urlparse
 
-from example import (ROOT, AwsCommandError, Cloud, CobaltIdentity, load_deployment, read_json, require, resource_tags, run,
+from example import (ROOT, AmiIdentity, AwsCommandError, Cloud, CobaltIdentity, ImageIdentity, ParentSelection,
+                     file_sha, load_bindings, load_deployment, match, read_json, require, resource_tags, run,
                      OWNER_TAG, BUILD_TAG, tags_of, timestamp, utcnow, write_json)
-from preflight import inspect_ami, inspect_instance_type, inspect_management, inspect_root_volume
+from preflight import inspect_ami, inspect_instance_type, inspect_management, inspect_root_volume, resolve_parent
 from qualification import QualificationRun
 
 
@@ -50,7 +51,7 @@ def command(cloud, instance_id, script, build, deadline, output):
     response = cloud.call("ssm", "send-command", {
         "InstanceIds": [instance_id], "DocumentName": "AWS-RunShellScript", "TimeoutSeconds": 60,
         "Parameters": {"commands": [script], "executionTimeout": [str(max(30, int(deadline - time.monotonic())))]},
-        "OutputS3BucketName": d.artifact_bucket, "OutputS3KeyPrefix": f"{d.repository}/ssm/{build}",
+        "OutputS3BucketName": d.artifact_bucket, "OutputS3KeyPrefix": f"{d.repository}/reports/ssm/{build}",
     })
     command_id = response["Command"]["CommandId"]
     write_json(output / "ssm-command.json", response)
@@ -71,7 +72,7 @@ def command(cloud, instance_id, script, build, deadline, output):
         if not url.netloc:
             time.sleep(5)
             continue
-        key = ssm_output_key(invocation["StandardOutputUrl"], d.artifact_bucket, d.region, f"{d.repository}/ssm/{build}")
+        key = ssm_output_key(invocation["StandardOutputUrl"], d.artifact_bucket, d.region, f"{d.repository}/reports/ssm/{build}")
         target = output / "guest-stdout.json"
         run(["aws", "s3api", "get-object", "--bucket", d.artifact_bucket, "--key", key,
              "--region", d.region, str(target)], timeout=90)
@@ -156,7 +157,11 @@ def probe(cloud, identity, build, output, result=None, fault=False):
                     "guest cloud identity differs")
         else:
             require(not guest["registered"] and not guest["workspaces"] and not guest["secure_boot"], "parent is not a clean unsigned-kernel base")
-            write_json(output / "parent-inventory.json", guest)
+            inventory = output / "inventory.json"
+            write_json(inventory, guest)
+            parent = AmiIdentity.parse({**dataclasses.asdict(identity), "inventory_file": inventory.name,
+                                        "inventory_sha256": file_sha(inventory)}, "captured parent")
+            write_json(output / "parent.json", parent.record())
         observation.update({"status": "passed", "guest": guest, "instance_type": current["InstanceType"],
                             "root_volume_gib": volume_gib})
         return observation
@@ -175,28 +180,43 @@ def probe(cloud, identity, build, output, result=None, fault=False):
                 cloud.retain(path, f"{build}/probe/{path.name}")
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser()
-    parser.add_argument("--deployment", default="infra/deployment.json")
+    parser.add_argument("--deployment", help="resolved manifest for candidate qualification")
     parser.add_argument("--result")
-    parser.add_argument("--capture-inventory", choices=("source", "controller"))
+    parser.add_argument("--capture-inventory", action="store_true", help="capture a selected parent without a build manifest")
+    parser.add_argument("--bindings", help="infrastructure bindings for parent capture")
+    parser.add_argument("--selection", help="parent selection JSON with exact id and owner")
     parser.add_argument("--build-id")
+    parser.add_argument("--output", type=Path, required=True, help="probe evidence directory")
     parser.add_argument("--fault", action="store_true")
     parser.add_argument("--execute", action="store_true")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     require(bool(args.result) != bool(args.capture_inventory), "select either a candidate result or parent inventory capture")
-    d = load_deployment(args.deployment, inventories=not args.capture_inventory)
+    if args.capture_inventory:
+        require(bool(args.bindings) and bool(args.selection) and not args.deployment,
+                "parent capture requires --bindings and --selection")
+        d = load_bindings(args.bindings)
+        selection = ParentSelection.parse(read_json(args.selection))
+    else:
+        require(bool(args.deployment) and not args.bindings and not args.selection,
+                "candidate qualification requires --deployment")
+        d = load_deployment(args.deployment)
     if not args.execute:
         print("Would launch one disposable on-demand EC2 probe with an EBS root disk. Supply --execute only after cost approval.")
         return
     result = read_json(args.result) if args.result else None
     build = args.build_id or (QualificationRun.from_result(result).build_id if result else None)
     require(bool(build), "inventory capture requires a unique --build-id such as 1789200000-1-stock")
-    identity = dataclasses.replace(d.source_ami, id=result["cloud"]["ami_id"], owner=d.account_id,
-                                   boot_mode=result["cloud"]["ami_boot_mode"]) if result else getattr(d, args.capture_inventory + "_ami")
-    output = ROOT / "artifacts" / build / "probe"
+    match(build, r"[1-9][0-9]*-[1-9][0-9]*-(one|two|stock)", "probe build ID")
+    cloud = Cloud(d)
+    identity = (ImageIdentity.parse({"id": result["cloud"]["ami_id"], "owner": d.account_id,
+                                     "architecture": result["cloud"]["architecture"],
+                                     "boot_mode": result["cloud"]["ami_boot_mode"]}, "candidate")
+                if result else resolve_parent(cloud, selection))
+    output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
-    observation = probe(Cloud(d), identity, build, output, result, args.fault)
+    observation = probe(cloud, identity, build, output, result, args.fault)
     if result:
         result["validation"]["direct_boot"] = observation
         write_json(args.result, result)

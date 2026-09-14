@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 import jsonschema
 
 from support import ROOT, FakeCloud, deployment, deployment_dict, guest, module, result, smoke
-from example import Deployment, InvalidInput, build_id, load_deployment, recipe
+from example import BuildInputs, InfrastructureBindings, InvalidInput, build_id, load_deployment, recipe
 
 
 def instance_ids():
@@ -18,18 +18,18 @@ def instance_ids():
 
 
 class Inputs(unittest.TestCase):
-    def test_template_cannot_be_used_to_launch(self):
+    def test_unresolved_installation_cannot_be_used_to_launch(self):
         with self.assertRaises(InvalidInput):
-            Deployment.parse(json.loads((ROOT / "infra/deployment.example.json").read_text()))
+            BuildInputs.parse({"repository": "example/repo", "account_id": "123456789012", "region": "us-east-1"})
 
     def test_unqualified_architecture_wildcards_and_cross_account_roles_fail(self):
         for change in ({"instance_type": "c7i.*"}, {"controller_role_arn": "arn:aws:iam::999999999999:role/example"}, {"vcpus": True}):
             with self.subTest(change=change), self.assertRaises(InvalidInput):
-                Deployment.parse({**deployment_dict(), **change})
+                BuildInputs.parse({**deployment_dict(), **change})
         value = deployment_dict()
         value["source_ami"]["architecture"] = "arm64"
         with self.assertRaises(InvalidInput):
-            Deployment.parse(value)
+            BuildInputs.parse(value)
 
     def test_freshness_labels_are_unique_and_exact(self):
         d = deployment()
@@ -43,7 +43,7 @@ class Inputs(unittest.TestCase):
     def test_uefi_preferred_parent_has_a_fixed_qualified_boot_mode(self):
         value = deployment_dict()
         value["source_ami"]["boot_mode"] = "uefi-preferred"
-        parsed = Deployment.parse(value)
+        parsed = BuildInputs.parse(value)
         self.assertEqual(parsed.source_ami.boot_mode, "uefi-preferred")
         self.assertEqual(parsed.source_ami.effective_boot_mode, "uefi")
 
@@ -51,14 +51,16 @@ class Inputs(unittest.TestCase):
         value = deployment_dict()
         value["source_ami"]["owner"] = "135269210855"
         value.update(instance_type="t3.micro", parent_root_volume_gib=30)
-        parsed = Deployment.parse(value)
+        parsed = BuildInputs.parse(value)
         self.assertEqual(parsed.source_ami.owner, "135269210855")
         self.assertIn("family=t3.micro/cpu=2", parsed.label("parent", parsed.source_ami.id, parent=True))
         self.assertIn("volume=30gb:gp3:125mbs:3000iops", parsed.label("parent", parsed.source_ami.id, parent=True))
         self.assertIn("volume=80gb:gp3:125mbs:3000iops", parsed.label("candidate", "ami-11111111111111111"))
 
     def test_inventory_configuration_does_not_claim_an_installed_runson(self):
-        parsed = Deployment.parse({**deployment_dict(), "runs_on": None})
+        value = deployment_dict()
+        parsed = InfrastructureBindings.parse({**{field.name: value[field.name] for field in dataclasses.fields(InfrastructureBindings)},
+                                                "runs_on": None})
         self.assertIsNone(parsed.runs_on)
         with self.assertRaisesRegex(InvalidInput, "actual RunsOn installation"):
             parsed.label("candidate", "ami-11111111111111111")
@@ -68,20 +70,21 @@ class Inputs(unittest.TestCase):
         inventory = result()["payload"]["parent_inventory"]
         inventory["packages_sha256"] = hashlib.sha256(inventory["package_inventory"].encode()).hexdigest()
         encoded = json.dumps(inventory).encode()
-        with tempfile.TemporaryDirectory() as temporary, patch("example.ROOT", Path(temporary)):
+        with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             (root / "infra").mkdir()
             for name in ("source_ami", "controller_ami"):
-                (root / value[name]["inventory_file"]).write_bytes(encoded)
+                value[name]["inventory_file"] = name + "-inventory.json"
+                (root / "infra" / value[name]["inventory_file"]).write_bytes(encoded)
                 value[name]["inventory_sha256"] = hashlib.sha256(encoded).hexdigest()
             config = root / "infra/deployment.json"
             config.write_text(json.dumps(value))
-            installed = load_deployment().require_runs_on()
+            installed = load_deployment(config).require_runs_on()
             self.assertEqual((installed.version, installed.bootstrap_version), ("3.2.0", "0.1.12"))
             value["runs_on"]["bootstrap_version"] = "0.1.13"
             config.write_text(json.dumps(value))
             with self.assertRaisesRegex(InvalidInput, "bootstrap version selected"):
-                load_deployment()
+                load_deployment(config)
 
     def test_recipe_ignores_retention_but_changes_for_guest_content(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -6,7 +6,9 @@ import subprocess
 import tempfile
 from urllib.parse import quote
 
-from example import INSTANCE_TYPE, AwsCommandError, match, read_json, require, run
+from example import (AMI, BUILD_TAG, EXPIRY_TAG, INSTANCE_TYPE, OWNER_TAG, PURPOSE_TAG, SHA256,
+                     AwsCommandError, CleanupContext, match, parse_time, read_json, require, run, tags_of)
+from deployment_state import ConfigurationBinding, VersionedObject
 
 
 @dataclasses.dataclass(frozen=True)
@@ -23,7 +25,7 @@ class RunAttempt:
 
     @property
     def prefix(self):
-        return f"executions/{self.run_id}/{self.run_attempt}/"
+        return f"state/executions/{self.run_id}/{self.run_attempt}/"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -66,57 +68,91 @@ class JobPlan:
 
 
 @dataclasses.dataclass(frozen=True)
-class ImageSelection:
-    kind: str
-    record: dict
+class ImageSnapshot:
+    ami_id: str
+    source_build_id: str
+    recipe_id: str
+    created_at: str
+    expires_at: str
+    boot_mode: str
+    snapshot_ids: tuple[str, ...]
 
     @classmethod
     def parse(cls, value):
-        require(isinstance(value, dict) and set(value) == {"kind", "record"}, "image selection fields differ")
-        require(value["kind"] in ("accepted", "candidate") and isinstance(value["record"], dict), "invalid image selection")
-        return cls(**value)
+        require(isinstance(value, dict) and set(value) == {field.name for field in dataclasses.fields(cls)}, "image snapshot fields differ")
+        match(value["ami_id"], AMI, "selected image AMI")
+        match(value["source_build_id"], r"[1-9]\d*-[1-9]\d*-(?:one|two)", "selected image build")
+        match(value["recipe_id"], SHA256, "selected image recipe")
+        for field in ("created_at", "expires_at"):
+            parse_time(value[field])
+        require(value["boot_mode"] in ("uefi", "uefi-preferred"), "selected image boot mode differs")
+        snapshots = value["snapshot_ids"]
+        require(isinstance(snapshots, list) and bool(snapshots), "selected image snapshots are missing")
+        snapshots = tuple(sorted(match(identifier, r"snap-[0-9a-f]{17}", "selected snapshot") for identifier in snapshots))
+        require(len(snapshots) == len(set(snapshots)), "selected image snapshots must be distinct")
+        return cls(**{**value, "snapshot_ids": snapshots})
 
-    def inspect(self, cloud, *, recovery=False):
-        if self.kind == "accepted":
-            from accepted_image import AcceptedImage
-            selected = AcceptedImage.parse(self.record, cloud.deployment, allow_expired=recovery)
-            return selected.inspect(cloud, minimum_seconds=None if recovery else 0), selected.expires_at, cloud.deployment.instance_type
-        from retained_candidate import inspect_candidate, validate_source
-        validate_source(self.record, cloud.deployment, for_launch=not recovery)
-        return (inspect_candidate(cloud, self.record, minimum_seconds=None if recovery else 0, for_launch=not recovery),
-                self.record["lifecycle"]["expires_at"], self.record["cloud"]["instance_type"])
+    @classmethod
+    def capture(cls, image):
+        tags = tags_of(image)
+        return cls.parse({"ami_id": image["ImageId"], "source_build_id": tags[BUILD_TAG],
+                          "recipe_id": tags["ami-example:recipe-id"], "created_at": image["CreationDate"],
+                          "expires_at": tags[EXPIRY_TAG], "boot_mode": image["BootMode"],
+                          "snapshot_ids": [mapping["Ebs"]["SnapshotId"] for mapping in image["BlockDeviceMappings"] if "Ebs" in mapping]})
+
+    def as_dict(self):
+        return {**dataclasses.asdict(self), "snapshot_ids": list(self.snapshot_ids)}
+
+    def inspect(self, cloud):
+        """Prove saved image ownership without current launch policy or lifetime gates."""
+        context = cloud.deployment
+        images = cloud.call("ec2", "describe-images", {"ImageIds": [self.ami_id], "Owners": [context.account_id]})["Images"]
+        require(len(images) == 1, "selected image is absent or owned by another account")
+        image = images[0]
+        require(image["ImageId"] == self.ami_id and image["OwnerId"] == context.account_id,
+                "selected image cloud identity differs")
+        expected = {OWNER_TAG: context.repository, BUILD_TAG: self.source_build_id, PURPOSE_TAG: "candidate",
+                    EXPIRY_TAG: self.expires_at, "ami-example:recipe-id": self.recipe_id}
+        require(all(tags_of(image).get(key) == value for key, value in expected.items()), "selected image ownership or recipe differs")
+        require(ImageSnapshot.capture(image) == self, "selected image creation, boot mode or snapshots differ")
+        return image
 
 
 @dataclasses.dataclass(frozen=True)
 class ExecutionRecord:
     attempt: RunAttempt
     build_id: str
-    account_id: str
-    region: str
+    cleanup: CleanupContext
     instance_type: str
     plan: JobPlan
     terminal: str
     deadline_seconds: int
     registration_seconds: int
-    image: ImageSelection | None = None
+    configuration: ConfigurationBinding | None
+    image: ImageSnapshot | None = None
 
     @classmethod
     def parse(cls, value):
         require(isinstance(value, dict) and set(value) == {"schema_version", "repository", "run_id", "run_attempt",
-                "build_id", "account_id", "region", "instance_type", "plan", "terminal", "deadline_seconds", "registration_seconds", "image"}
+                "build_id", "cleanup", "instance_type", "plan", "terminal", "deadline_seconds", "registration_seconds", "configuration", "image"}
                 and value["schema_version"] == 1, "execution record fields differ")
         attempt = RunAttempt.parse(value["repository"], value["run_id"], value["run_attempt"])
         build = match(value["build_id"], r"[1-9]\d*-[1-9]\d*-(?:one|two|stock)", "execution build ID")
         require(build.startswith(f"{attempt.run_id}-{attempt.run_attempt}-"), "execution build belongs to another run attempt")
-        account = match(value["account_id"], r"[0-9]{12}", "execution account ID")
-        region = match(value["region"], r"[a-z]{2}(?:-[a-z]+)+-[0-9]+", "execution region")
+        cleanup = CleanupContext.parse(value["cleanup"])
+        require(cleanup.repository == attempt.repository, "execution cleanup repository differs")
         instance_type = match(value["instance_type"], INSTANCE_TYPE, "execution instance type")
+        configuration = ConfigurationBinding.parse(value["configuration"]) if value["configuration"] is not None else None
+        if configuration is not None:
+            reference = VersionedObject.parse(configuration.uri)
+            require(reference.bucket == cleanup.artifact_bucket and reference.key.startswith(f"{cleanup.repository}/state/"),
+                    "execution configuration belongs to another storage scope")
         plan = JobPlan.parse(value["plan"])
         require(value["terminal"] in plan.stages, "terminal job must identify a plan stage")
         for name in ("deadline_seconds", "registration_seconds"):
             require(type(value[name]) is int and value[name] > 0, f"{name} must be a positive integer")
-        return cls(attempt, build, account, region, instance_type, plan, value["terminal"], value["deadline_seconds"], value["registration_seconds"],
-                   ImageSelection.parse(value["image"]) if value["image"] is not None else None)
+        return cls(attempt, build, cleanup, instance_type, plan, value["terminal"], value["deadline_seconds"], value["registration_seconds"],
+                   configuration, ImageSnapshot.parse(value["image"]) if value["image"] is not None else None)
 
     @property
     def key(self):
@@ -124,14 +160,14 @@ class ExecutionRecord:
 
     def as_dict(self):
         return {"schema_version": 1, **dataclasses.asdict(self.attempt), "build_id": self.build_id,
-                "account_id": self.account_id, "region": self.region, "instance_type": self.instance_type,
+                "cleanup": dataclasses.asdict(self.cleanup), "instance_type": self.instance_type,
                 "plan": self.plan.as_dict(), "terminal": self.terminal, "deadline_seconds": self.deadline_seconds,
                 "registration_seconds": self.registration_seconds,
-                "image": dataclasses.asdict(self.image) if self.image else None}
+                "configuration": self.configuration.as_dict() if self.configuration else None,
+                "image": self.image.as_dict() if self.image else None}
 
-    def require_deployment(self, deployment):
-        require(self.attempt.repository == deployment.repository and self.account_id == deployment.account_id
-                and self.region == deployment.region, "execution cloud account, region or repository differs from deployment")
+    def require_context(self, context):
+        require(self.cleanup == context.cleanup(), "execution cleanup context differs")
 
 
 def download_record(cloud, bucket, key, target):

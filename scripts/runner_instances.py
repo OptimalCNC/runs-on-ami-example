@@ -3,7 +3,7 @@ from example import (BUILD_TAG, EXPIRY_TAG, INSTANCE, OWNER_TAG, PURPOSE_TAG, RU
                      filters_for, match, parse_time, require, resource_tags, tags_of)
 
 
-def adopt_test_instances(cloud, build, instance_ids, *, image=None, expiry=None, instance_type=None):
+def adopt_test_instances(cloud, build, instance_ids, *, instance_type, image=None, expiry=None):
     d = cloud.deployment
     identifiers = [match(value, INSTANCE, "test instance ID") for value in instance_ids]
     require(len(identifiers) == len(set(identifiers)), "test instance identities must be distinct")
@@ -22,7 +22,7 @@ def adopt_test_instances(cloud, build, instance_ids, *, image=None, expiry=None,
         require(tags.get(OWNER_TAG) in (None, d.repository) and tags.get(BUILD_TAG) in (None, build)
                 and tags.get(PURPOSE_TAG) in (None, "test"), "test instance is already owned by another build")
         require(parse_time(instance["LaunchTime"]) >= parse_time(candidate["CreationDate"]), "test instance predates image")
-        require(instance["InstanceType"] == (instance_type or d.instance_type)
+        require(instance["InstanceType"] == instance_type
                 and instance.get("InstanceLifecycle", "on-demand") == "on-demand",
                 "RunsOn launched an unqualified instance type or purchasing model")
         if instance["State"]["Name"] != "terminated" and (tags.get(BUILD_TAG) != build or tags.get(OWNER_TAG) != d.repository):

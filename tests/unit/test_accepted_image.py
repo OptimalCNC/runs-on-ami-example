@@ -120,10 +120,10 @@ class AcceptedImageContract(unittest.TestCase):
             with patch.dict(os.environ, {}, clear=True), \
                  patch("sys.argv", ["accepted_image.py", "prepare", "--deployment", "local.json", "--record", str(record),
                                     "--build-id", "124-2-one", "--output", str(output)]), \
-                 patch.object(accepted_image, "load_deployment", return_value=deployment()) as load, \
+                 patch.object(accepted_image, "load_bindings", return_value=deployment()) as load, \
                  patch.object(accepted_image, "Cloud") as cloud:
                 accepted_image.main()
-            load.assert_called_once_with("local.json", inventories=False)
+            load.assert_called_once_with("local.json")
             cloud.assert_not_called()
             self.assertEqual(read_json(output)["build_id"], "124-2-one")
             self.assertIn("ami=" + self.accepted.ami_id, read_json(output)["label"])
@@ -133,13 +133,15 @@ class AcceptedImageContract(unittest.TestCase):
             result = Path(temporary) / "qualified.json"
             record = Path(temporary) / "accepted.json"
             output = Path(temporary) / "admission.json"
+            context = Path(temporary) / "cloud-context.json"
             write_json(result, qualified_record())
+            write_json(context, {"repository": "example/repo", "account_id": "123456789012",
+                                 "region": "us-east-1", "artifact_bucket": "example-artifacts"})
             cloud = accepted_cloud()
             for arguments in (["accept", "--result", str(result), "--evidence-url", "s3://audit/qualified.json"],
                               ["inspect", "--output", str(output)]):
                 with patch.dict(os.environ, {}, clear=True), \
-                     patch("sys.argv", ["accepted_image.py", *arguments, "--record", str(record)]), \
-                     patch.object(accepted_image, "load_deployment", return_value=deployment()), \
+                     patch("sys.argv", ["accepted_image.py", *arguments, "--deployment", str(context), "--record", str(record)]), \
                      patch.object(accepted_image, "Cloud", return_value=cloud):
                     accepted_image.main()
             self.assertEqual(read_json(record)["image"]["qualification_sha256"], file_sha(result))
@@ -158,9 +160,9 @@ class AcceptedImageContract(unittest.TestCase):
             write_json(directory / "environment.json", report["environment"])
             (directory / "ctest.xml").write_text('<testsuite><testcase name="cobalt"/></testsuite>')
             with patch.dict(os.environ, {}, clear=True), \
-                 patch("sys.argv", ["accepted_image.py", "verify", "--record", str(record), "--build-id", "123-1-one",
+                 patch("sys.argv", ["accepted_image.py", "verify", "--deployment", "local.json", "--record", str(record), "--build-id", "123-1-one",
                                     "--smoke", str(directory), "--instance-id", "i-22222222222222222", "--output", str(output)]), \
-                 patch.object(accepted_image, "load_deployment", return_value=deployment()), \
+                 patch.object(accepted_image, "load_bindings", return_value=deployment()), \
                  patch.object(accepted_image, "Cloud", return_value=accepted_cloud()):
                 accepted_image.main()
             self.assertEqual(read_json(output)["status"], "passed")

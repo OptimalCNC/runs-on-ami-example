@@ -13,29 +13,14 @@ kernel, modules, Xenomai payload, configuration, packages, and unpacked
 initramfs content. The application test checks functional execution; there is
 no latency target.
 
-**Status: live Cobalt qualification passed.** The
-[qualification run](https://github.com/OptimalCNC/runs-on-ami-example/actions/runs/34762739224)
-verified direct boot and compiled and ran the application in Cobalt primary
-mode on two fresh `t3.small` runners. The standalone
-[application dispatch](https://github.com/OptimalCNC/runs-on-ami-example/actions/runs/34763569287)
-also passed, including verification and cleanup. The exact retained AMI is
-recorded in [accepted-image.json](accepted-image.json); its expiry and the
-approved $20 trial ceiling are recorded in [infra/resources.json](infra/resources.json).
-Two-build payload reproducibility has not been established.
-
-The accepted AMI expires on **2026-09-14 at 13:55:50 UTC**. The RunsOn service
-remains running and requires manual review or teardown by
-**2026-09-14 at 08:33:19 UTC**. The resource inventory records cleanup procedures and
-one older builder volume still awaiting AWS's final deletion.
-
 The image build controller uses a separately pinned stock RunsOn AMI. It is
 never snapshotted. The example targets Ubuntu 24.04, x86-64, one exact Nitro
 runtime type, on-demand capacity, and an unsigned kernel with Secure Boot
-disabled. Parent inventory starts with `t3.small`, 2 vCPUs, 2 GiB RAM, and a
-30 GiB root volume. Kernel-builder sizing is configured separately; candidate
-probes and smoke runners use the built AMI's configured root size. The runner installation is supplied by an existing
-[RunsOn Flex installation](https://runs-on.com/docs/); Fleet needs a separate
-adapter.
+disabled. Choose the parent inventory and runtime instance types, disk sizes, and
+Packer builder size in the deployment specification. Candidate probes and
+smoke runners use the built AMI's root size. The infrastructure supports
+installing [RunsOn Flex](https://runs-on.com/docs/) or importing an existing
+installation; Fleet needs a separate adapter.
 
 ## Validate locally
 
@@ -68,47 +53,55 @@ does not run the Cobalt test on the host.
 
 ## Supply deployment configuration
 
-Start with [infra/deployment.example.json](infra/deployment.example.json) and
-the [infrastructure guide](infra/README.md). Every `null` is a required
-qualification input; `runs_on` may remain `null` during direct parent inventory.
-Account IDs, AMIs, networking, IAM roles, inventory files,
-and the RunsOn version are deployment settings; scripts do not discover them
-from a floating image query.
+The repository contains reusable image recipes, infrastructure definitions,
+version locks, schemas, and neutral examples. Each deployment has its own
+configuration and generated records. Start with the neutral
+[deployment specification](examples/deployment.spec.json) and follow the
+[infrastructure guide](infra/README.md) to create them in an ignored `.deployment/` directory or an external directory.
 
-Before cloud work, provide:
+| Record | Purpose |
+| --- | --- |
+| `spec.json` | Operator choices: repository, AWS account/region, parent AMIs, instance sizes, networking, RunsOn settings, and retention |
+| `bindings.json` | Resolved resource identities from Terraform outputs, RunsOn stack outputs, or explicit imports |
+| `parents/` | Captured parent identities and their hashed inventories |
+| `manifest.json` | Resolved deployment input combining the specification, bindings, and verified parent evidence |
+| `plans/`, `state/`, `runs/` | Reviewed infrastructure plans, current image selection, and execution evidence |
 
-1. The GitHub repository and protected execution environment, normally
-   `ami-build`, and the branches allowed to use it.
-2. The AWS account and region, an existing RunsOn **Flex** installation and its
-   exact version/environment, and its repository registration.
-3. An existing VPC/subnet with working HTTPS egress, plus the selected stock
-   Ubuntu 24.04 x86-64 RunsOn AMI. Pin its public AMI ID and publisher directly,
-   and choose a controller image independently; both may use that same image.
-4. Approval for the specific resources and estimated costs described in
-   [operations](docs/operations.md#cost-approval-and-execution-stages).
+Image commands take the resolved manifest through `--deployment PATH`. Paths inside
+configuration records resolve relative to their containing record, so a
+standalone command can use a deployment outside the checkout. Keep credentials,
+license files, and notification addresses in private operator storage.
 
-The existing RunsOn environment must propagate the common EC2 tag
+Bootstrap in dependency order: provision or import the foundation roles and
+artifact store; install or import RunsOn; configure management access using
+the resulting network; capture the selected parents; then resolve the
+manifest. This prevents image builds from depending on resources that only a
+later installation step can create.
+
+For GitHub execution, configure the protected environment selected by the
+repository variable `AMI_DEPLOYMENT_ENVIRONMENT` (default `ami-build`) and its
+allowed branches. Set its `AMI_CONTROLLER_ROLE_ARN`, `AMI_REGION`, and
+`AMI_STATE_URI` variables to the controller role, AWS region, and private
+versioned S3 state prefix. Publish the deployment bundle using
+`scripts/deployment-state.py`; workflows fetch it using short-lived OIDC
+credentials and freeze its exact version and digest for the run attempt.
+The [infrastructure guide](infra/README.md#review-and-apply) owns these commands.
+
+The RunsOn environment must propagate the common EC2 tag
 `ami-example:runs-on-repository=<owner>/<repo>`. Disable pools, sticky disks,
-persistent workspaces, and custom provisioning hooks for this environment.
-Its test-runner role must not have image-publishing permissions. The exact job
-labels select AMI, region, environment, instance type, vCPU count, on-demand
-capacity, and a unique routing key for each job.
+persistent workspaces, and custom provisioning hooks. Its test-runner role
+must not have image-publishing permissions. Exact job labels select the AMI,
+region, environment, instance type, vCPU count, on-demand capacity, and a
+unique routing key.
 
-Once approved, follow [parent inventory capture](docs/operations.md#lock-the-parent-images)
-and commit `infra/deployment.json`, `infra/source-inventory.json`, and
-`infra/controller-inventory.json`. They contain configuration and provenance,
-not credentials. Run:
-
-```sh
-python3 scripts/validate-inputs.py --deployment infra/deployment.json
-```
-
-Use GitHub OIDC for execution credentials. Configure the protected environment
-and its branch restrictions before enabling the repository variable
-`AMI_EXAMPLE_CLOUD_ENABLED=true`. Leave that variable unset until cloud costs
-and the deployment have been approved. It also enables automatic orphan
-cleanup; the cleanup workflow and deployment configuration must be on the
-default branch before a build is dispatched.
+Enable the repository variable `AMI_EXAMPLE_CLOUD_ENABLED=true` after the
+[resource and cost review](docs/operations.md#cost-approval-and-execution-stages).
+It enables cloud launches. Automatic orphan cleanup runs whenever the three
+bootstrap variables are configured, including while launches are disabled.
+Cleanup skips when all three variables are absent and rejects partial
+configuration. Install the cleanup workflow and its protected environment
+configuration on the default branch
+before dispatching a build.
 
 ## Run the approved qualification
 
@@ -118,10 +111,9 @@ builder, SSH over Session Manager, source inventory, egress, and disposal. This
 stage creates no candidate AMI or snapshot.
 
 After the stock stage passes, choose `stage=single`, `retain=true`, and
-`fault=none` for the approved trial recorded in
-[infra/resources.json](infra/resources.json). It builds one candidate with
-compilation caches disabled. The candidate must pass the direct boot probe before RunsOn
-can schedule its smoke jobs. Job A places a sentinel outside its checkout;
+`fault=none` for an approved single-build qualification. It builds one
+candidate with compilation caches disabled. The candidate must pass the
+direct boot probe before RunsOn can schedule its smoke jobs. Job A places a sentinel outside its checkout;
 job B checks it is absent. Both begin by checking the exact running kernel and
 baked identity, activate the image's `/usr/xenomai` development environment
 for a later step, and build and run the Cobalt application's one CTest test.
@@ -131,8 +123,7 @@ runs in Cobalt primary mode; a stock kernel cannot satisfy it.
 Each candidate job first grants the preconfigured `xenomai` group access to
 the two Cobalt RTDM memory devices using the upstream `0660` mode. Identity
 checks, compilation, and application execution then run as the ordinary runner
-user. This activation supports the retained image whose recipe omitted the
-udev device rule.
+user.
 
 To qualify an already retained candidate, dispatch **Qualify retained Cobalt
 image** on `main` with the immutable versioned S3 URI of its candidate
@@ -144,13 +135,19 @@ its original build identity and expiry.
 Download the final qualified `image-result.json` and record the accepted image:
 
 ```sh
-python3 scripts/accepted_image.py accept --result /path/to/final/image-result.json
+python3 scripts/accepted_image.py accept \
+  --deployment .deployment/manifest.json \
+  --result /path/to/final/image-result.json \
+  --record .deployment/state/accepted-image.json
 ```
 
-Commit `accepted-image.json` to `main`, then manually dispatch **Run Cobalt
-application**. It launches one fresh runner from that exact retained AMI,
-compiles and executes the Cobalt test, retains its report, and terminates the
-runner. Admission rejects an expired image. The application job has read-only
+Promote the record to the private deployment state using
+`scripts/deployment-state.py promote`, then manually dispatch **Run Cobalt
+application**. Promotion verifies the live image and requires the previous
+selection version, or an explicit empty initial selection. The workflow
+freezes the selected record for its run attempt and launches one fresh runner
+from that exact retained AMI. It compiles and executes the Cobalt test,
+retains its report, and terminates the runner. Admission rejects an expired image. The application job has read-only
 repository access; separate control jobs use the controller's OIDC role.
 
 ```sh
@@ -171,7 +168,8 @@ comparison target.
 
 Reports and downloaded Linux, Dovetail, Xenomai, and package inputs are retained
 in the configured versioned S3 bucket. GitHub artifacts provide convenient
-reports for 14 days.
+reports for 14 days; private deployment bundles and accepted-image selections
+remain in S3.
 By default, candidate instances, AMIs, and unreferenced snapshots are removed
 after evidence is retained. `retain=true` keeps candidate images only until
 the deployment's explicit expiry; instances still terminate.

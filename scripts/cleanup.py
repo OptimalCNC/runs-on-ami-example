@@ -8,7 +8,7 @@ import subprocess
 import time
 
 from example import (ROOT, BUILD_TAG, EXPIRY_TAG, OWNER_TAG, PURPOSE_TAG, AwsCommandError, InvalidInput, Cloud,
-                     filters_for, load_deployment, parse_time, require, tags_of, timestamp, utcnow, write_json)
+                     filters_for, load_cleanup_context, parse_time, require, tags_of, timestamp, utcnow, write_json)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -189,15 +189,15 @@ def cleanup(cloud, scope, output, apply=False):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--deployment", default="infra/deployment.json")
+    parser.add_argument("--cleanup-context", required=True)
     parser.add_argument("--build-id")
     parser.add_argument("--run-id")
     parser.add_argument("--run-attempt")
     parser.add_argument("--expired", action="store_true")
     parser.add_argument("--apply", action="store_true")
-    parser.add_argument("--output", default="artifacts/cleanup")
+    parser.add_argument("--output", required=True)
     args = parser.parse_args()
-    d = load_deployment(args.deployment, inventories=False)
+    d = load_cleanup_context(args.cleanup_context)
     scope = CleanupScope.parse(d.repository, args.build_id, args.run_id, args.expired, args.run_attempt)
     output = Path(args.output)
     output.mkdir(parents=True, exist_ok=True)

@@ -22,7 +22,7 @@ The sole image payload is a compatible, pinned combination of Linux, Dovetail, a
 Manual workflow_dispatch
           |
           v
-Resolve and validate the checked-in inputs
+Fetch and freeze the resolved deployment bundle; validate recipe locks
           |
           v
 RunsOn controller on a pinned, known-good stock AMI
@@ -54,7 +54,7 @@ RunsOn documents deriving custom images from its base AMIs with Packer. Use that
 
 For the example, target **RunsOn Flex**, whose per-job labels can select an exact `ami=` value. Fleet uses platform-owned runner definitions instead; do not claim the Flex example is portable to Fleet without a separate adapter.[^runs-on-labels]
 
-Use a pinned public stock RunsOn Ubuntu 24.04 parent, one AWS account, one region, x86-64, and one exact on-demand EC2 runtime type for initial qualification. Start parent inventory with `t3.small` (2 vCPUs, 2 GiB RAM), Standard CPU credits, and a 30 GiB gp3 root volume for the selected 30 GiB parent. Configure the Packer builder type separately; candidate probes and smoke runners must accommodate the built AMI's root volume. A retained parent copy is optional and requires separate cost approval. Make these selections checked-in deployment settings. Disable warm pools, persistent volumes, and reusable workspaces for the freshness tests. Qualify the Cobalt image on the exact runtime type before claiming support.
+Use a pinned public stock RunsOn Ubuntu 24.04 parent, one AWS account, one region, x86-64, and one exact on-demand EC2 runtime type for initial qualification. Select a parent inventory instance and gp3 root size that accommodate the chosen public parent; direct burstable probes use Standard CPU credits. Configure the Packer builder type separately; candidate probes and smoke runners must accommodate the built AMI's root volume. A retained parent copy is optional and requires separate cost approval. Record these operator choices in a deployment specification outside reusable source. Resolve actual resources into bindings and capture parent evidence before producing the deployment manifest. Disable warm pools, persistent volumes, and reusable workspaces for the freshness tests. Qualify the Cobalt image on the exact runtime type before claiming support.
 
 ## 3. Repository deliverables
 
@@ -84,18 +84,22 @@ scripts/
   compare-builds.py
 schemas/
   image-result.schema.json
+examples/
+  deployment.spec.json
 infra/
   README.md
   main.tf
   variables.tf
   outputs.tf
-  deployment.example.json
+  foundation/
+  operator/
+  runs-on/
 tests/cobalt/
   CMakeLists.txt
   main.c
 ```
 
-The infrastructure files provision the example-specific roles, management access, and artifact/log destinations, or accept existing equivalents. They reference an existing RunsOn installation rather than implementing another runner service. Keep account IDs, subnet IDs, and role ARNs in deployment configuration, not in generic scripts. Select a license so the common implementation can be reused by the companion project.
+The infrastructure files provision the example-specific roles, management access, and artifact/log destinations, or accept existing equivalents. They reference an existing RunsOn installation rather than implementing another runner service. Keep account IDs, subnet IDs, and role ARNs in private deployment inputs and generated bindings. Commit neutral examples, generic policy definitions, schemas, and reproducible recipe/tool locks. The resolved manifest combines specification, bindings, and hashed parent evidence; scripts accept its explicit path independently of the workflow. Relative file references resolve from their containing record. Select a license so the common implementation can be reused by the companion project.
 
 Keep shell and Python logic in scripts; workflows should express triggers, permissions, dependencies, and artifact handoff. The validation workflow may run credential-free checks on pull requests. **Only manual dispatch starts image builds.**
 
@@ -126,7 +130,7 @@ Use two distinct identifiers:
 
 ```text
 recipe_id = hash(canonical content-affecting inputs and recipe files)
-build_id  = identifier of this particular workflow execution
+build_id  = explicit identifier of this particular execution
 ```
 
 Include deployment settings in `recipe_id` when they change guest content or boot behavior. Keep run IDs, AMI IDs, snapshot IDs, and creation timestamps in the external result record. A unique AMI name may include `build_id`; the kernel release and baked recipe identity must not vary merely because a workflow was rerun.
@@ -143,7 +147,7 @@ Retain the source archives and package inputs needed to repeat the build. An inv
 
 ### A. Establish credentials and a known-good controller
 
-Document installation of RunsOn for the example repository and the required AWS account/region configuration. Resolve and record a compatible stock RunsOn AMI before starting the build.
+Document foundation, RunsOn, and management provisioning or equivalent imports in dependency order. Resolve the operator specification and generated resource bindings, then capture compatible source/controller parent records before creating the final deployment manifest. Inventory capture must run with bindings and a parent selection before the full manifest exists; it must not depend on placeholder inventory hashes.
 
 Use GitHub OIDC for short-lived controller credentials. Restrict trust to the actual repository identity and protected execution context, matching that repository's OIDC subject format.[^github-oidc] Grant only required image-management, probe, artifact, and cleanup permissions; scope mutation to owned resources where supported and restrict `iam:PassRole` to named profiles.
 
@@ -167,7 +171,7 @@ If a stock fallback kernel remains installed, it must not pass validation accide
 
 Write a root-owned in-image manifest containing stable recipe identity, kernel release, Xenomai identity, and expected installed content. Keep per-run cloud metadata in the external result manifest.
 
-Provide a small image-owned `runner-image-env --github` command that exports image identity, `XENOMAI_ROOT=/usr/xenomai`, and the Xenomai tool path to subsequent job steps. It must not install software or export secrets. Use GitHub's environment/path files rather than assuming provisioning exports or login profiles are inherited by jobs.[^github-env]
+Provide a small image-owned `runner-image-env` command that emits image identity, `XENOMAI_ROOT=/usr/xenomai`, and the Xenomai tool path as JSON or shell values. It must not install software or export secrets. The caller activates those values; workflows write GitHub's environment/path files for subsequent steps.[^github-env]
 
 Clean temporary keys, build credentials, checkout credentials, build directories, stale cloud-init instance state, and machine identity using a procedure qualified for the pinned parent image. Preserve the runner binaries and bootstrap resources needed for a fresh launch. Verify the image has no registered-runner credentials or previous workspaces.
 
@@ -222,7 +226,7 @@ Both jobs compile the small application against the baked Xenomai development in
 
 Add an independent controller-side launch/registration deadline. A job that never acquires a runner cannot execute its own timeout handler. The controller must identify the run's resources, collect diagnostics, and abort outstanding work through the supported control-plane interface when its deadline expires.
 
-Run finalization even after a failed probe or smoke job. Verify termination of builders, probe instances, and RunsOn test instances. By default, remove disposable PoC AMIs and unreferenced snapshots after reports are retained; offer an explicit manual retention input for debugging. Tag resources with owner, run ID, purpose, and expiry. Document an orphan sweep for cancellation or controller failure; cleanup must never delete resources outside this example.
+Run finalization even after a failed probe or smoke job. Verify termination of builders, probe instances, and RunsOn test instances. By default, remove disposable PoC AMIs and unreferenced snapshots after reports are retained; offer an explicit manual retention input for debugging. Tag resources with owner, run ID, purpose, and expiry. Save each execution's deployment context and selected image before launching runners; recovery uses those exact identities after current deployment or accepted-image selections change. Promote an accepted image through a conditional update of private state after live validation, and freeze its exact record for each application run. Document an orphan sweep for cancellation or controller failure; cleanup must never delete resources outside this example.
 
 Do not silently auto-cancel an older image build when a new manual build starts. Use unique build IDs and an explicit concurrency policy.
 
@@ -257,7 +261,7 @@ Prefer a small, attributed source copy with a recorded upstream revision for the
 
 ## References
 
-External interfaces checked on 2026-09-12. Version pins are implementation inputs to be resolved and committed before running the example.
+External interfaces checked on 2026-09-12. Recipe and tool version pins are implementation inputs to be resolved and committed before running the example. Cloud identities and parent evidence are frozen in the deployment records.
 
 [^runs-on-ami]: RunsOn, “Building a custom AMI with Packer.” https://runs-on.com/docs/guides/building-custom-ami/
 [^runs-on-labels]: RunsOn, “Job labels,” including the Flex/Fleet distinction and `ami` selection. https://runs-on.com/docs/runners/labels/

@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "account_id": "123456789012",
+  "region": "us-east-1",
+  "repository": "example-org/example-images",
+  "source_ami": {
+    "id": "ami-0123456789abcdef0",
+    "owner": "234567890123"
+  },
+  "controller_ami": {
+    "id": "ami-0123456789abcdef0",
+    "owner": "234567890123"
+  },
+  "runs_on": {
+    "stack_name": "example-runs-on",
+    "environment": "ami-example",
+    "private": false,
+    "vpc_cidr": "10.60.0.0/16",
+    "license_file": "private/license.txt",
+    "notification_email_file": "private/notification-email.txt"
+  }
+}

@@ -3,7 +3,7 @@
 import argparse
 from pathlib import Path, PurePosixPath
 
-from example import Cloud, load_deployment, require, write_json
+from example import Cloud, load_cleanup_context, require, write_json
 
 
 def retain(cloud, directory, prefix, output=None):
@@ -26,12 +26,12 @@ def retain(cloud, directory, prefix, output=None):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--deployment", default="infra/deployment.json")
+    parser.add_argument("--cleanup-context", required=True)
     parser.add_argument("--directory", type=Path, required=True)
     parser.add_argument("--prefix", required=True, help="object key prefix within the configured repository")
-    parser.add_argument("--output", type=Path, help="index file; defaults to DIRECTORY/artifact-index.json")
+    parser.add_argument("--output", type=Path, required=True, help="artifact index file")
     args = parser.parse_args()
-    locations = retain(Cloud(load_deployment(args.deployment, inventories=False)), args.directory, args.prefix, args.output)
+    locations = retain(Cloud(load_cleanup_context(args.cleanup_context)), args.directory, args.prefix, args.output)
     print(f"Retained {len(locations)} diagnostic files.")
 
 

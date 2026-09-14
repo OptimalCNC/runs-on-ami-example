@@ -2,8 +2,12 @@ name: Clean up custom AMI resources
 
 on:
   workflow_run:
-    workflows: [Build and test Cobalt AMIs, Qualify retained Cobalt image, Run Cobalt application]
-    types: [completed]
+    workflows:
+      - Build and test Cobalt AMIs
+      - Qualify retained Cobalt image
+      - Run Cobalt application
+    types:
+      - completed
   workflow_dispatch:
     inputs:
       run_id:
@@ -11,7 +15,7 @@ on:
         type: string
         default: ''
   schedule:
-    - cron: '23 * * * *'
+    - cron: 23 * * * *
 
 permissions:
   contents: read
@@ -21,27 +25,11 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  configure:
-    if: vars.AMI_EXAMPLE_CLOUD_ENABLED == 'true' && (github.event_name != 'workflow_run' || github.event.workflow_run.event == 'workflow_dispatch')
-    runs-on: ubuntu-24.04
-    outputs:
-      region: ${{ steps.config.outputs.region }}
-      role_arn: ${{ steps.config.outputs.role_arn }}
-      environment: ${{ steps.config.outputs.environment }}
-    steps:
-      # Always use the trusted default branch, including after a cancelled run.
-      - uses: actions/checkout@v7.0.1
-        with:
-          ref: ${{ github.event.repository.default_branch }}
-          persist-credentials: false
-      - id: config
-        run: |
-          python3 scripts/image-config.py --output artifacts/config.json
-          jq -r 'to_entries[] | "\(.key)=\(.value)"' artifacts/config.json >> "$GITHUB_OUTPUT"
+
   cleanup:
-    needs: configure
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.event == 'workflow_dispatch'
     runs-on: ubuntu-24.04
-    environment: ${{ needs.configure.outputs.environment }}
+    environment: ${{ vars.AMI_DEPLOYMENT_ENVIRONMENT || 'ami-build' }}
     timeout-minutes: 30
     permissions:
       contents: read
@@ -52,47 +40,71 @@ jobs:
         with:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
-      - run: |
+      - id: bootstrap
+        name: Resolve bootstrap identity
+        run: |
+          if [[ -z "$ROLE_ARN" && -z "$REGION" && -z "$STATE_URI" ]]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ -z "$ROLE_ARN" || -z "$REGION" || -z "$STATE_URI" ]]; then
+            echo 'Configure AMI_CONTROLLER_ROLE_ARN, AMI_REGION, and AMI_STATE_URI together.' >&2
+            exit 1
+          fi
+          [[ "$STATE_URI" == s3://*/* ]]
+          account_id="$(cut -d: -f5 <<< "$ROLE_ARN")"
+          [[ "$account_id" =~ ^[0-9]{12}$ ]]
+          state_path="${STATE_URI#s3://}"
+          bucket="${state_path%%/*}"
+          mkdir -p .execution
+          jq -n --arg repository "$GITHUB_REPOSITORY" --arg account_id "$account_id" \
+            --arg region "$REGION" --arg artifact_bucket "$bucket" \
+            '{repository:$repository,account_id:$account_id,region:$region,artifact_bucket:$artifact_bucket}' \
+            > .execution/cleanup-context.json
+          echo "account_id=$account_id" >> "$GITHUB_OUTPUT"
+          echo "configured=true" >> "$GITHUB_OUTPUT"
+        env:
+          ROLE_ARN: ${{ vars.AMI_CONTROLLER_ROLE_ARN }}
+          REGION: ${{ vars.AMI_REGION }}
+          STATE_URI: ${{ vars.AMI_STATE_URI }}
+      - if: steps.bootstrap.outputs.configured == 'true'
+        run: |
           python3 scripts/install-tools.py --group cloud
           echo "$GITHUB_WORKSPACE/.tools/bin" >> "$GITHUB_PATH"
           echo "PACKER_PLUGIN_PATH=$GITHUB_WORKSPACE/.tools/plugins" >> "$GITHUB_ENV"
-      - uses: aws-actions/configure-aws-credentials@v6.2.4
+      - id: auth
+        if: steps.bootstrap.outputs.configured == 'true'
+        uses: aws-actions/configure-aws-credentials@v6.2.4
         with:
           role-session-name: ami-example-${{ github.run_id }}-${{ github.run_attempt }}
-          role-to-assume: ${{ needs.configure.outputs.role_arn }}
-          aws-region: ${{ needs.configure.outputs.region }}
+          role-to-assume: ${{ vars.AMI_CONTROLLER_ROLE_ARN }}
+          aws-region: ${{ vars.AMI_REGION }}
+          allowed-account-ids: ${{ steps.bootstrap.outputs.account_id }}
       - id: completed
-        if: github.event.workflow_run.id || inputs.run_id
+        if: steps.auth.outcome == 'success' && (github.event.workflow_run.id || inputs.run_id)
         run: |
-          args=(--repository "$GITHUB_REPOSITORY" --run-id "$TARGET_RUN_ID" --output artifacts/completed.json)
+          args=(--repository "$GITHUB_REPOSITORY" --run-id "$TARGET_RUN_ID" --output .execution/completed.json)
           if [[ -n "$TARGET_ATTEMPT" ]]; then args+=(--run-attempt "$TARGET_ATTEMPT"); fi
           python3 scripts/github-api.py completed "${args[@]}"
-          jq -r 'to_entries[] | "\(.key)=\(.value)"' artifacts/completed.json >> "$GITHUB_OUTPUT"
+          jq -r 'to_entries[] | "\(.key)=\(.value)"' .execution/completed.json >> "$GITHUB_OUTPUT"
         env:
           TARGET_RUN_ID: ${{ github.event.workflow_run.id || inputs.run_id }}
           TARGET_ATTEMPT: ${{ github.event.workflow_run.run_attempt || '' }}
           GH_TOKEN: ${{ github.token }}
       - if: steps.completed.outcome == 'success'
         run: |
-          python3 scripts/watchdog.py recover --repository "$GITHUB_REPOSITORY" --run-id "$TARGET_RUN_ID" \
-            --run-attempt "$TARGET_ATTEMPT" --output artifacts/cleanup/recovery
+          python3 scripts/watchdog.py recover --cleanup-context .execution/cleanup-context.json \
+            --repository "$GITHUB_REPOSITORY" --run-id "$TARGET_RUN_ID" --run-attempt "$TARGET_ATTEMPT" --output artifacts/cleanup/recovery
         env:
           TARGET_RUN_ID: ${{ steps.completed.outputs.run_id }}
           TARGET_ATTEMPT: ${{ steps.completed.outputs.run_attempt }}
           GH_TOKEN: ${{ github.token }}
       - if: always() && steps.completed.outcome == 'success'
         run: |
-          python3 scripts/cleanup.py --run-id "$TARGET_RUN_ID" --run-attempt "$TARGET_ATTEMPT" \
-            --apply --output artifacts/cleanup
+          python3 scripts/cleanup.py --cleanup-context .execution/cleanup-context.json \
+            --run-id "$TARGET_RUN_ID" --run-attempt "$TARGET_ATTEMPT" --apply --output artifacts/cleanup
         env:
           TARGET_RUN_ID: ${{ steps.completed.outputs.run_id }}
           TARGET_ATTEMPT: ${{ steps.completed.outputs.run_attempt }}
-      - if: ${{ !github.event.workflow_run.id && !inputs.run_id }}
-        run: python3 scripts/cleanup.py --expired --apply --output artifacts/cleanup
-      - if: always()
-        uses: actions/upload-artifact@v7.0.1
-        with:
-          name: cleanup-${{ github.run_id }}-${{ github.run_attempt }}
-          path: artifacts/cleanup
-          retention-days: 14
-          if-no-files-found: warn
+      - if: ${{ steps.auth.outcome == 'success' && !github.event.workflow_run.id && !inputs.run_id }}
+        run: python3 scripts/cleanup.py --cleanup-context .execution/cleanup-context.json --expired --apply --output artifacts/cleanup
