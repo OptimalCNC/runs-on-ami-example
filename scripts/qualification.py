@@ -1,47 +1,42 @@
-"""Keep image build provenance separate from the dispatch qualifying that image."""
+"""Identify a qualification independently of its image's original build."""
 import dataclasses
-import os
-import re
 
-from example import build_id, match, require
+from example import match, require
 
 
 @dataclasses.dataclass(frozen=True)
 class QualificationRun:
     build_id: str
-    run_id: str
-    run_attempt: str
-    workflow_ref: str
 
     def __post_init__(self):
         match(self.build_id, r"[1-9][0-9]*-[1-9][0-9]*-(one|two)", "qualification build")
-        match(self.run_id, r"[1-9][0-9]*", "qualification run ID")
-        match(self.run_attempt, r"[1-9][0-9]*", "qualification run attempt")
-        require(self.build_id == build_id(self.run_id, self.run_attempt, self.build_id.rsplit("-", 1)[1]),
-                "qualification build differs from run and attempt")
-        require(isinstance(self.workflow_ref, str) and bool(self.workflow_ref.strip()), "qualification workflow reference is missing")
+
+    @property
+    def run_id(self):
+        return self.build_id.split("-")[0]
+
+    @property
+    def run_attempt(self):
+        return self.build_id.split("-")[1]
+
+    @classmethod
+    def parse(cls, build_id):
+        return cls(build_id)
 
     @classmethod
     def from_result(cls, result):
         validation = result.get("validation", {})
         require(isinstance(validation, dict), "image validation must be an object")
-        fields = {field.name for field in dataclasses.fields(cls)}
         if "qualification" in validation:
             value = validation["qualification"]
-            require(isinstance(value, dict) and set(value) == fields, "qualification context fields differ")
+            require(isinstance(value, dict) and "build_id" in value
+                    and set(value) <= {"build_id", "run_id", "run_attempt", "workflow_ref"},
+                    "qualification context fields differ")
         else:
-            execution = result.get("execution")
-            require(isinstance(execution, dict) and fields <= set(execution), "image execution context is missing")
-            value = {field: execution[field] for field in fields}
-        return cls(**value)
-
-    @classmethod
-    def current(cls, repository, variant="one"):
-        require(os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch"
-                and os.environ.get("GITHUB_REF") == "refs/heads/main", "qualification dispatches require main")
-        require(os.environ.get("GITHUB_REPOSITORY") == repository, "qualification dispatch repository differs")
-        workflow_ref = match(os.environ.get("GITHUB_WORKFLOW_REF"),
-                             re.escape(repository) + r"/\.github/workflows/[^/@]+\.ya?ml@refs/heads/main",
-                             "qualification workflow reference")
-        run_id, attempt = os.environ.get("GITHUB_RUN_ID"), os.environ.get("GITHUB_RUN_ATTEMPT")
-        return cls(build_id(run_id, attempt, variant), run_id, attempt, workflow_ref)
+            value = result.get("execution")
+            require(isinstance(value, dict) and "build_id" in value, "image execution context is missing")
+        context = cls.parse(value["build_id"])
+        for field in ("run_id", "run_attempt"):
+            if field in value:
+                require(value[field] == getattr(context, field), f"qualification build differs from {field}")
+        return context

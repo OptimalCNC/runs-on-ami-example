@@ -97,7 +97,7 @@ tests/cobalt/
 
 The infrastructure files provision the example-specific roles, management access, and artifact/log destinations, or accept existing equivalents. They reference an existing RunsOn installation rather than implementing another runner service. Keep account IDs, subnet IDs, and role ARNs in deployment configuration, not in generic scripts. Select a license so the common implementation can be reused by the companion project.
 
-Keep shell and Python logic in scripts; workflows should express triggers, permissions, dependencies, and artifact handoff. The validation workflow may run credential-free checks on pull requests. **Only manual dispatch starts image builds.**
+Scripts own independent image and resource operations through explicit command arguments and result files. Workflows own triggers, permissions, command ordering, job dependencies, cancellation, and artifact handoff. Scripts do not inspect workflow files or implicit GitHub execution context. The validation workflow may run credential-free checks on pull requests. **Only manual dispatch starts image builds through GitHub Actions.**
 
 ## 4. Reproducibility contract
 
@@ -114,7 +114,7 @@ The build must consume, rather than discover, the following:
 | OS additions | Fixed package-repository snapshot and explicit package selection; lock other repositories separately |
 | Recipe | Exact Git commit plus hashes of the files that actually affect image content |
 | Runner integration | Inherited agent/bootstrap versions and the RunsOn deployment version used for qualification |
-| GitHub Actions | Reviewed full commit SHAs in executable workflows |
+| GitHub Actions | Reviewed stable release tags in executable workflows |
 
 A pinned parent freezes its inherited package state; later installations must also be constrained. Ubuntu provides date-addressed package snapshots, but unrelated package repositories require their own locking or mirrored inputs.[^ubuntu-snapshot]
 

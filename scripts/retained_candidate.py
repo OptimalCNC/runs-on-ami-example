@@ -1,12 +1,14 @@
-"""Read immutable candidate evidence and verify its original image ownership."""
+#!/usr/bin/env python3
+"""Read immutable candidate evidence and prepare it for an independent qualification."""
+import argparse
 import dataclasses
 import json
 from pathlib import Path, PurePosixPath
-from urllib.parse import parse_qs, quote, unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from example import (AMI, BUILD_TAG, EXPIRY_TAG, OWNER_TAG, PURPOSE_TAG, ROOT, SHA256,
-                     CobaltIdentity, file_sha, match, parse_time, read_json, recipe,
-                     require, run, tags_of, utcnow)
+                     Cloud, CobaltIdentity, file_sha, load_deployment, match, parse_time, read_json, recipe,
+                     require, run, tags_of, utcnow, write_json)
 from preflight import inspect_ami, inspect_instance_type, inspect_root_volume
 from qualification import QualificationRun
 
@@ -46,21 +48,10 @@ def download_json(cloud, uri, target):
     return read_json(target)
 
 
-def request_uri(cloud, build):
-    key = f"{cloud.deployment.repository}/{build}/qualification/request.json"
-    response = cloud.call("s3api", "head-object", {"Bucket": cloud.deployment.artifact_bucket, "Key": key,
-                                                   "ExpectedBucketOwner": cloud.deployment.account_id})
-    version = response.get("VersionId")
-    require(isinstance(version, str) and version not in ("", "null"), "qualification request has no immutable version")
-    return f"s3://{cloud.deployment.artifact_bucket}/{key}?versionId={quote(version, safe='')}"
-
-
 def validate_source(result, deployment, *, for_launch=True):
     require(result.get("schema_version") == 1 and result.get("status") == "candidate", "retain a candidate creation record before qualification")
     execution = result["execution"]
     original = QualificationRun.from_result({"execution": execution, "validation": {}})
-    require(original.workflow_ref.startswith(deployment.repository + "/.github/workflows/")
-            and original.workflow_ref.endswith("@refs/heads/main"), "source build workflow repository or branch differs")
     require(result["cloud"]["account_id"] == deployment.account_id and result["cloud"]["region"] == deployment.region,
             "source candidate account or region differs")
     match(result["cloud"]["ami_id"], AMI, "source candidate AMI")
@@ -117,3 +108,45 @@ def inspect_candidate(cloud, result, minimum_seconds=0, *, for_launch=True):
     require(minimum_seconds is None or parse_time(result["lifecycle"]["expires_at"]).timestamp() - utcnow().timestamp() > minimum_seconds,
             "candidate expiry does not cover qualification")
     return image
+
+
+def prepare(cloud, context: QualificationRun, source_uri, output, config_output=None, minimum_seconds=0):
+    d = cloud.deployment
+    destination = Path(output)
+    destination.mkdir(parents=True, exist_ok=False)
+    result = download_json(cloud, source_uri, destination / "source-image-result.json")
+    source = validate_source(result, d)
+    require(source.build_id != context.build_id, "retained qualification requires a separate execution identity")
+    require(minimum_seconds >= 0, "minimum remaining lifetime must be nonnegative")
+    inspect_candidate(cloud, result, minimum_seconds)
+    result["validation"] = {"qualification": dataclasses.asdict(context), "direct_boot": {"status": "pending"},
+                            "runs_on": [], "reproducibility": {"status": "pending"}}
+    result["lifecycle"]["artifact_locations"].append(source_uri)
+    result["lifecycle"]["cleanup"] = {"status": "pending"}
+    write_json(destination / "image-result.json", result)
+    cloud.retain(destination / "image-result.json", f"{context.build_id}/qualification/image-result.json")
+    config = {"build_id": context.build_id, "ami_id": result["cloud"]["ami_id"], "recipe_id": result["source"]["recipe_id"],
+              "kernel_release": result["payload"]["kernel_release"],
+              "label_a": d.label(context.build_id + "-a", result["cloud"]["ami_id"]),
+              "label_b": d.label(context.build_id + "-b", result["cloud"]["ami_id"])}
+    write_json(config_output or destination / "image-config.json", config)
+    return result
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    preparation = subparsers.add_parser("prepare", help="prepare a retained candidate for qualification")
+    preparation.add_argument("--deployment", default="infra/deployment.json")
+    preparation.add_argument("--build-id", required=True)
+    preparation.add_argument("--source-uri", required=True, help="versioned S3 URI of the candidate creation record")
+    preparation.add_argument("--output", type=Path, required=True)
+    preparation.add_argument("--config-output", type=Path, help="image configuration JSON (default: OUTPUT/image-config.json)")
+    preparation.add_argument("--minimum-seconds", type=int, default=0, help="required remaining candidate lifetime")
+    args = parser.parse_args(argv)
+    context = QualificationRun.parse(args.build_id)
+    prepare(Cloud(load_deployment(args.deployment)), context, args.source_uri, args.output, args.config_output, args.minimum_seconds)
+
+
+if __name__ == "__main__":
+    main()

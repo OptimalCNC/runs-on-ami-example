@@ -35,7 +35,9 @@ jobs:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
       - id: config
-        run: python3 scripts/workflow.py cleanup-config
+        run: |
+          python3 scripts/image-config.py --output artifacts/config.json
+          jq -r 'to_entries[] | "\(.key)=\(.value)"' artifacts/config.json >> "$GITHUB_OUTPUT"
   cleanup:
     needs: configure
     runs-on: ubuntu-24.04
@@ -50,17 +52,43 @@ jobs:
         with:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
-      - run: python3 scripts/install-tools.py --group cloud
+      - run: |
+          python3 scripts/install-tools.py --group cloud
+          echo "$GITHUB_WORKSPACE/.tools/bin" >> "$GITHUB_PATH"
+          echo "PACKER_PLUGIN_PATH=$GITHUB_WORKSPACE/.tools/plugins" >> "$GITHUB_ENV"
       - uses: aws-actions/configure-aws-credentials@v6.2.4
         with:
           role-session-name: ami-example-${{ github.run_id }}-${{ github.run_attempt }}
           role-to-assume: ${{ needs.configure.outputs.role_arn }}
           aws-region: ${{ needs.configure.outputs.region }}
-      - run: python3 scripts/workflow.py cleanup
+      - id: completed
+        if: github.event.workflow_run.id || inputs.run_id
+        run: |
+          args=(--repository "$GITHUB_REPOSITORY" --run-id "$TARGET_RUN_ID" --output artifacts/completed.json)
+          if [[ -n "$TARGET_ATTEMPT" ]]; then args+=(--run-attempt "$TARGET_ATTEMPT"); fi
+          python3 scripts/github-api.py completed "${args[@]}"
+          jq -r 'to_entries[] | "\(.key)=\(.value)"' artifacts/completed.json >> "$GITHUB_OUTPUT"
         env:
-          CLEANUP_RUN_ID: ${{ github.event.workflow_run.id || inputs.run_id || '' }}
-          CLEANUP_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt || '' }}
+          TARGET_RUN_ID: ${{ github.event.workflow_run.id || inputs.run_id }}
+          TARGET_ATTEMPT: ${{ github.event.workflow_run.run_attempt || '' }}
           GH_TOKEN: ${{ github.token }}
+      - if: steps.completed.outcome == 'success'
+        run: |
+          python3 scripts/watchdog.py recover --repository "$GITHUB_REPOSITORY" --run-id "$TARGET_RUN_ID" \
+            --run-attempt "$TARGET_ATTEMPT" --output artifacts/cleanup/recovery
+        env:
+          TARGET_RUN_ID: ${{ steps.completed.outputs.run_id }}
+          TARGET_ATTEMPT: ${{ steps.completed.outputs.run_attempt }}
+          GH_TOKEN: ${{ github.token }}
+      - if: always() && steps.completed.outcome == 'success'
+        run: |
+          python3 scripts/cleanup.py --run-id "$TARGET_RUN_ID" --run-attempt "$TARGET_ATTEMPT" \
+            --apply --output artifacts/cleanup
+        env:
+          TARGET_RUN_ID: ${{ steps.completed.outputs.run_id }}
+          TARGET_ATTEMPT: ${{ steps.completed.outputs.run_attempt }}
+      - if: ${{ !github.event.workflow_run.id && !inputs.run_id }}
+        run: python3 scripts/cleanup.py --expired --apply --output artifacts/cleanup
       - if: always()
         uses: actions/upload-artifact@v7.0.1
         with:

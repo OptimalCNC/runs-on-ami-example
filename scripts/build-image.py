@@ -10,7 +10,7 @@ from pathlib import Path
 import shutil
 import subprocess
 
-from example import (ROOT, Cloud, CobaltIdentity, build_id, file_sha, load_deployment, outputs, read_json, recipe,
+from example import (ROOT, Cloud, CobaltIdentity, file_sha, load_deployment, match, read_json, recipe,
                      EXPIRY_TAG, RUNS_ON_TAG, InvalidInput, require, resource_tags, run, tags_of, timestamp, utcnow, write_json)
 from preflight import inspect_deployment
 
@@ -33,13 +33,19 @@ def controller_identity(cloud):
     return {"instance_id": observed["InstanceId"], "ami_id": observed["ImageId"], "inventory": actual}
 
 
-def main():
-    parser = argparse.ArgumentParser()
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--deployment", default="infra/deployment.json")
-    parser.add_argument("--variant", choices=("one", "two", "stock"), required=True)
+    parser.add_argument("--build-id", required=True, help="unique execution ID: NUMBER-ATTEMPT-one, -two, or -stock")
+    parser.add_argument("--output", type=Path, help="artifact directory (default: artifacts/BUILD_ID)")
+    parser.add_argument("--config-output", type=Path, help="image configuration JSON (default: OUTPUT/image-config.json)")
     parser.add_argument("--retain", action="store_true")
     parser.add_argument("--execute", action="store_true")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
+    build = match(args.build_id, r"[1-9][0-9]*-[1-9][0-9]*-(one|two|stock)", "build ID")
+    variant = build.rsplit("-", 1)[1]
+    destination = args.output.resolve() if args.output else ROOT / "artifacts" / build
+    config_output = args.config_output or destination / "image-config.json"
     d = load_deployment(args.deployment)
     lock = read_json(ROOT / "images/xenomai-cobalt/inputs.lock.json")
     recipe_id, hashes = recipe(lock, d)
@@ -47,17 +53,11 @@ def main():
         print("Would launch one on-demand Packer builder; a full build also creates an AMI and EBS snapshots.")
         print("Review the deployment and cost plan before supplying --execute.")
         return
-    require(os.environ.get("GITHUB_EVENT_NAME") in ("workflow_dispatch",), "builds require manual workflow dispatch")
-    require(os.environ.get("GITHUB_REPOSITORY") == d.repository, "repository differs from deployment")
-    build = build_id(os.environ["GITHUB_RUN_ID"], os.environ["GITHUB_RUN_ATTEMPT"], args.variant)
-    require(os.environ.get("CONFIGURED_BUILD_ID") == build, "stale job outputs: use a new manual dispatch or re-run all jobs")
     tracked = [*hashes, "images/xenomai-cobalt/inputs.lock.json", args.deployment,
                d.source_ami.inventory_file, d.controller_ami.inventory_file]
     run(["git", "ls-files", "--error-unmatch", *tracked], cwd=ROOT)
     require(not run(["git", "status", "--porcelain", "--", *tracked], cwd=ROOT), "commit all locked build inputs first")
     commit = run(["git", "rev-parse", "HEAD"], cwd=ROOT)
-    require(commit == os.environ["GITHUB_SHA"], "recipe commit differs from workflow SHA")
-    destination = ROOT / "artifacts" / build
     destination.mkdir(parents=True, exist_ok=False)
     cloud = Cloud(d)
     preflight = inspect_deployment(cloud)
@@ -90,7 +90,7 @@ def main():
                  "root_device_name": preflight["source_ami"]["RootDeviceName"], "root_volume_gib": d.root_volume_gib,
                  "ami_name": resource_name,
                  "recipe_directory": str(stage), "output_directory": str(destination),
-                 "associate_public_ip_address": not d.private, "stock_only": args.variant == "stock",
+                 "associate_public_ip_address": not d.private, "stock_only": variant == "stock",
                  "ssh_keypair_name": key["KeyName"], "ssh_private_key_file": str(private_key),
                  "build_tags": {v["Key"]: v["Value"] for v in resource_tags(d, build, "builder", expiry)},
                  "candidate_tags": candidate_tags}
@@ -103,9 +103,10 @@ def main():
         with (destination / "packer.log").open("w") as log:
             subprocess.run(["packer", "build", "-color=false", "-on-error=cleanup", f"-var-file={variable_file}", template],
                            cwd=ROOT, stdout=log, stderr=subprocess.STDOUT, timeout=5400, check=True)
-        if args.variant == "stock":
+        if variant == "stock":
             write_json(destination / "stock-result.json", {"status": "passed", "build_id": build,
                                                         "controller": controller["instance_id"], "recipe_id": recipe_id})
+            write_json(config_output, {"build_id": build, "recipe_id": recipe_id})
             return
         image = read_json(destination / "image-manifest.json")
         require(image["recipe_id"] == recipe_id, "Packer returned the wrong recipe")
@@ -138,8 +139,7 @@ def main():
             "payload": image,
             "cloud": {"account_id": d.account_id, "region": d.region, "ami_id": ami_id, "snapshot_ids": snapshots,
                       "architecture": "x86_64", "boot_mode": d.source_ami.effective_boot_mode, "instance_type": d.instance_type},
-            "execution": {"build_id": build, "workflow_ref": os.environ["GITHUB_WORKFLOW_REF"],
-                          "run_id": os.environ["GITHUB_RUN_ID"], "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+            "execution": {"build_id": build,
                           "controller_instance_id": controller["instance_id"], "runs_on_version": d.require_runs_on().version,
                           "tool_versions": {name: pin["version"] for name, pin in lock["tools"].items()},
                           "inherited_runner_version": image["parent_inventory"]["runner_version"],
@@ -151,8 +151,9 @@ def main():
         }
         result["cloud"]["ami_boot_mode"] = candidate_identity.boot_mode
         write_json(destination / "image-result.json", result)
-        outputs({"ami_id": ami_id, "kernel_release": image["kernel_release"], "recipe_id": recipe_id, "build_id": build,
-                 "label_a": d.label(f"{build}-a", ami_id), "label_b": d.label(f"{build}-b", ami_id)})
+        write_json(config_output, {"ami_id": ami_id, "kernel_release": image["kernel_release"], "recipe_id": recipe_id,
+                                   "build_id": build, "label_a": d.label(f"{build}-a", ami_id),
+                                   "label_b": d.label(f"{build}-b", ami_id)})
     finally:
         failures = []
         private_key.unlink(missing_ok=True)

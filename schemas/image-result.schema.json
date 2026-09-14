@@ -71,7 +71,7 @@
     },
     "execution": {
       "type": "object",
-      "required": ["build_id", "workflow_ref", "run_id", "run_attempt", "controller_instance_id", "runs_on_version", "tool_versions", "inherited_runner_version", "bootstrap_files"],
+      "required": ["build_id", "controller_instance_id", "runs_on_version", "tool_versions", "inherited_runner_version", "bootstrap_files"],
       "properties": {
         "build_id": {"type": "string", "pattern": "^[1-9][0-9]*-[1-9][0-9]*-(one|two)$"},
         "workflow_ref": {"type": "string"},
@@ -115,14 +115,14 @@
     "then": {"properties": {
       "validation": {"properties": {
         "direct_boot": {"required": ["instance_id", "terminated", "guest"], "properties": {"status": {"const": "passed"}, "terminated": {"const": true}, "guest": {"$ref": "#/$defs/cobalt_guest"}}},
-        "runs_on": {"minItems": 2, "items": {"required": ["stage", "instance_id", "guest", "github_job_id", "runner_id", "application"], "properties": {"status": {"const": "passed"}, "instance_id": {"$ref": "#/$defs/instance"}, "guest": {"$ref": "#/$defs/cobalt_guest"}, "application": {"const": {"name": "cobalt", "status": "passed"}}}}}
+        "runs_on": {"minItems": 2, "items": {"required": ["stage", "instance_id", "guest", "application"], "properties": {"status": {"const": "passed"}, "instance_id": {"$ref": "#/$defs/instance"}, "guest": {"$ref": "#/$defs/cobalt_guest"}, "application": {"const": {"name": "cobalt", "status": "passed"}}}}}
       }},
       "lifecycle": {"properties": {"cleanup": {"properties": {"status": {"const": "passed"}}}}}
     }}
   }],
   "$defs": {
     "qualification_run": {
-      "type": "object", "required": ["build_id", "run_id", "run_attempt", "workflow_ref"], "additionalProperties": false,
+      "type": "object", "required": ["build_id"], "additionalProperties": false,
       "properties": {
         "build_id": {"type": "string", "pattern": "^[1-9][0-9]*-[1-9][0-9]*-(one|two)$"},
         "run_id": {"type": "string", "pattern": "^[1-9][0-9]*$"},

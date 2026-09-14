@@ -1,26 +1,20 @@
 import copy
 import dataclasses
 import json
-import os
 from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
-from support import ROOT, FakeCloud, deployment, module, result, tags
+from support import ROOT, FakeCloud, deployment, guest, module, result, tags
 from example import BUILD_TAG, InvalidInput, file_sha, read_json, recipe, tags_of, write_json
 from qualification import QualificationRun
+from execution_record import ExecutionRecord, RunAttempt
 import retained_candidate as retained
 
 
 SOURCE_URI = "s3://example-artifacts/example/repo/123-1-one/recovery/image-result.json?versionId=source-version"
-REQUEST_URI = "s3://example-artifacts/example/repo/124-2-one/qualification/request.json?versionId=request-version"
-CONTEXT = QualificationRun("124-2-one", "124", "2",
-                           "example/repo/.github/workflows/qualify-retained-image.yml@refs/heads/main")
-ENVIRONMENT = {"GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_REF": "refs/heads/main",
-               "GITHUB_REPOSITORY": "example/repo", "GITHUB_WORKFLOW_REF": CONTEXT.workflow_ref,
-               "GITHUB_RUN_ID": "124", "GITHUB_RUN_ATTEMPT": "2", "GITHUB_SHA": "3" * 40,
-               "CONFIGURED_BUILD_ID": CONTEXT.build_id, "CANDIDATE_RESULT_URI": SOURCE_URI, "BUILD_VARIANT": "one"}
+CONTEXT = QualificationRun("124-2-one")
 
 
 def source_candidate():
@@ -87,8 +81,7 @@ class RetainedCandidateContract(unittest.TestCase):
         with self.assertRaisesRegex(InvalidInput, "recipe identities"):
             retained.validate_source(candidate, deployment(), for_launch=False)
 
-    def test_preparation_preserves_source_execution_and_retains_new_request(self):
-        workflow = module("workflow")
+    def test_preparation_preserves_source_execution_and_writes_explicit_configuration(self):
         original = source_candidate()
         cloud = MagicMock(deployment=deployment())
         uploaded = {}
@@ -100,23 +93,22 @@ class RetainedCandidateContract(unittest.TestCase):
             self.assertEqual(uri, SOURCE_URI)
             write_json(path, original)
             return copy.deepcopy(original)
-        with tempfile.TemporaryDirectory() as temporary, patch.dict(os.environ, ENVIRONMENT, clear=True), \
-             patch.object(workflow, "ROOT", Path(temporary)), patch.object(workflow, "load_deployment", return_value=deployment()), \
-             patch.object(workflow, "Cloud", return_value=cloud), patch.object(retained, "download_json", side_effect=download), \
-             patch.object(retained, "inspect_candidate") as inspect, patch.object(workflow, "outputs") as outputs:
-            workflow.qualification_prepare()
-            selected = read_json(Path(temporary) / "artifacts" / CONTEXT.build_id / "image-result.json")
+        with tempfile.TemporaryDirectory() as temporary, \
+             patch.object(retained, "download_json", side_effect=download), \
+             patch.object(retained, "inspect_candidate") as inspect:
+            destination = Path(temporary) / "qualification"
+            selected = retained.prepare(cloud, CONTEXT, SOURCE_URI, destination, minimum_seconds=4500)
+            self.assertEqual(read_json(destination / "image-result.json"), selected)
+            configuration = read_json(destination / "image-config.json")
         self.assertEqual(selected["source"], original["source"])
         self.assertEqual(selected["execution"], original["execution"])
         self.assertEqual(selected["validation"]["qualification"], dataclasses.asdict(CONTEXT))
         self.assertEqual(selected["status"], "candidate")
         self.assertEqual(selected["lifecycle"]["artifact_locations"], original["lifecycle"]["artifact_locations"] + [SOURCE_URI])
-        self.assertEqual(uploaded[CONTEXT.build_id + "/qualification/request.json"],
-                         {"build_id": CONTEXT.build_id, "workflow_sha": ENVIRONMENT["GITHUB_SHA"], "source_result_uri": SOURCE_URI})
-        self.assertEqual(inspect.call_args.args[2], deployment().deadlines["boot_seconds"] +
-                         2 * deployment().deadlines["registration_seconds"] + 1800)
-        self.assertIn(original["cloud"]["ami_id"], outputs.call_args.args[0]["label_a"])
-        self.assertIn(CONTEXT.build_id, outputs.call_args.args[0]["label_a"])
+        self.assertEqual(uploaded, {CONTEXT.build_id + "/qualification/image-result.json": selected})
+        self.assertEqual(inspect.call_args.args[2], 4500)
+        self.assertIn(original["cloud"]["ami_id"], configuration["label_a"])
+        self.assertIn(CONTEXT.build_id, configuration["label_a"])
 
     def test_live_candidate_requires_original_tags_snapshots_creation_and_expiry(self):
         candidate = source_candidate()
@@ -146,107 +138,195 @@ class RetainedCandidateContract(unittest.TestCase):
                  patch.object(retained, "inspect_instance_type"), self.assertRaises(InvalidInput):
                 retained.inspect_candidate(cloud, candidate)
 
-    def test_retained_watchdog_has_no_phantom_build_deadline_and_cancels_on_admission_failure(self):
+    def execution_record(self, candidate):
+        return ExecutionRecord.parse({"schema_version": 1, "repository": "example/repo", "run_id": "124", "run_attempt": "2",
+            "account_id": "123456789012", "region": "us-east-1", "instance_type": "t3.small",
+            "build_id": CONTEXT.build_id, "deadline_seconds": 45 * 60, "registration_seconds": 600,
+            "plan": {"configure": {"name": "Prepare selected image", "needs": [], "adopt": False},
+                     "probe": {"name": "Boot selected image", "needs": ["configure"], "adopt": False},
+                     "test": {"name": "Run selected image", "needs": ["probe"], "adopt": True}},
+            "terminal": "test", "image": {"kind": "candidate", "record": candidate}})
+
+    def test_retained_monitor_uses_only_the_explicit_plan_and_retains_admission_failures(self):
         watchdog = module("watchdog")
-        jobs = {"configure": {"conclusion": "success"}, "probe": {"status": "in_progress"}}
-        self.assertEqual(watchdog.registration_waiting(jobs, retained=True), [])
-        self.assertEqual(watchdog.registration_waiting(jobs), ["build"])
         candidate = source_candidate()
-        candidate["validation"]["qualification"] = dataclasses.asdict(CONTEXT)
+        record = self.execution_record(candidate)
+        jobs = {"configure": {"conclusion": "success"}, "probe": {"status": "in_progress"}}
+        self.assertEqual(watchdog.registration_waiting(jobs, record.plan), [])
         cloud = FakeCloud()
-        with tempfile.TemporaryDirectory() as temporary, patch.object(retained, "inspect_candidate", side_effect=InvalidInput("expired")), \
-             patch.object(watchdog.github, "cancel") as cancel:
-            with self.assertRaisesRegex(InvalidInput, "expired"):
-                watchdog.monitor(cloud, "one", "124", "2", Path(temporary), result=candidate)
-            self.assertEqual(read_json(Path(temporary) / "watchdog.json")["error"], "expired")
-        cancel.assert_called_once_with("example/repo", "124")
+        with tempfile.TemporaryDirectory() as temporary, \
+             patch.object(retained, "inspect_candidate", side_effect=InvalidInput("expired")), \
+             self.assertRaisesRegex(InvalidInput, "expired"):
+            try:
+                watchdog.monitor(cloud, record, Path(temporary))
+            finally:
+                self.assertEqual(read_json(Path(temporary) / "watchdog.json")["error"], "expired")
         self.assertEqual(cloud.retained, ["124-2-one/watchdog.json"])
 
-    def test_recovery_binds_completed_attempt_request_commit_and_exact_job_instance(self):
-        workflow = module("workflow")
+    def test_recovery_uses_registered_historical_image_and_exact_instance(self):
         watchdog = module("watchdog")
         candidate = source_candidate()
+        candidate["source"]["recipe_files"]["historical-recipe"] = "f" * 64
+        record = self.execution_record(candidate)
         cloud = FakeCloud()
         cloud.deployment = dataclasses.replace(cloud.deployment, instance_type="t3.medium",
                                                 source_ami=dataclasses.replace(cloud.deployment.source_ami, id="ami-" + "9" * 17))
-        candidate["source"]["recipe_files"]["historical-recipe"] = "f" * 64
         cloud.machines[0]["Tags"] = [{"Key": "ami-example:runs-on-repository", "Value": "example/repo"}]
-        job = {"name": "one / smoke-a", "runner_name": "runs-on--i-22222222222222222--124"}
-        run = {"id": 124, "event": "workflow_dispatch", "head_branch": "main", "status": "completed",
-               "name": "Qualify retained Cobalt image", "head_sha": "3" * 40, "run_attempt": 2}
-        request = {"build_id": CONTEXT.build_id, "workflow_sha": run["head_sha"], "source_result_uri": SOURCE_URI}
-        with tempfile.TemporaryDirectory() as temporary, patch.object(workflow, "ROOT", Path(temporary)), \
-             patch("accepted_image.watchdog_module", return_value=watchdog), \
-             patch.object(watchdog.github, "request", return_value=run), \
+        job = {"name": "Run selected image", "runner_name": "runs-on--i-22222222222222222--124"}
+        attempt = RunAttempt.parse("example/repo", "124", "2")
+        with tempfile.TemporaryDirectory() as temporary, \
+             patch.object(watchdog.github, "completed", return_value=attempt) as completed, \
              patch.object(watchdog.github, "jobs", return_value=[job]) as jobs, \
-             patch.object(retained, "request_uri", return_value=REQUEST_URI) as pointer, \
-             patch.object(retained, "download_json", side_effect=[request, candidate]) as download, \
-             patch.object(retained, "inspect_candidate", return_value=candidate_image(candidate)):
-            dispatch = workflow.completed_dispatch(cloud, "124", "2")
-            workflow.recover_dispatch_ownership(cloud, dispatch)
+             patch.object(watchdog, "registered_records", return_value=[record]), \
+             patch.object(retained, "inspect_candidate", return_value=candidate_image(candidate)) as inspect:
+            watchdog.recover(cloud, "example/repo", "124", "2", Path(temporary))
+        completed.assert_called_once_with("example/repo", "124", "2")
         jobs.assert_called_once_with("example/repo", "124", "2")
-        pointer.assert_called_once_with(cloud, CONTEXT.build_id)
-        self.assertEqual([call.args[1] for call in download.call_args_list], [REQUEST_URI, SOURCE_URI])
+        self.assertFalse(inspect.call_args.kwargs["for_launch"])
+        self.assertIsNone(inspect.call_args.kwargs["minimum_seconds"])
         self.assertEqual(tags_of(cloud.machines[0])[BUILD_TAG], CONTEXT.build_id)
         self.assertEqual(tags_of(cloud.machines[1])[BUILD_TAG], "123-1-one")
         self.assertEqual(tags_of(cloud.images[0])[BUILD_TAG], "123-1-one")
-        for fault in ({"build_id": "124-1-one"}, {"workflow_sha": "4" * 40}):
-            cloud.mutations.clear()
-            with self.subTest(fault=fault), patch("accepted_image.watchdog_module", return_value=watchdog), \
-                 patch.object(watchdog.github, "jobs", return_value=[job]), \
-                 patch.object(retained, "request_uri", return_value=REQUEST_URI), \
-                 patch.object(retained, "download_json", return_value={**request, **fault}), \
-                 self.assertRaisesRegex(InvalidInput, "another run attempt or commit"):
-                workflow.recover_dispatch_ownership(cloud, dispatch)
-            self.assertEqual(cloud.mutations, [])
 
-    def test_retained_deadline_cancels_before_retention_within_hosted_job_limit(self):
+    def test_retained_monitor_enforces_its_supplied_deadline_and_retains_the_failure(self):
         watchdog = module("watchdog")
         candidate = source_candidate()
-        candidate["validation"]["qualification"] = dataclasses.asdict(CONTEXT)
+        record = self.execution_record(candidate)
         cloud = FakeCloud()
-        self.assertEqual(cloud.deployment.deadlines["workflow_seconds"], 14400)
-        events = []
-        jobs = [{"name": "one / configure", "conclusion": "success"},
-                {"name": "one / probe", "status": "in_progress"}]
+        jobs = [{"name": "Prepare selected image", "conclusion": "success"},
+                {"name": "Boot selected image", "status": "in_progress"}]
         with tempfile.TemporaryDirectory() as temporary, patch.object(retained, "inspect_candidate", return_value=candidate_image(candidate)), \
              patch.object(watchdog.github, "jobs", return_value=jobs), \
              patch.object(watchdog, "adopt_test_instances", return_value=[]), \
-             patch.object(watchdog.time, "monotonic", side_effect=[0, 45 * 60]), \
-             patch.object(watchdog.github, "cancel", side_effect=lambda *args: events.append("cancel")), \
-             patch.object(cloud, "retain", side_effect=lambda *args: events.append("retain")):
-            with self.assertRaisesRegex(InvalidInput, "workflow deadline"):
-                watchdog.monitor(cloud, "one", "124", "2", Path(temporary), result=candidate)
+             patch.object(watchdog.time, "monotonic", side_effect=[0, record.deadline_seconds]):
+            with self.assertRaisesRegex(InvalidInput, "execution deadline"):
+                watchdog.monitor(cloud, record, Path(temporary))
             report = read_json(Path(temporary) / "watchdog.json")
         self.assertEqual(report["status"], "failed")
-        self.assertEqual(events, ["cancel", "retain"])
+        self.assertEqual(cloud.retained, ["124-2-one/watchdog.json"])
 
-    def test_finalizer_only_claims_retained_source_after_live_readback(self):
-        workflow = module("workflow")
+
+class Finalization(unittest.TestCase):
+    def setUp(self):
+        self.finalizer = module("finalize-image")
+        self.candidate = source_candidate()
+        self.candidate["validation"]["qualification"] = dataclasses.asdict(CONTEXT)
+        validation = self.candidate["validation"]
+        validation["direct_boot"] = {"status": "passed", "build_id": CONTEXT.build_id,
+                                     "instance_id": "i-44444444444444444", "terminated": True,
+                                     "guest": guest("probe", "4")}
+        validation["runs_on"] = []
+        for stage, digit in (("a", "2"), ("b", "3")):
+            identity = guest(stage, digit)
+            identity["sentinel"] = f"/var/tmp/ami-example-{CONTEXT.build_id}-sentinel"
+            validation["runs_on"].append({"status": "passed", "stage": stage, "guest": identity,
+                                           "instance_id": identity["identity"]["instanceId"],
+                                           "application": {"name": "cobalt", "status": "passed"}})
+        self.report = {"status": "passed", "account_id": deployment().account_id, "region": deployment().region,
+                       "scope": {"owner": deployment().repository, "build": CONTEXT.build_id,
+                                 "run_id": None, "run_attempt": None, "expired": False},
+                       "remaining": {"instances": [], "images": [], "snapshots": [], "volumes": [], "key_pairs": []},
+                       "errors": [], "retained_images": []}
+
+    def test_retained_source_is_only_claimed_after_live_readback(self):
         for failure in (None, InvalidInput("source ownership changed")):
-            candidate = source_candidate()
-            candidate["validation"]["qualification"] = dataclasses.asdict(CONTEXT)
-            cloud = FakeCloud()
-            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as temporary:
-                root = Path(temporary)
-                write_json(root / "artifacts/handoff" / (CONTEXT.build_id + "-build/image-result.json"), candidate)
-                write_json(root / "artifacts/handoff" / (CONTEXT.build_id + "-watchdog/watchdog.json"), {"status": "passed"})
-                with patch.dict(os.environ, ENVIRONMENT, clear=True), patch.object(workflow, "ROOT", root), \
-                     patch.object(workflow, "load_deployment", return_value=deployment()), patch.object(workflow, "Cloud", return_value=cloud), \
-                     patch.object(workflow.subprocess, "run"), \
-                     patch.object(workflow, "cleanup", return_value={"status": "passed", "retained_images": []}) as cleanup, \
-                     patch.object(retained, "inspect_candidate", side_effect=failure) as inspect:
-                    if failure:
-                        with self.assertRaisesRegex(InvalidInput, "qualification failed"):
-                            workflow.finalize()
-                    else:
-                        workflow.finalize()
-                checked = read_json(root / "artifacts/final" / CONTEXT.build_id / "image-result.json")
-                self.assertEqual(cleanup.call_args.args[1].build, CONTEXT.build_id)
+            with self.subTest(failure=failure), \
+                 patch.object(self.finalizer, "inspect_candidate", side_effect=failure) as inspect:
+                checked = self.finalizer.finalize(FakeCloud(), CONTEXT.build_id, self.candidate, self.report)
                 inspect.assert_called_once()
-                self.assertEqual(checked["execution"], candidate["execution"])
+                self.assertEqual(checked["execution"], self.candidate["execution"])
                 self.assertEqual(checked["status"], "failed" if failure else "qualified")
-                self.assertEqual(checked["lifecycle"]["cleanup"]["retained_images"], [] if failure else [candidate["cloud"]["ami_id"]])
+                self.assertEqual(checked["lifecycle"]["cleanup"]["retained_images"],
+                                 [] if failure else [self.candidate["cloud"]["ami_id"]])
+        self.assertEqual(self.candidate["status"], "candidate")
+
+    def test_status_alone_cannot_replace_runtime_or_execution_evidence(self):
+        for fault in ("pending-probe", "wrong-probe-build", "one-stage", "reused-instance", "wrong-image", "failed-application"):
+            value = copy.deepcopy(self.candidate)
+            validation = value["validation"]
+            if fault == "pending-probe":
+                validation["direct_boot"]["status"] = "pending"
+            elif fault == "wrong-probe-build":
+                validation["direct_boot"]["build_id"] = "124-1-one"
+            elif fault == "one-stage":
+                validation["runs_on"].pop()
+            elif fault == "reused-instance":
+                second = validation["runs_on"][1]
+                second["instance_id"] = validation["runs_on"][0]["instance_id"]
+                second["guest"]["identity"]["instanceId"] = second["instance_id"]
+            elif fault == "wrong-image":
+                validation["runs_on"][0]["guest"]["identity"]["imageId"] = "ami-99999999999999999"
+            else:
+                validation["runs_on"][0]["application"]["status"] = "failed"
+            with self.subTest(fault=fault), patch.object(self.finalizer, "inspect_candidate") as inspect:
+                checked = self.finalizer.finalize(FakeCloud(), CONTEXT.build_id, value, self.report)
+                self.assertEqual(checked["status"], "failed")
+                self.assertTrue(checked["validation"]["errors"])
+                self.assertEqual(checked["lifecycle"]["cleanup"]["status"], "passed")
+                inspect.assert_not_called()
+
+    def test_same_execution_retention_requires_the_image_in_cleanup_evidence(self):
+        self.candidate["execution"]["build_id"] = CONTEXT.build_id
+        for retained_images in ([], [self.candidate["cloud"]["ami_id"]]):
+            self.report["retained_images"] = retained_images
+            with self.subTest(retained_images=retained_images), patch.object(self.finalizer, "inspect_candidate") as inspect:
+                checked = self.finalizer.finalize(FakeCloud(), CONTEXT.build_id, self.candidate, self.report)
+                self.assertEqual(checked["status"], "qualified" if retained_images else "failed")
+                inspect.assert_not_called()
+
+    def test_cleanup_must_cover_the_same_cloud_target_and_execution_without_leftovers(self):
+        for fault in ("pending", "wrong-build", "wrong-owner", "wrong-account", "wrong-region", "leftover", "error"):
+            report = copy.deepcopy(self.report)
+            if fault == "pending":
+                report["status"] = "planned"
+            elif fault == "wrong-build":
+                report["scope"]["build"] = "124-1-one"
+            elif fault == "wrong-owner":
+                report["scope"]["owner"] = "other/repo"
+            elif fault == "wrong-account":
+                report["account_id"] = "999999999999"
+            elif fault == "wrong-region":
+                report["region"] = "us-west-2"
+            elif fault == "leftover":
+                report["remaining"]["instances"] = ["i-22222222222222222"]
+            else:
+                report["errors"] = ["artifact upload failed"]
+            with self.subTest(fault=fault), patch.object(self.finalizer, "inspect_candidate") as inspect:
+                checked = self.finalizer.finalize(FakeCloud(), CONTEXT.build_id, self.candidate, report)
+                self.assertEqual(checked["status"], "failed")
+                self.assertEqual(checked["lifecycle"]["cleanup"]["status"], "failed")
+                inspect.assert_not_called()
+
+    def test_missing_cleanup_writes_a_failed_result_from_standalone_cli(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "verified.json"
+            destination = root / "final.json"
+            write_json(source, self.candidate)
+            args = ["finalize-image.py", "--build-id", CONTEXT.build_id, "--result", str(source),
+                    "--cleanup", str(root / "missing.json"), "--output", str(destination)]
+            with patch("sys.argv", args), self.assertRaisesRegex(InvalidInput, "qualification failed"):
+                self.finalizer.main()
+            failed = read_json(destination)
+            self.assertEqual(failed["status"], "failed")
+            self.assertEqual(failed["execution"], self.candidate["execution"])
+
+
+class ArtifactRetention(unittest.TestCase):
+    def test_retains_diagnostics_and_index_without_application_build_products(self):
+        retention = module("retain-artifacts")
+        cloud = FakeCloud()
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            for name in ("identity.json", "tests/ctest.xml", "build/generated.json", "input.tar", "runtime.log", "artifact-index.json"):
+                path = directory / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("{}")
+            locations = retention.retain(cloud, directory, "local/application")
+            self.assertEqual(set(locations), {"identity.json", "tests/ctest.xml", "runtime.log"})
+            self.assertEqual(read_json(directory / "artifact-index.json"), locations)
+            self.assertEqual(cloud.retained[-1], "local/application/artifact-index.json")
+            self.assertEqual(len(cloud.retained), 4)
 
 
 if __name__ == "__main__":

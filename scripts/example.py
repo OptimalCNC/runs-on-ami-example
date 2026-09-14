@@ -5,7 +5,6 @@ import dataclasses
 import datetime as dt
 import hashlib
 import json
-import os
 from pathlib import Path
 import re
 import subprocess
@@ -94,15 +93,6 @@ def parse_time(value: str) -> dt.datetime:
 
 def run(args: list[str], **kwargs: Any) -> str:
     return subprocess.check_output(args, text=True, **kwargs).strip()
-
-
-def outputs(values: dict[str, Any]) -> None:
-    path = os.environ.get("GITHUB_OUTPUT")
-    if path:
-        with open(path, "a") as stream:
-            for key, value in values.items():
-                require("\n" not in str(value), f"multiline output: {key}")
-                stream.write(f"{key}={value}\n")
 
 
 @dataclasses.dataclass(frozen=True)

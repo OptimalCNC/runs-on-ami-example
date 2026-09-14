@@ -28,6 +28,7 @@ concurrency:
 
 jobs:
   prepare:
+    if: vars.AMI_EXAMPLE_CLOUD_ENABLED == 'true' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     outputs:
       matrix: ${{ steps.configure.outputs.matrix }}
@@ -40,9 +41,17 @@ jobs:
           persist-credentials: false
       - run: python3 scripts/validate-inputs.py --deployment infra/deployment.json
       - id: configure
-        run: python3 scripts/workflow.py configure
+        run: |
+          python3 scripts/image-config.py --output artifacts/config.json
+          jq -r 'to_entries[] | "\(.key)=\(.value)"' artifacts/config.json >> "$GITHUB_OUTPUT"
+          test "$(jq -r .repository infra/deployment.json)" = "$GITHUB_REPOSITORY"
+          case "$BUILD_STAGE:$FAULT" in
+            stock:*) matrix='["stock"]' ;;
+            single:*|*:probe-identity) matrix='["one"]' ;;
+            *) matrix='["one","two"]' ;;
+          esac
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
         env:
-          CLOUD_ENABLED: ${{ vars.AMI_EXAMPLE_CLOUD_ENABLED }}
           BUILD_STAGE: ${{ inputs.stage }}
           FAULT: ${{ inputs.fault }}
 
@@ -57,7 +66,10 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
-      - run: python3 scripts/install-tools.py --group cloud
+      - run: |
+          python3 scripts/install-tools.py --group cloud
+          echo "$GITHUB_WORKSPACE/.tools/bin" >> "$GITHUB_PATH"
+          echo "PACKER_PLUGIN_PATH=$GITHUB_WORKSPACE/.tools/plugins" >> "$GITHUB_ENV"
       - uses: aws-actions/configure-aws-credentials@v6.2.4
         with:
           role-session-name: ami-example-${{ github.run_id }}-${{ github.run_attempt }}
@@ -85,6 +97,7 @@ jobs:
     uses: ./.github/workflows/qualify-image.yml
     with:
       variant: ${{ matrix.variant }}
+      job_prefix: "qualify (${{ matrix.variant }}) / "
       retain: ${{ inputs.retain }}
       fault: ${{ inputs.fault }}
 
@@ -104,13 +117,28 @@ jobs:
         with:
           pattern: ${{ github.run_id }}-${{ github.run_attempt }}-*-final
           path: artifacts/comparison
-      - run: python3 scripts/install-tools.py --group cloud
+      - run: |
+          python3 scripts/install-tools.py --group cloud
+          echo "$GITHUB_WORKSPACE/.tools/bin" >> "$GITHUB_PATH"
+          echo "PACKER_PLUGIN_PATH=$GITHUB_WORKSPACE/.tools/plugins" >> "$GITHUB_ENV"
       - uses: aws-actions/configure-aws-credentials@v6.2.4
         with:
           role-session-name: ami-example-${{ github.run_id }}-${{ github.run_attempt }}
           role-to-assume: ${{ needs.prepare.outputs.role_arn }}
           aws-region: ${{ needs.prepare.outputs.region }}
-      - run: python3 scripts/workflow.py compare
+      - run: |
+          python3 scripts/compare-builds.py \
+            "artifacts/comparison/$RUN_ID-$ATTEMPT-one-final/image-result.json" \
+            "artifacts/comparison/$RUN_ID-$ATTEMPT-two-final/image-result.json" \
+            --output artifacts/comparison/reproducibility.json
+        env:
+          RUN_ID: ${{ github.run_id }}
+          ATTEMPT: ${{ github.run_attempt }}
+      - if: always()
+        run: python3 scripts/retain-artifacts.py --directory artifacts/comparison --prefix "comparisons/$RUN_ID-$ATTEMPT"
+        env:
+          RUN_ID: ${{ github.run_id }}
+          ATTEMPT: ${{ github.run_attempt }}
       - if: always()
         uses: actions/upload-artifact@v7.0.1
         with:

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Install exact, checksum-verified tools in an unprivileged local directory."""
 import argparse
+import json
 import os
 from pathlib import Path
 import shutil
@@ -42,7 +43,8 @@ def install(name, spec, destination):
     elif name == "amazon_plugin":
         binary = next(unpacked.glob("packer-plugin-amazon_v*"))
         subprocess.run([str(binary_dir / "packer"), "plugins", "install", "--path", str(binary),
-                        "github.com/hashicorp/amazon"], check=True)
+                        "github.com/hashicorp/amazon"], check=True,
+                       env={**os.environ, "PACKER_PLUGIN_PATH": str(destination / "plugins")})
     else:
         source = unpacked / spec["binary"]
         source.chmod(0o755)
@@ -56,20 +58,18 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--directory", default=".tools")
     parser.add_argument("--group", choices=("build", "cloud", "validation"), default="build")
+    parser.add_argument("--output", type=Path, help="write installed tool locations as JSON")
     args = parser.parse_args()
     destination = Path(args.directory).resolve()
-    os.environ.setdefault("PACKER_PLUGIN_PATH", str(destination / "plugins"))
     pins = read_json(ROOT / "images/xenomai-cobalt/inputs.lock.json")["tools"]
     groups = {"cloud": ["aws_cli"], "build": ["packer", "amazon_plugin", "session_manager", "aws_cli"],
               "validation": ["packer", "amazon_plugin", "terraform", "actionlint"]}
     for name in groups[args.group]:
         install(name, pins[name], destination)
-    if os.environ.get("GITHUB_PATH"):
-        with open(os.environ["GITHUB_PATH"], "a") as stream:
-            stream.write(str(destination / "bin") + "\n")
-    if os.environ.get("GITHUB_ENV"):
-        with open(os.environ["GITHUB_ENV"], "a") as stream:
-            stream.write("PACKER_PLUGIN_PATH=" + os.environ["PACKER_PLUGIN_PATH"] + "\n")
+    if args.output:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(json.dumps({"bin_directory": str(destination / "bin"),
+                                           "packer_plugin_path": str(destination / "plugins")}, indent=2) + "\n")
 
 
 if __name__ == "__main__":

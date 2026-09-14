@@ -8,14 +8,13 @@ from unittest.mock import MagicMock, patch
 
 import jsonschema
 
-from support import ROOT, FakeCloud, deployment, evidence, guest, module, result, smoke, tags
+from support import ROOT, FakeCloud, deployment, guest, module, result, smoke, tags
 from accepted_image import AcceptedImage, selected_record
 from example import BUILD_TAG, InvalidInput, RUNS_ON_TAG, read_json, tags_of
 from qualification import QualificationRun
 
 
-QUALIFICATION = QualificationRun(
-    "124-2-one", "124", "2", "example/repo/.github/workflows/qualify-retained-image.yml@refs/heads/main")
+QUALIFICATION = QualificationRun("124-2-one")
 
 
 def qualification_result():
@@ -33,12 +32,10 @@ def qualification_evidence():
     for report in reports:
         for value in (report["identity"], report["environment"]):
             value["sentinel"] = f"/var/tmp/ami-example-{QUALIFICATION.build_id}-sentinel"
-    jobs = evidence()
-    for stage, job in jobs.items():
-        job.update(name=f"one / {stage}", runner_name=job["runner_name"].removesuffix("123") + "124")
+    instances = {"a": "i-22222222222222222", "b": "i-33333333333333333"}
     probe = {"status": "passed", "terminated": True, "build_id": QUALIFICATION.build_id,
              "instance_id": "i-" + "4" * 17, "guest": guest("probe", "4")}
-    return cloud, probe, reports, jobs
+    return cloud, probe, reports, instances
 
 
 class QualificationContext(unittest.TestCase):
@@ -50,40 +47,34 @@ class QualificationContext(unittest.TestCase):
         self.assertEqual(QualificationRun.from_result(selected), QUALIFICATION)
         self.assertEqual(selected["execution"], original["execution"])
 
-    def test_context_rejects_partial_inconsistent_and_malformed_dispatches(self):
-        changes = ({"build_id": "124-1-one"}, {"run_id": "123"}, {"run_attempt": 2}, {"run_id": "0"},
-                   {"build_id": "124-2-stock"}, {"workflow_ref": " "}, {"workflow_ref": None}, {"extra": True})
+    def test_context_rejects_inconsistent_and_malformed_execution_identity(self):
+        changes = ({"run_id": "123"}, {"run_attempt": 2}, {"run_id": "0"},
+                   {"build_id": "124-2-stock"}, {"build_id": "invalid"}, {"extra": True})
         for change in changes:
             selected = qualification_result()
             selected["validation"]["qualification"].update(change)
             with self.subTest(change=change), self.assertRaises(InvalidInput):
                 QualificationRun.from_result(selected)
-        for value in (None, {}, {"build_id": "124-2-one"}):
+        for value in (None, {}, {"run_id": "124", "run_attempt": "2"}):
             selected = qualification_result()
             selected["validation"]["qualification"] = value
             with self.subTest(value=value), self.assertRaises(InvalidInput):
                 QualificationRun.from_result(selected)
 
-    def test_current_context_requires_exact_repository_main_manual_dispatch(self):
-        environment = {"GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_REF": "refs/heads/main",
-                       "GITHUB_REPOSITORY": "example/repo", "GITHUB_WORKFLOW_REF": QUALIFICATION.workflow_ref,
-                       "GITHUB_RUN_ID": "124", "GITHUB_RUN_ATTEMPT": "2"}
-        with patch.dict(os.environ, environment, clear=True):
-            self.assertEqual(QualificationRun.current("example/repo"), QUALIFICATION)
-            self.assertEqual(QualificationRun.current("example/repo", "two").build_id, "124-2-two")
-        for field, value in (("GITHUB_EVENT_NAME", "push"), ("GITHUB_REF", "refs/heads/topic"),
-                             ("GITHUB_REPOSITORY", "other/repo"), ("GITHUB_WORKFLOW_REF", ""),
-                             ("GITHUB_WORKFLOW_REF", QUALIFICATION.workflow_ref.replace("main", "topic")),
-                             ("GITHUB_WORKFLOW_REF", QUALIFICATION.workflow_ref.replace("example/repo", "other/repo"))):
-            with self.subTest(field=field, value=value), patch.dict(os.environ, {**environment, field: value}, clear=True), \
-                 self.assertRaises(InvalidInput):
-                QualificationRun.current("example/repo")
+    def test_historical_context_is_readable_without_caller_metadata(self):
+        selected = qualification_result()
+        selected["validation"]["qualification"].update(
+            run_id="124", run_attempt="2", workflow_ref="historical workflow reference")
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(QualificationRun.from_result(selected), QUALIFICATION)
+            self.assertEqual(QualificationRun("124-2-two").run_id, "124")
+            self.assertEqual(QualificationRun("124-2-two").run_attempt, "2")
 
     def test_schema_allows_explicit_context_and_rejects_incomplete_context(self):
         validator = jsonschema.Draft202012Validator(read_json(ROOT / "schemas/image-result.schema.json"))
         validator.validate(qualification_result())
-        for value in (None, {"build_id": "124-2-one"}, {**dataclasses.asdict(QUALIFICATION), "run_attempt": 2},
-                      {**dataclasses.asdict(QUALIFICATION), "workflow_ref": " "}):
+        for value in (None, {}, {"build_id": "124-2-stock"},
+                      {**dataclasses.asdict(QUALIFICATION), "run_attempt": 2}):
             selected = qualification_result()
             selected["validation"]["qualification"] = value
             with self.subTest(value=value):
@@ -131,12 +122,12 @@ class QualificationContext(unittest.TestCase):
                 self.assertEqual(operation.call_args.args[2], expected)
                 self.assertEqual(operation.call_args.args[4]["execution"]["build_id"], "123-1-one")
 
-    def test_verification_uses_new_sentinels_and_job_instances_without_rewriting_source(self):
+    def test_verification_uses_new_sentinels_and_expected_instances_without_rewriting_source(self):
         verifier = module("verify-run-results")
-        cloud, probe, reports, jobs = qualification_evidence()
+        cloud, probe, reports, instances = qualification_evidence()
         selected = qualification_result()
         original = copy.deepcopy(selected)
-        checked = verifier.verify(cloud, selected, probe, *reports, jobs)
+        checked = verifier.verify(cloud, selected, probe, *reports, instances)
         self.assertEqual(checked["status"], "candidate")
         self.assertEqual(checked["execution"], original["execution"])
         self.assertEqual(checked["source"], original["source"])
@@ -144,11 +135,11 @@ class QualificationContext(unittest.TestCase):
         self.assertEqual([value["instance_id"] for value in checked["validation"]["runs_on"]],
                          [machine["InstanceId"] for machine in cloud.machines])
 
-    def test_verification_rejects_source_dispatch_evidence_and_wrong_github_instance(self):
+    def test_verification_rejects_source_execution_evidence_and_wrong_expected_instance(self):
         verifier = module("verify-run-results")
         for fault, message in (("probe", "direct boot belongs"), ("sentinel", "sentinel"),
-                               ("environment", "sentinel"), ("ownership", "ownership"), ("github", "GitHub job and guest")):
-            cloud, probe, reports, jobs = qualification_evidence()
+                               ("environment", "sentinel"), ("ownership", "ownership"), ("instance", "expected instance and guest")):
+            cloud, probe, reports, instances = qualification_evidence()
             if fault == "probe":
                 probe["build_id"] = "123-1-one"
             elif fault == "sentinel":
@@ -158,44 +149,58 @@ class QualificationContext(unittest.TestCase):
             elif fault == "ownership":
                 cloud.machines[0]["Tags"] = tags(purpose="test") + [{"Key": RUNS_ON_TAG, "Value": "example/repo"}]
             else:
-                jobs["smoke-a"]["runner_name"] = jobs["smoke-b"]["runner_name"]
+                instances["a"] = instances["b"]
             with self.subTest(fault=fault), self.assertRaisesRegex(InvalidInput, message):
-                verifier.verify(cloud, qualification_result(), probe, *reports, jobs)
+                verifier.verify(cloud, qualification_result(), probe, *reports, instances)
 
-    def test_verifier_cli_queries_exact_new_run_attempt(self):
+    def test_verifier_cli_runs_without_environment_with_explicit_instance_ids(self):
         verifier = module("verify-run-results")
-        cloud, probe, reports, jobs = qualification_evidence()
-        with patch("sys.argv", ["verify-run-results.py", "--result", "candidate.json", "--probe", "probe.json",
-                                "--smoke-a", "smoke-a", "--smoke-b", "smoke-b"]), \
-             patch.object(verifier, "load_deployment", return_value=deployment()), patch.object(verifier, "Cloud", return_value=cloud), \
+        cloud, probe, reports, instances = qualification_evidence()
+        with patch.dict(os.environ, {}, clear=True), \
+             patch("sys.argv", ["verify-run-results.py", "--deployment", "local.json", "--result", "candidate.json", "--probe", "probe.json",
+                                "--smoke-a", "smoke-a", "--smoke-b", "smoke-b",
+                                "--instance-a", instances["a"], "--instance-b", instances["b"]]), \
+             patch.object(verifier, "load_deployment", return_value=deployment()) as load, \
+             patch.object(verifier, "Cloud", return_value=cloud), \
              patch.object(verifier, "read_json", side_effect=[qualification_result(), probe]), \
-             patch.object(verifier, "read_smoke", side_effect=reports), \
-             patch.object(verifier.github, "jobs", return_value=list(jobs.values())) as query, patch.object(verifier, "write_json") as save:
+             patch.object(verifier, "read_smoke", side_effect=reports), patch.object(verifier, "write_json") as save:
             verifier.main()
-        query.assert_called_once_with("example/repo", "124", "2")
+        load.assert_called_once_with("local.json")
         self.assertEqual(save.call_args.args[1]["execution"]["build_id"], "123-1-one")
         self.assertEqual(len(save.call_args.args[1]["validation"]["runs_on"]), 2)
 
+    def test_failed_verifier_cli_does_not_replace_result(self):
+        verifier = module("verify-run-results")
+        cloud, probe, reports, instances = qualification_evidence()
+        reports[1]["ctest_passed"] = False
+        with patch.dict(os.environ, {}, clear=True), \
+             patch("sys.argv", ["verify-run-results.py", "--result", "candidate.json", "--probe", "probe.json",
+                                "--smoke-a", "smoke-a", "--smoke-b", "smoke-b",
+                                "--instance-a", instances["a"], "--instance-b", instances["b"]]), \
+             patch.object(verifier, "load_deployment", return_value=deployment()), patch.object(verifier, "Cloud", return_value=cloud), \
+             patch.object(verifier, "read_json", side_effect=[qualification_result(), probe]), \
+             patch.object(verifier, "read_smoke", side_effect=reports), patch.object(verifier, "write_json") as save:
+            with self.assertRaisesRegex(InvalidInput, "application failed"):
+                verifier.main()
+        save.assert_not_called()
+
     def test_acceptance_links_new_qualification_and_inspects_original_ami_ownership(self):
         verifier = module("verify-run-results")
-        cloud, probe, reports, jobs = qualification_evidence()
-        checked = verifier.verify(cloud, qualification_result(), probe, *reports, jobs)
+        cloud, probe, reports, instances = qualification_evidence()
+        checked = verifier.verify(cloud, qualification_result(), probe, *reports, instances)
         checked["status"] = "qualified"
         checked["lifecycle"].update(retain=True, expires_at="2099-01-01T00:00:00Z",
                                    cleanup={"status": "passed", "retained_images": [checked["cloud"]["ami_id"]]})
-        record = selected_record(checked, deployment(), "1" * 64)
+        record = selected_record(checked, deployment(), "1" * 64, "s3://audit/124-2-one/qualification.json")
         accepted = AcceptedImage.parse(record, deployment())
         self.assertEqual(accepted.build_id, "123-1-one")
         self.assertEqual((accepted.qualification_run_id, accepted.qualification_run_attempt), ("124", "2"))
-        self.assertEqual(accepted.qualification_url, "https://github.com/example/repo/actions/runs/124/attempts/2")
+        self.assertEqual(accepted.qualification_url, "s3://audit/124-2-one/qualification.json")
         cloud.images[0].update(State="available", Architecture="x86_64", BootMode="uefi",
                                Tags=tags(expiry="2099-01-01T00:00:00Z") + [
                                    {"Key": "ami-example:recipe-id", "Value": "1" * 64},
                                    {"Key": "ami-example:retain", "Value": "true"}])
         self.assertEqual(accepted.inspect(cloud)["ImageId"], accepted.ami_id)
-        record["image"]["qualification_url"] = "https://github.com/example/repo/actions/runs/123/attempts/1"
-        with self.assertRaisesRegex(InvalidInput, "qualification URL"):
-            AcceptedImage.parse(record, deployment())
 
 
 if __name__ == "__main__":

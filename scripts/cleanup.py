@@ -79,6 +79,7 @@ def discover(cloud, scope):
 def cleanup(cloud, scope, output, apply=False):
     found = discover(cloud, scope)
     report = {"schema_version": 1, "status": "planned", "scope": dataclasses.asdict(scope),
+              "account_id": cloud.deployment.account_id, "region": cloud.deployment.region,
               "created_at": timestamp(), "resources": found, "errors": []}
     write_json(output / "cleanup-plan.json", report)
     if not apply:

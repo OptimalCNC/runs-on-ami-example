@@ -3,7 +3,7 @@
 import argparse
 import re
 
-from example import ROOT, SHA256, CobaltIdentity, file_sha, load_deployment, match, outputs, read_json, recipe, require, write_json
+from example import ROOT, SHA256, CobaltIdentity, file_sha, load_deployment, match, read_json, recipe, require, write_json
 
 
 def static_checks(root=ROOT):
@@ -37,11 +37,6 @@ def static_checks(root=ROOT):
         match(package["sha256"], SHA256, name + " hash")
     for name in lock["recipe_files"]:
         require((root / name).is_file(), f"recipe file missing: {name}")
-    for path in (root / ".github/workflows").glob("*.yml"):
-        for action in re.findall(r"^\s*(?:-\s*)?uses:\s*(\S+)", path.read_text(), re.M):
-            if not action.startswith("./"):
-                require(re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+@[0-9a-f]{40}", action) is not None,
-                        f"action must use a full commit SHA: {path}: {action}")
     config = (root / "images/xenomai-cobalt/kernel.config").read_text()
     for value in ("CONFIG_XENOMAI=y", "CONFIG_DOVETAIL=y", "CONFIG_IRQ_PIPELINE=y", "CONFIG_XENO_OPT_VFILE=y",
                   f'CONFIG_XENO_VERSION_STRING="{lock["xenomai"]["version"]}"', "CONFIG_RUSTC_VERSION=0",
@@ -64,9 +59,6 @@ def main():
         result = {"recipe_id": identity, "recipe_files": files}
         if args.output:
             write_json(args.output, result)
-        outputs({"recipe_id": identity, "region": deployment.region, "role_arn": deployment.controller_role_arn,
-                 "environment": deployment.environment, "controller_ami": deployment.controller_ami.id,
-                 "instance_type": deployment.instance_type, "vcpus": deployment.vcpus})
         print(f"Deployment and recipe validated: {identity}")
     else:
         print("Static locked inputs validated; account-specific deployment and inventories are still required.")

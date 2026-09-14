@@ -9,8 +9,12 @@ from unittest.mock import MagicMock, patch
 
 import jsonschema
 
-from support import ROOT, FakeCloud, deployment, deployment_dict, evidence, guest, module, result, smoke
+from support import ROOT, FakeCloud, deployment, deployment_dict, guest, module, result, smoke
 from example import Deployment, InvalidInput, build_id, load_deployment, recipe
+
+
+def instance_ids():
+    return {"a": "i-22222222222222222", "b": "i-33333333333333333"}
 
 
 class Inputs(unittest.TestCase):
@@ -137,7 +141,7 @@ class Evidence(unittest.TestCase):
         self.probe = {"status": "passed", "terminated": True, "instance_id": "i-" + "4" * 17, "guest": guest("probe", "4")}
 
     def verified(self, first=None, second=None, cloud=None):
-        return self.verify.verify(cloud or FakeCloud(), result(), self.probe, first or smoke("a", "2"), second or smoke("b", "3"), evidence())
+        return self.verify.verify(cloud or FakeCloud(), result(), self.probe, first or smoke("a", "2"), second or smoke("b", "3"), instance_ids())
 
     def test_runtime_verification_waits_for_cleanup_before_qualification(self):
         verified = self.verified()
@@ -158,8 +162,8 @@ class Evidence(unittest.TestCase):
             self.verified(first=first)
 
     def test_reused_instance_rejected_even_with_matching_reports(self):
-        jobs = evidence()
-        jobs["smoke-b"]["runner_name"] = jobs["smoke-a"]["runner_name"]
+        jobs = instance_ids()
+        jobs["b"] = jobs["a"]
         with self.assertRaisesRegex(InvalidInput, "distinct"):
             self.verify.verify(FakeCloud(), result(), self.probe, smoke("a", "2"), smoke("b", "2"), jobs)
 
@@ -169,10 +173,10 @@ class Evidence(unittest.TestCase):
         with self.assertRaisesRegex(InvalidInput, "controller"):
             self.verified(cloud=cloud)
 
-    def test_github_job_must_identify_the_same_instance_as_guest_evidence(self):
-        jobs = evidence()
-        jobs["smoke-a"]["runner_name"] = "runs-on--i-99999999999999999--123"
-        with self.assertRaisesRegex(InvalidInput, "GitHub job and guest"):
+    def test_expected_instance_must_match_guest_evidence(self):
+        jobs = instance_ids()
+        jobs["a"] = "i-99999999999999999"
+        with self.assertRaisesRegex(InvalidInput, "expected instance and guest"):
             self.verify.verify(FakeCloud(), result(), self.probe, smoke("a", "2"), smoke("b", "3"), jobs)
 
     def test_bios_fallback_on_uefi_target_is_rejected(self):

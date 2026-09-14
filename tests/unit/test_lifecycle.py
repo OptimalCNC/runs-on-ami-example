@@ -81,26 +81,25 @@ class Lifecycle(unittest.TestCase):
         self.assertTrue(cloud.images)
         self.assertTrue(cloud.snapshots)
 
-    def test_github_job_adoption_does_not_adopt_other_users_of_same_image(self):
-        watchdog = module("watchdog")
+    def test_explicit_instance_adoption_does_not_adopt_other_users_of_same_image(self):
+        runners = module("runner_instances")
         cloud = FakeCloud()
         for machine in cloud.machines:
             machine["Tags"] = [{"Key": RUNS_ON_TAG, "Value": "example/repo"}]
-        selected = {"smoke-a": {"runner_name": "runs-on--i-22222222222222222--123"}}
-        observations = watchdog.adopt_test_instances(cloud, "123-1-one", selected)
+        observations = runners.adopt_test_instances(cloud, "123-1-one", ["i-22222222222222222"])
         self.assertEqual([instance["InstanceId"] for instance in observations], ["i-22222222222222222"])
         self.assertEqual(tags_of(cloud.machines[0])[OWNER_TAG], "example/repo")
         self.assertNotIn(OWNER_TAG, tags_of(cloud.machines[1]))
 
-    def test_github_job_adoption_rejects_mismatched_cloud_identity(self):
-        watchdog = module("watchdog")
+    def test_explicit_instance_adoption_rejects_mismatched_cloud_identity(self):
+        runners = module("runner_instances")
         for changes in ({"ImageId": "ami-99999999999999999"}, {"Tags": []},
                         {"InstanceType": "c7i.2xlarge"}, {"Tags": tags(build="124-1-one")},
                         {"InstanceLifecycle": "spot"}):
             cloud = FakeCloud()
             cloud.machines[0].update(changes)
             with self.subTest(changes=changes), self.assertRaises(InvalidInput):
-                watchdog.adopt_test_instances(cloud, "123-1-one", {"smoke-a": {"runner_name": "runs-on--i-22222222222222222--123"}})
+                runners.adopt_test_instances(cloud, "123-1-one", ["i-22222222222222222"])
             self.assertEqual(cloud.mutations, [])
 
     def test_explicit_retention_keeps_image_and_snapshot_but_stops_instances(self):
@@ -171,27 +170,6 @@ class Deadlines(unittest.TestCase):
             parse(f"https://s3.us-east-1.amazonaws.com/other/{prefix}/stdout", "bucket", "us-east-1", prefix)
         with self.assertRaises(InvalidInput):
             parse("https://bucket.s3.us-east-1.amazonaws.com/unrelated/stdout", "bucket", "us-east-1", prefix)
-
-    def test_queued_job_clock_starts_only_after_prerequisite(self):
-        watchdog = module("watchdog")
-        self.assertEqual(watchdog.registration_waiting({"build": {"status": "in_progress"}, "smoke-a": {"status": "queued"}}), [])
-        self.assertEqual(watchdog.registration_waiting({"probe": {"conclusion": "success"}, "smoke-a": {"status": "queued"}}), ["smoke-a"])
-
-    def test_never_registered_runner_is_cancelled_externally(self):
-        watchdog = module("watchdog")
-        cloud = FakeCloud()
-        cloud.deployment = dataclasses.replace(deployment(), deadlines={"boot_seconds": 60, "registration_seconds": 60, "workflow_seconds": 600})
-        counter = [0]
-        jobs = [{"name": "qualify (one) / one / configure", "conclusion": "success", "status": "completed"},
-                {"name": "qualify (one) / one / build", "status": "queued", "conclusion": None}]
-        with tempfile.TemporaryDirectory() as temporary, patch.object(watchdog.github, "jobs", return_value=jobs), \
-             patch.object(watchdog.github, "cancel") as cancel, patch.object(watchdog, "adopt_test_instances", return_value=[]), \
-             patch.object(watchdog.time, "monotonic", side_effect=lambda: counter[0]), \
-             patch.object(watchdog.time, "sleep", side_effect=lambda seconds: counter.__setitem__(0, counter[0] + seconds)):
-            with self.assertRaisesRegex(InvalidInput, "registration"):
-                watchdog.monitor(cloud, "one", "123", "1", Path(temporary))
-            cancel.assert_called_once_with("example/repo", "123")
-            self.assertTrue(cloud.retained)
 
     def test_failed_management_probe_terminates_in_finally(self):
         probe = module("probe-ami")
@@ -274,16 +252,13 @@ class Artifacts(unittest.TestCase):
                         write_json(destination / "image-manifest.json", image)
                         write_json(destination / "packer-manifest.json", {"builds": [{"artifact_id": "us-east-1:ami-11111111111111111"}]})
                     return subprocess.CompletedProcess(command, 0)
-                environment = {"GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_REPOSITORY": d.repository,
-                               "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1", "CONFIGURED_BUILD_ID": "123-1-one",
-                               "GITHUB_SHA": "2" * 40, "GITHUB_WORKFLOW_REF": "example/repo/build@refs/heads/main"}
                 with patch.object(build, "ROOT", root), patch.object(build, "load_deployment", return_value=d), \
                      patch.object(build, "recipe", return_value=("1" * 64, {})), patch.object(build, "Cloud", return_value=cloud), \
                      patch.object(build, "inspect_deployment", return_value={"source_ami": {"RootDeviceName": "/dev/sda1"}}), \
                      patch.object(build, "controller_identity", return_value={"instance_id": "i-22222222222222222"}), \
                      patch.object(build, "run", side_effect=lambda command, **kwargs: "2" * 40 if command[1] == "rev-parse" else ""), \
                      patch.object(build.subprocess, "run", side_effect=packer), patch("preflight.inspect_ami"), \
-                     patch.dict("os.environ", environment), patch("sys.argv", ["build-image.py", "--variant", "one", "--execute"]):
+                     patch.dict("os.environ", {}, clear=True), patch("sys.argv", ["build-image.py", "--build-id", "123-1-one", "--execute"]):
                     if packer_fails:
                         with self.assertRaises(subprocess.CalledProcessError):
                             build.main()

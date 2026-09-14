@@ -178,6 +178,13 @@ the deployment's explicit expiry; instances still terminate.
 
 ## Operate and reuse
 
+Scripts expose standalone commands with explicit arguments and JSON files.
+Workflows supply execution IDs, coordinate commands and artifact transfers, and
+write GitHub outputs and environment files. Image operations do not read workflow
+files or GitHub execution context. Each command's `--help` lists its inputs;
+the GitHub monitoring utilities additionally require an explicit repository,
+run attempt, and job plan.
+
 [Operations](docs/operations.md) owns cost estimates, parent/input refresh,
 failure drills, deadlines, artifacts, and orphan cleanup.
 [Infrastructure](infra/README.md) owns IAM trust, networking, reuse of existing

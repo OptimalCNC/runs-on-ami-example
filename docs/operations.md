@@ -210,7 +210,9 @@ The live Cobalt trial compiled the kernel in about 20 minutes on `c7i.large`,
 then needed over 30 minutes for AWS snapshot preparation. The Packer bound
 covers preparation, compilation, input transfer, and snapshot availability.
 
-The independent watchdog uses GitHub's supported workflow cancellation API.
+The independent watchdog reports job failures and deadline violations. Its
+workflow calls GitHub's cancellation API when monitoring fails or a deadline
+expires; an ordinary upstream job failure leaves finalization running.
 A job that never acquires a runner does not need to run a timeout handler.
 The default-branch `workflow_run` cleanup reacts when the cancelled workflow
 completes, and an hourly sweep removes expired example-owned orphans if a
@@ -249,6 +251,7 @@ field populated only after both builds finish. The S3 layout is:
 <repository>/ssm/<build-id>/             Complete SSM stdout/stderr and initialization logs
 <repository>/<build-id>/watchdog.json    Independent job/resource observations
 <repository>/<build-id>/final/          Qualification and cleanup results
+<repository>/executions/<run>/<attempt>/ Explicit job plans and selected image records
 <repository>/comparisons/<run-attempt>/ Reproducibility results
 <repository>/cleanup/                   Live resource inventories and cleanup diagnostics
 ```
@@ -281,9 +284,14 @@ unavailable; image/snapshot evidence is preserved for recovery. Snapshots
 referenced by any remaining account AMI are never deleted. Missing or malformed
 expiry tags are reported through inventory review rather than guessed.
 
+Each workflow saves its explicit execution record before launching runners.
+Completed-run recovery reads that record and the exact attempt's GitHub jobs;
+it does not inspect workflow files or retrieve configuration by commit.
+
 Test instances initially receive the RunsOn common ownership marker. The
-watchdog/finalizer adds the build's owner, build ID, purpose and expiry only
-after matching an owned candidate AMI and its creation time. Instances without
+monitor and application verifier add the build's owner, build ID, purpose and
+expiry only after matching the explicitly selected instance, an owned candidate
+AMI, and its creation time. Instances without
 that required marker are preserved and reported as a configuration failure.
 Cleanup never removes the RunsOn service, retained source AMIs, or supporting
 Terraform infrastructure. Teardown of those resources is a separate reviewed

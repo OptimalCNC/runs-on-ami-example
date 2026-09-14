@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
-"""Qualify candidate evidence against EC2 and GitHub control-plane observations."""
+"""Verify image qualification evidence against explicit EC2 instance identities."""
 import argparse
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
-from example import (BUILD_TAG, OWNER_TAG, RUNS_ON_TAG, Cloud, CobaltIdentity, load_deployment, parse_time, read_json,
+from example import (BUILD_TAG, INSTANCE, OWNER_TAG, RUNS_ON_TAG, Cloud, CobaltIdentity, load_deployment, match, parse_time, read_json,
                      require, tags_of, write_json)
 from qualification import QualificationRun
-from watchdog import github, runner_instance_id, selected_jobs
 
 
 def verify_guest(guest, result, deployment):
@@ -29,8 +28,11 @@ def verify_guest(guest, result, deployment):
     return identity["instanceId"]
 
 
-def verify(cloud, result, probe, a, b, job_evidence):
+def verify(cloud, result, probe, a, b, instance_ids):
     d = cloud.deployment
+    require(set(instance_ids) == {"a", "b"}, "qualification requires expected instances for stages a and b")
+    expected_instances = {stage: match(identifier, INSTANCE, f"stage {stage} instance")
+                          for stage, identifier in instance_ids.items()}
     qualification = QualificationRun.from_result(result)
     require(probe["status"] == "passed" and probe.get("terminated") is True, "direct boot has not passed and terminated")
     if "qualification" in result["validation"]:
@@ -51,9 +53,7 @@ def verify(cloud, result, probe, a, b, job_evidence):
                 "later-step qualification sentinel differs")
         require(verify_guest(environment, result, d) == instance_id, "instance changed between test steps")
         require(report["ctest_passed"], "Cobalt application failed")
-        job = job_evidence[f"smoke-{stage}"]
-        require(job["conclusion"] == "success", "GitHub smoke job/artifact upload failed")
-        require(runner_instance_id(job) == instance_id, "GitHub job and guest instance identities differ")
+        require(expected_instances[stage] == instance_id, "expected instance and guest identities differ")
         actual = cloud.instance(instance_id)
         require(actual["ImageId"] == result["cloud"]["ami_id"] and actual["InstanceType"] == d.instance_type,
                 "controller observed wrong image or instance type")
@@ -68,7 +68,7 @@ def verify(cloud, result, probe, a, b, job_evidence):
         ids.append(instance_id)
         machines.append(identity["machine_id"])
         observations.append({"status": "passed", "stage": stage, "instance_id": instance_id,
-                             "guest": identity, "github_job_id": job["id"], "runner_id": job["runner_id"],
+                             "guest": identity,
                              "application": {"name": "cobalt", "status": "passed"}})
     require(len({probe_id, *ids}) == 3, "probe and RunsOn tests must use three distinct instances")
     require(len(set(machines)) == 2 and all(machines), "machine identity was reused")
@@ -95,15 +95,15 @@ def main():
     parser.add_argument("--probe", required=True)
     parser.add_argument("--smoke-a", type=Path, required=True)
     parser.add_argument("--smoke-b", type=Path, required=True)
+    parser.add_argument("--instance-a", required=True)
+    parser.add_argument("--instance-b", required=True)
     args = parser.parse_args()
     d = load_deployment(args.deployment)
     result = read_json(args.result)
-    qualification = QualificationRun.from_result(result)
-    jobs = selected_jobs(github.jobs(d.repository, qualification.run_id, qualification.run_attempt),
-                         qualification.build_id.rsplit("-", 1)[-1])
-    updated = verify(Cloud(d), result, read_json(args.probe), read_smoke(args.smoke_a), read_smoke(args.smoke_b), jobs)
+    updated = verify(Cloud(d), result, read_json(args.probe), read_smoke(args.smoke_a), read_smoke(args.smoke_b),
+                     {"a": args.instance_a, "b": args.instance_b})
     write_json(args.result, updated)
-    print("Cobalt boot, two fresh RunsOn instances, environment, Cobalt application and artifact uploads verified.")
+    print("Cobalt boot, two fresh RunsOn instances, environment and Cobalt application verified.")
 
 
 if __name__ == "__main__":

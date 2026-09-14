@@ -1,16 +1,14 @@
 #!/usr/bin/env python3
-"""Select a qualified retained image and run read-only admission for later jobs."""
+"""Select a qualified retained image and verify an application run against EC2."""
 import argparse
 import dataclasses
 import importlib.util
-import os
 from pathlib import Path
-import time
 
-from example import (AMI, BUILD_TAG, EXPIRY_TAG, OWNER_TAG, PURPOSE_TAG, ROOT, SHA256, Cloud,
-                     build_id, file_sha, load_deployment, match, outputs, parse_time,
-                     read_json, require, tags_of, timestamp, utcnow, write_json)
+from example import (AMI, BUILD_TAG, EXPIRY_TAG, INSTANCE, OWNER_TAG, PURPOSE_TAG, ROOT, SHA256, Cloud,
+                     file_sha, load_deployment, match, parse_time, read_json, require, tags_of, utcnow, write_json)
 from qualification import QualificationRun
+from runner_instances import adopt_test_instances
 
 
 @dataclasses.dataclass(frozen=True)
@@ -45,8 +43,7 @@ class AcceptedImage:
         match(value["kernel_release"], r"[A-Za-z0-9.+_-]+", "accepted kernel release")
         match(value["qualification_run_id"], r"[1-9][0-9]*", "accepted qualification run ID")
         match(value["qualification_run_attempt"], r"[1-9][0-9]*", "accepted qualification run attempt")
-        require(value["qualification_url"] == f"https://github.com/{deployment.repository}/actions/runs/{value['qualification_run_id']}/attempts/{value['qualification_run_attempt']}",
-                "qualification URL differs from qualification run")
+        require(isinstance(value["qualification_url"], str), "qualification evidence URL must be a string")
         expires_at = parse_time(value["expires_at"])
         require(allow_expired or expires_at > utcnow(), "accepted image has expired; qualify and accept a new image")
         return cls(**value)
@@ -64,11 +61,11 @@ class AcceptedImage:
                               EXPIRY_TAG: self.expires_at, "ami-example:recipe-id": self.recipe_id, "ami-example:retain": "true"}.items():
             require(tags.get(key) == expected, f"accepted AMI tag differs: {key}")
         require(minimum_seconds is None or parse_time(self.expires_at).timestamp() - utcnow().timestamp() > minimum_seconds,
-                "accepted image expires before a registration deadline and smoke test can finish")
+                "accepted image expires before the required lifetime has elapsed")
         return image
 
 
-def selected_record(result, deployment, checksum):
+def selected_record(result, deployment, checksum, evidence_url=""):
     require(result["status"] == "qualified" and result["lifecycle"]["retain"] is True,
             "accept only a qualified retained result")
     require(result["lifecycle"]["cleanup"]["status"] == "passed"
@@ -85,73 +82,26 @@ def selected_record(result, deployment, checksum):
              "recipe_id": result["source"]["recipe_id"], "kernel_release": result["payload"]["kernel_release"],
              "expires_at": result["lifecycle"]["expires_at"], "qualification_sha256": checksum,
              "qualification_run_id": qualification.run_id, "qualification_run_attempt": qualification.run_attempt,
-             "qualification_url": f"https://github.com/{deployment.repository}/actions/runs/{qualification.run_id}/attempts/{qualification.run_attempt}"}
+             "qualification_url": evidence_url}
     record = {"schema_version": 1, "image": value}
     AcceptedImage.parse(record, deployment)
     return record
 
 
-def prepare(deployment, record):
-    require(os.environ.get("CLOUD_ENABLED") == "true", "Cloud execution is disabled")
-    require(os.environ["GITHUB_EVENT_NAME"] == "workflow_dispatch" and os.environ["GITHUB_REF"] == "refs/heads/main",
-            "Cobalt application dispatches require main")
-    require(os.environ["GITHUB_REPOSITORY"] == deployment.repository, "dispatch repository differs")
+def prepare(deployment, record, build):
+    execution = QualificationRun(build)
     accepted = AcceptedImage.parse(record, deployment)
-    dispatch = build_id(os.environ["GITHUB_RUN_ID"], os.environ["GITHUB_RUN_ATTEMPT"], "one")
-    outputs({"build_id": dispatch, "label": deployment.label(dispatch + "-a", accepted.ami_id),
-             "ami_id": accepted.ami_id, "recipe_id": accepted.recipe_id, "kernel_release": accepted.kernel_release,
-             "region": deployment.region, "role_arn": deployment.controller_role_arn, "environment": deployment.environment})
+    return {"build_id": execution.build_id, "label": deployment.label(execution.build_id + "-a", accepted.ami_id),
+            "ami_id": accepted.ami_id, "recipe_id": accepted.recipe_id, "kernel_release": accepted.kernel_release,
+            "region": deployment.region, "role_arn": deployment.controller_role_arn, "environment": deployment.environment}
 
 
-def watchdog_module():
-    spec = importlib.util.spec_from_file_location("watchdog", ROOT / "scripts/watchdog.py")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-def monitor(cloud, accepted, output, poll=15):
-    watchdog = watchdog_module()
-    image = accepted.inspect(cloud, cloud.deployment.deadlines["registration_seconds"] + 900)
-    run_id, attempt = os.environ["GITHUB_RUN_ID"], os.environ["GITHUB_RUN_ATTEMPT"]
-    dispatch = build_id(run_id, attempt, "one")
-    started = time.monotonic()
-    report = {"status": "failed", "build_id": dispatch, "ami_id": accepted.ami_id, "started_at": timestamp(), "observed_instances": {}}
-    cancel = True
-    try:
-        while True:
-            jobs = watchdog.selected_jobs(watchdog.github.jobs(cloud.deployment.repository, run_id, attempt), "test")
-            report["jobs"] = jobs
-            for instance in watchdog.adopt_test_instances(cloud, dispatch, jobs, image=image, expiry=accepted.expires_at):
-                report["observed_instances"][instance["InstanceId"]] = instance
-            job = jobs.get("smoke-a", {})
-            elapsed = time.monotonic() - started
-            require(elapsed < cloud.deployment.deadlines["registration_seconds"] + 900, "application workflow deadline exceeded")
-            if job.get("status", "queued") == "queued":
-                require(elapsed < cloud.deployment.deadlines["registration_seconds"], "application launch/registration deadline exceeded")
-            if job.get("status") == "completed":
-                report["status"] = "passed" if job.get("conclusion") == "success" else "upstream_failed"
-                cancel = False
-                require(report["status"] == "passed", "Cobalt application job failed")
-                return report
-            write_json(output, report)
-            time.sleep(poll)
-    except Exception as error:
-        report["error"] = str(error)
-        raise
-    finally:
-        write_json(output, report)
-        try:
-            cloud.retain(output, f"{dispatch}/watchdog.json")
-        finally:
-            if cancel:
-                watchdog.github.cancel(cloud.deployment.repository, run_id)
-
-
-def verify(cloud, accepted, smoke, job):
-    require(job.get("conclusion") == "success" and smoke["ctest_passed"], "Cobalt compile/run or artifact upload failed")
-    dispatch = build_id(os.environ["GITHUB_RUN_ID"], os.environ["GITHUB_RUN_ATTEMPT"], "one")
+def verify(cloud, accepted, smoke, build, instance_id):
+    dispatch = QualificationRun(build).build_id
+    expected_instance = match(instance_id, INSTANCE, "application instance")
+    require(smoke["ctest_passed"], "Cobalt compile/run failed")
     identity = smoke["identity"]
+    require(identity["identity"]["instanceId"] == expected_instance, "expected instance and guest identities differ")
     for guest in (identity, smoke["environment"]):
         require(guest["recipe_id"] == accepted.recipe_id and guest["kernel_release"] == accepted.kernel_release,
                 "running recipe or kernel differs from accepted image")
@@ -163,52 +113,51 @@ def verify(cloud, accepted, smoke, job):
         require(guest["stage"] == "a" and guest["sentinel_absent_at_start"] is True
                 and guest["sentinel"] == f"/var/tmp/ami-example-{dispatch}-sentinel", "fresh instance sentinel differs")
     require(smoke["environment"].get("environment_passed") is True, "Cobalt environment did not persist between steps")
-    observed = watchdog_module().adopt_test_instances(cloud, dispatch, {"smoke-a": job}, image=accepted.inspect(cloud), expiry=accepted.expires_at)
-    require(len(observed) == 1 and observed[0]["InstanceId"] == identity["identity"]["instanceId"], "GitHub job and guest instance identities differ")
+    observed = adopt_test_instances(cloud, dispatch, [expected_instance], image=accepted.inspect(cloud), expiry=accepted.expires_at)
+    require(len(observed) == 1 and observed[0]["InstanceId"] == expected_instance, "controller and guest instance identities differ")
     require(observed[0].get("CurrentInstanceBootMode") == "uefi", "test runner boot mode differs")
     return {"status": "passed", "build_id": dispatch, "ami_id": accepted.ami_id, "recipe_id": accepted.recipe_id,
-            "kernel_release": accepted.kernel_release, "instance_id": observed[0]["InstanceId"], "github_job_id": job["id"]}
+            "kernel_release": accepted.kernel_release, "instance_id": observed[0]["InstanceId"]}
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("task", choices=("accept", "prepare", "inspect", "watchdog", "verify", "retain"))
-    parser.add_argument("--record", default="accepted-image.json")
-    parser.add_argument("--result")
-    parser.add_argument("--smoke", type=Path, default=Path("artifacts/application/smoke"))
+    parser = argparse.ArgumentParser(description=__doc__)
+    tasks = parser.add_subparsers(dest="task", required=True)
+    for task in ("accept", "prepare", "inspect", "verify"):
+        command = tasks.add_parser(task)
+        command.add_argument("--deployment", default="infra/deployment.json")
+        command.add_argument("--record", default="accepted-image.json")
+        if task == "accept":
+            command.add_argument("--result", required=True)
+            command.add_argument("--evidence-url", default="")
+        else:
+            command.add_argument("--output", required=True, type=Path)
+        if task in ("prepare", "verify"):
+            command.add_argument("--build-id", required=True)
+        if task == "inspect":
+            command.add_argument("--minimum-seconds", type=int, default=0)
+        if task == "verify":
+            command.add_argument("--smoke", required=True, type=Path)
+            command.add_argument("--instance-id", required=True)
     args = parser.parse_args()
-    deployment = load_deployment(inventories=False)
+    deployment = load_deployment(args.deployment, inventories=False)
     if args.task == "accept":
-        require(args.result, "accept requires --result with the final qualified image result")
-        write_json(args.record, selected_record(read_json(args.result), deployment, file_sha(Path(args.result))))
-        return
-    if args.task == "retain":
-        cloud = Cloud(deployment)
-        dispatch = build_id(os.environ["GITHUB_RUN_ID"], os.environ["GITHUB_RUN_ATTEMPT"], "one")
-        directory = Path("artifacts/application")
-        locations = {str(path.relative_to(directory)): cloud.retain(path, f"{dispatch}/application/{path.relative_to(directory)}")
-                     for path in sorted(directory.rglob("*")) if path.is_file()
-                     and path.suffix in (".json", ".xml", ".log") and "build" not in path.relative_to(directory).parts}
-        write_json(directory / "artifact-index.json", locations)
-        cloud.retain(directory / "artifact-index.json", f"{dispatch}/application/artifact-index.json")
+        write_json(args.record, selected_record(read_json(args.result), deployment, file_sha(Path(args.result)), args.evidence_url))
         return
     record = read_json(args.record)
     if args.task == "prepare":
-        prepare(deployment, record)
+        write_json(args.output, prepare(deployment, record, args.build_id))
         return
     accepted = AcceptedImage.parse(record, deployment)
     cloud = Cloud(deployment)
     if args.task == "inspect":
-        write_json("artifacts/application/admission.json", accepted.inspect(cloud, deployment.deadlines["registration_seconds"] + 900))
-    elif args.task == "watchdog":
-        monitor(cloud, accepted, Path("artifacts/application/watchdog.json"))
+        require(args.minimum_seconds >= 0, "minimum image lifetime must be nonnegative")
+        write_json(args.output, accepted.inspect(cloud, args.minimum_seconds))
     elif args.task == "verify":
         spec = importlib.util.spec_from_file_location("verify_results", ROOT / "scripts/verify-run-results.py")
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
-        watchdog = watchdog_module()
-        jobs = watchdog.selected_jobs(watchdog.github.jobs(deployment.repository, os.environ["GITHUB_RUN_ID"], os.environ["GITHUB_RUN_ATTEMPT"]), "test")
-        write_json("artifacts/application/result.json", verify(cloud, accepted, module.read_smoke(args.smoke), jobs.get("smoke-a", {})))
+        write_json(args.output, verify(cloud, accepted, module.read_smoke(args.smoke), args.build_id, args.instance_id))
 
 
 if __name__ == "__main__":
