@@ -286,14 +286,10 @@ class InfrastructureBindings(CleanupContext):
         require(self.runs_on is not None, "configure the actual RunsOn installation before building or routing jobs")
         return self.runs_on
 
-    def label(self, key: str, ami: str, *, parent: bool = False) -> str:
-        installation = self.require_runs_on()
-        match(key, r"[A-Za-z0-9_-]+", "runner routing key")
-        match(ami, AMI, "runner AMI")
-        volume = self.parent_root_volume_gib if parent else self.root_volume_gib
-        return (f"runs-on={key}/family={self.instance_type}/cpu={self.vcpus}/ami={ami}"
-                f"/spot=false/retry=false/env={installation.environment}/region={self.region}"
-                f"/private={str(self.private).lower()}/volume={volume}gb:gp3:125mbs:3000iops")
+    def runner_settings(self) -> dict:
+        return {"instance_type": self.instance_type, "vcpus": self.vcpus,
+                "runs_on_environment": self.require_runs_on().environment, "region": self.region,
+                "private": self.private, "root_volume_gib": self.root_volume_gib}
 
 
 @dataclasses.dataclass(frozen=True)

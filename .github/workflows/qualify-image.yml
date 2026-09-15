@@ -42,7 +42,14 @@ jobs:
       execution_uri: ${{ steps.register.outputs.uri }}
       execution_sha256: ${{ steps.register.outputs.sha256 }}
       build_id: ${{ steps.config.outputs.build_id }}
-      controller_label: ${{ steps.config.outputs.controller_label }}
+      controller_ami_id: ${{ steps.config.outputs.controller_ami_id }}
+      instance_type: ${{ steps.config.outputs.instance_type }}
+      vcpus: ${{ steps.config.outputs.vcpus }}
+      runs_on_environment: ${{ steps.config.outputs.runs_on_environment }}
+      region: ${{ steps.config.outputs.region }}
+      private: ${{ steps.config.outputs.private }}
+      root_volume_gib: ${{ steps.config.outputs.root_volume_gib }}
+      parent_root_volume_gib: ${{ steps.config.outputs.parent_root_volume_gib }}
     steps:
       - uses: actions/checkout@v7.0.1
         with:
@@ -91,7 +98,7 @@ jobs:
       - id: config
         run: |
           python3 scripts/image-config.py --deployment .deployment/deployment.json --build-id "$BUILD_ID" --output .deployment/config.json
-          jq -r '{build_id,controller_label} | to_entries[] | "\(.key)=\(.value)"' .deployment/config.json >> "$GITHUB_OUTPUT"
+          jq -r 'to_entries[] | "\(.key)=\(.value)"' .deployment/config.json >> "$GITHUB_OUTPUT"
         env:
           BUILD_ID: ${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.variant }}
       - id: register
@@ -124,7 +131,17 @@ jobs:
     name: build
     if: startsWith(needs.configure.outputs.build_id, format('{0}-{1}-', github.run_id, github.run_attempt))
     needs: configure
-    runs-on: ${{ needs.configure.outputs.controller_label }}
+    runs-on:
+      - runs-on=${{ needs.configure.outputs.build_id }}-controller
+      - family=${{ needs.configure.outputs.instance_type }}
+      - cpu=${{ needs.configure.outputs.vcpus }}
+      - ami=${{ needs.configure.outputs.controller_ami_id }}
+      - spot=false
+      - retry=false
+      - env=${{ needs.configure.outputs.runs_on_environment }}
+      - region=${{ needs.configure.outputs.region }}
+      - private=${{ needs.configure.outputs.private }}
+      - volume=${{ needs.configure.outputs.parent_root_volume_gib }}gb:gp3:125mbs:3000iops
     environment: ${{ vars.AMI_DEPLOYMENT_ENVIRONMENT || 'ami-build' }}
     timeout-minutes: 105
     permissions:
@@ -134,8 +151,6 @@ jobs:
       ami_id: ${{ steps.build.outputs.ami_id }}
       recipe_id: ${{ steps.build.outputs.recipe_id }}
       kernel_release: ${{ steps.build.outputs.kernel_release }}
-      label_a: ${{ steps.build.outputs.label_a }}
-      label_b: ${{ steps.build.outputs.label_b }}
     steps:
       - uses: actions/checkout@v7.0.1
         with:
@@ -286,7 +301,17 @@ jobs:
       - configure
       - build
       - probe
-    runs-on: ${{ needs.build.outputs.label_a }}
+    runs-on:
+      - runs-on=${{ needs.configure.outputs.build_id }}-a
+      - family=${{ needs.configure.outputs.instance_type }}
+      - cpu=${{ needs.configure.outputs.vcpus }}
+      - ami=${{ needs.build.outputs.ami_id }}
+      - spot=false
+      - retry=false
+      - env=${{ needs.configure.outputs.runs_on_environment }}
+      - region=${{ needs.configure.outputs.region }}
+      - private=${{ needs.configure.outputs.private }}
+      - volume=${{ needs.configure.outputs.root_volume_gib }}gb:gp3:125mbs:3000iops
     timeout-minutes: 15
     permissions:
       contents: read
@@ -340,7 +365,17 @@ jobs:
       - build
       - probe
       - smoke-a
-    runs-on: ${{ needs.build.outputs.label_b }}
+    runs-on:
+      - runs-on=${{ needs.configure.outputs.build_id }}-b
+      - family=${{ needs.configure.outputs.instance_type }}
+      - cpu=${{ needs.configure.outputs.vcpus }}
+      - ami=${{ needs.build.outputs.ami_id }}
+      - spot=false
+      - retry=false
+      - env=${{ needs.configure.outputs.runs_on_environment }}
+      - region=${{ needs.configure.outputs.region }}
+      - private=${{ needs.configure.outputs.private }}
+      - volume=${{ needs.configure.outputs.root_volume_gib }}gb:gp3:125mbs:3000iops
     timeout-minutes: 15
     permissions:
       contents: read

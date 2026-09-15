@@ -35,8 +35,12 @@ jobs:
       ami_id: ${{ steps.config.outputs.ami_id }}
       recipe_id: ${{ steps.config.outputs.recipe_id }}
       kernel_release: ${{ steps.config.outputs.kernel_release }}
-      label_a: ${{ steps.config.outputs.label_a }}
-      label_b: ${{ steps.config.outputs.label_b }}
+      instance_type: ${{ steps.config.outputs.instance_type }}
+      vcpus: ${{ steps.config.outputs.vcpus }}
+      runs_on_environment: ${{ steps.config.outputs.runs_on_environment }}
+      region: ${{ steps.config.outputs.region }}
+      private: ${{ steps.config.outputs.private }}
+      root_volume_gib: ${{ steps.config.outputs.root_volume_gib }}
     steps:
       - uses: actions/checkout@v7.0.1
         with:
@@ -194,7 +198,17 @@ jobs:
     needs:
       - prepare
       - probe
-    runs-on: ${{ needs.prepare.outputs.label_a }}
+    runs-on:
+      - runs-on=${{ needs.prepare.outputs.build_id }}-a
+      - family=${{ needs.prepare.outputs.instance_type }}
+      - cpu=${{ needs.prepare.outputs.vcpus }}
+      - ami=${{ needs.prepare.outputs.ami_id }}
+      - spot=false
+      - retry=false
+      - env=${{ needs.prepare.outputs.runs_on_environment }}
+      - region=${{ needs.prepare.outputs.region }}
+      - private=${{ needs.prepare.outputs.private }}
+      - volume=${{ needs.prepare.outputs.root_volume_gib }}gb:gp3:125mbs:3000iops
     timeout-minutes: 15
     permissions:
       contents: read
@@ -247,7 +261,17 @@ jobs:
       - prepare
       - probe
       - smoke-a
-    runs-on: ${{ needs.prepare.outputs.label_b }}
+    runs-on:
+      - runs-on=${{ needs.prepare.outputs.build_id }}-b
+      - family=${{ needs.prepare.outputs.instance_type }}
+      - cpu=${{ needs.prepare.outputs.vcpus }}
+      - ami=${{ needs.prepare.outputs.ami_id }}
+      - spot=false
+      - retry=false
+      - env=${{ needs.prepare.outputs.runs_on_environment }}
+      - region=${{ needs.prepare.outputs.region }}
+      - private=${{ needs.prepare.outputs.private }}
+      - volume=${{ needs.prepare.outputs.root_volume_gib }}gb:gp3:125mbs:3000iops
     timeout-minutes: 15
     permissions:
       contents: read

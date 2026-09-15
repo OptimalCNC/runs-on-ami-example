@@ -10,7 +10,7 @@ from pathlib import Path
 import shutil
 import subprocess
 
-from example import (ROOT, Cloud, CobaltIdentity, file_sha, load_deployment, match, read_json, recipe,
+from example import (AMI, ROOT, Cloud, CobaltIdentity, file_sha, load_deployment, match, read_json, recipe,
                      EXPIRY_TAG, RUNS_ON_TAG, InvalidInput, require, resource_tags, run, tags_of, timestamp, utcnow, write_json)
 from preflight import inspect_deployment
 
@@ -117,7 +117,7 @@ def main(argv=None):
         manifest = read_json(destination / "packer-manifest.json")
         artifact = manifest["builds"][-1]["artifact_id"].split(":")
         require(len(artifact) == 2 and artifact[0] == d.region, "unexpected Packer AMI artifact")
-        ami_id = artifact[1]
+        ami_id = match(artifact[1], AMI, "candidate AMI")
         candidate = cloud.call("ec2", "describe-images", {"ImageIds": [ami_id], "Owners": [d.account_id]})["Images"][0]
         require(candidate["State"] == "available", "candidate AMI is not available")
         candidate_identity = dataclasses.replace(d.source_ami, id=ami_id, owner=d.account_id,
@@ -152,8 +152,7 @@ def main(argv=None):
         result["cloud"]["ami_boot_mode"] = candidate_identity.boot_mode
         write_json(destination / "image-result.json", result)
         write_json(config_output, {"ami_id": ami_id, "kernel_release": image["kernel_release"], "recipe_id": recipe_id,
-                                   "build_id": build, "label_a": d.label(f"{build}-a", ami_id),
-                                   "label_b": d.label(f"{build}-b", ami_id)})
+                                   "build_id": build})
     finally:
         failures = []
         private_key.unlink(missing_ok=True)

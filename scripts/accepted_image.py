@@ -92,9 +92,9 @@ def selected_record(result, deployment, checksum, evidence_url=""):
 def prepare(deployment, record, build):
     execution = QualificationRun(build)
     accepted = AcceptedImage.parse(record, deployment)
-    return {"build_id": execution.build_id, "label": deployment.label(execution.build_id + "-a", accepted.ami_id),
+    return {"build_id": execution.build_id, **deployment.runner_settings(),
             "ami_id": accepted.ami_id, "recipe_id": accepted.recipe_id, "kernel_release": accepted.kernel_release,
-            "region": deployment.region, "role_arn": deployment.controller_role_arn, "environment": deployment.environment}
+            "role_arn": deployment.controller_role_arn, "environment": deployment.environment}
 
 
 def verify(cloud, accepted, smoke, build, instance_id):

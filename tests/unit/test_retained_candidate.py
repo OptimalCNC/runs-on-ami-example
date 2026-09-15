@@ -142,8 +142,11 @@ class RetainedCandidateContract(unittest.TestCase):
         self.assertEqual(selected["lifecycle"]["artifact_locations"], original["lifecycle"]["artifact_locations"] + [SOURCE_URI])
         self.assertEqual(uploaded, {CONTEXT.build_id + "/qualification/image-result.json": selected})
         self.assertEqual(inspect.call_args.args[2], 4500)
-        self.assertIn(original["cloud"]["ami_id"], configuration["label_a"])
-        self.assertIn(CONTEXT.build_id, configuration["label_a"])
+        self.assertEqual(configuration["ami_id"], original["cloud"]["ami_id"])
+        self.assertEqual(configuration["build_id"], CONTEXT.build_id)
+        self.assertEqual(configuration["instance_type"], "t3.small")
+        self.assertEqual(configuration["runs_on_environment"], "ami-example")
+        self.assertEqual(configuration["root_volume_gib"], 80)
 
     def test_live_candidate_requires_original_tags_snapshots_creation_and_expiry(self):
         candidate = source_candidate()

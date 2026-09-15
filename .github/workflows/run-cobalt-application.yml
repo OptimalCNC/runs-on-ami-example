@@ -27,7 +27,13 @@ jobs:
       execution_uri: ${{ steps.register.outputs.uri }}
       execution_sha256: ${{ steps.register.outputs.sha256 }}
       build_id: ${{ steps.config.outputs.build_id }}
-      label: ${{ steps.config.outputs.label }}
+      ami_id: ${{ steps.config.outputs.ami_id }}
+      instance_type: ${{ steps.config.outputs.instance_type }}
+      vcpus: ${{ steps.config.outputs.vcpus }}
+      runs_on_environment: ${{ steps.config.outputs.runs_on_environment }}
+      region: ${{ steps.config.outputs.region }}
+      private: ${{ steps.config.outputs.private }}
+      root_volume_gib: ${{ steps.config.outputs.root_volume_gib }}
       recipe_id: ${{ steps.config.outputs.recipe_id }}
       kernel_release: ${{ steps.config.outputs.kernel_release }}
       accepted_uri: ${{ steps.accepted.outputs.uri }}
@@ -92,7 +98,7 @@ jobs:
           python3 scripts/accepted_image.py inspect --deployment .deployment/deployment.json \
             --record .deployment/accepted-image.json --output .deployment/admission.json \
             --minimum-seconds "$(( $(jq .deadlines.registration_seconds .deployment/deployment.json) + 900 ))"
-          jq -r '{build_id,label,recipe_id,kernel_release} | to_entries[] | "\(.key)=\(.value)"' .deployment/config.json >> "$GITHUB_OUTPUT"
+          jq -r 'to_entries[] | "\(.key)=\(.value)"' .deployment/config.json >> "$GITHUB_OUTPUT"
         env:
           BUILD_ID: ${{ github.run_id }}-${{ github.run_attempt }}-one
       - id: register
@@ -117,7 +123,17 @@ jobs:
     name: test / smoke-a
     if: startsWith(needs.prepare.outputs.build_id, format('{0}-{1}-', github.run_id, github.run_attempt))
     needs: prepare
-    runs-on: ${{ needs.prepare.outputs.label }}
+    runs-on:
+      - runs-on=${{ needs.prepare.outputs.build_id }}-a
+      - family=${{ needs.prepare.outputs.instance_type }}
+      - cpu=${{ needs.prepare.outputs.vcpus }}
+      - ami=${{ needs.prepare.outputs.ami_id }}
+      - spot=false
+      - retry=false
+      - env=${{ needs.prepare.outputs.runs_on_environment }}
+      - region=${{ needs.prepare.outputs.region }}
+      - private=${{ needs.prepare.outputs.private }}
+      - volume=${{ needs.prepare.outputs.root_volume_gib }}gb:gp3:125mbs:3000iops
     timeout-minutes: 15
     permissions:
       contents: read

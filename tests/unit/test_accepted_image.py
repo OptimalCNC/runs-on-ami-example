@@ -79,11 +79,14 @@ class AcceptedImageContract(unittest.TestCase):
         with self.assertRaisesRegex(InvalidInput, "actual UEFI"):
             selected_record(result, deployment(), "1" * 64)
 
-    def test_prepare_routes_exact_accepted_ami_with_explicit_execution_identity(self):
+    def test_prepare_exposes_exact_accepted_ami_with_explicit_execution_identity(self):
         with patch.dict(os.environ, {}, clear=True):
             selected = prepare(deployment(), self.record, "124-2-one")
         self.assertEqual(selected["build_id"], "124-2-one")
-        self.assertIn("ami=ami-11111111111111111", selected["label"])
+        self.assertEqual(selected["ami_id"], "ami-11111111111111111")
+        self.assertEqual(selected["instance_type"], "t3.small")
+        self.assertEqual(selected["runs_on_environment"], "ami-example")
+        self.assertEqual(selected["root_volume_gib"], 80)
         self.assertEqual(selected["recipe_id"], "1" * 64)
         self.assertEqual(selected["kernel_release"], self.accepted.kernel_release)
         with self.assertRaises(InvalidInput):
@@ -126,7 +129,7 @@ class AcceptedImageContract(unittest.TestCase):
             load.assert_called_once_with("local.json")
             cloud.assert_not_called()
             self.assertEqual(read_json(output)["build_id"], "124-2-one")
-            self.assertIn("ami=" + self.accepted.ami_id, read_json(output)["label"])
+            self.assertEqual(read_json(output)["ami_id"], self.accepted.ami_id)
 
     def test_accept_and_inspect_clis_use_explicit_files_without_environment(self):
         with tempfile.TemporaryDirectory() as temporary:

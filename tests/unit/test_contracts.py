@@ -31,15 +31,6 @@ class Inputs(unittest.TestCase):
         with self.assertRaises(InvalidInput):
             BuildInputs.parse(value)
 
-    def test_freshness_labels_are_unique_and_exact(self):
-        d = deployment()
-        a = d.label("123-1-one-a", "ami-11111111111111111")
-        b = d.label("123-1-one-b", "ami-11111111111111111")
-        self.assertNotEqual(a, b)
-        self.assertIn("family=t3.small/cpu=2/ami=ami-11111111111111111/spot=false", a)
-        self.assertNotIn("pool=", a)
-        self.assertNotIn("sticky=", a)
-
     def test_uefi_preferred_parent_has_a_fixed_qualified_boot_mode(self):
         value = deployment_dict()
         value["source_ami"]["boot_mode"] = "uefi-preferred"
@@ -47,15 +38,15 @@ class Inputs(unittest.TestCase):
         self.assertEqual(parsed.source_ami.boot_mode, "uefi-preferred")
         self.assertEqual(parsed.source_ami.effective_boot_mode, "uefi")
 
-    def test_public_parent_and_small_instances_preserve_exact_owner_and_routing(self):
+    def test_public_parent_and_small_instances_preserve_exact_settings(self):
         value = deployment_dict()
         value["source_ami"]["owner"] = "135269210855"
         value.update(instance_type="t3.micro", parent_root_volume_gib=30)
         parsed = BuildInputs.parse(value)
         self.assertEqual(parsed.source_ami.owner, "135269210855")
-        self.assertIn("family=t3.micro/cpu=2", parsed.label("parent", parsed.source_ami.id, parent=True))
-        self.assertIn("volume=30gb:gp3:125mbs:3000iops", parsed.label("parent", parsed.source_ami.id, parent=True))
-        self.assertIn("volume=80gb:gp3:125mbs:3000iops", parsed.label("candidate", "ami-11111111111111111"))
+        self.assertEqual(parsed.instance_type, "t3.micro")
+        self.assertEqual(parsed.parent_root_volume_gib, 30)
+        self.assertEqual(parsed.root_volume_gib, 80)
 
     def test_inventory_configuration_does_not_claim_an_installed_runson(self):
         value = deployment_dict()
@@ -63,7 +54,7 @@ class Inputs(unittest.TestCase):
                                                 "runs_on": None})
         self.assertIsNone(parsed.runs_on)
         with self.assertRaisesRegex(InvalidInput, "actual RunsOn installation"):
-            parsed.label("candidate", "ami-11111111111111111")
+            parsed.runner_settings()
 
     def test_bootstrap_version_is_locked_independently_of_service_version(self):
         value = deployment_dict()
