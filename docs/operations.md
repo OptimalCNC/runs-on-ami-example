@@ -3,8 +3,9 @@
 **Status:** Legacy reference. The combined image build, qualification,
 application, and automatic cleanup workflows are retired. Use the dedicated
 [RunsOn installation guide](../runs-on/README.md) for current deployment and its
-stock-image smoke test. The independent image build/publishing module comes
-next, followed by RunsOn execution.
+stock-image smoke test. [Image build and publishing](../images/README.md) now
+provides independent Build, Validate, and Publish commands; RunsOn execution
+comes next.
 
 This document records the former pipeline's execution model and preserves
 standalone recovery procedures for its existing resources and evidence.

@@ -10,6 +10,7 @@ import re
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 from urllib.parse import urlsplit
 
@@ -200,4 +201,12 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    main()
+    def interrupt(signum, frame):
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGTERM, interrupt)
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("Build interrupted; temporary VM and build files were cleaned up.", file=sys.stderr)
+        raise SystemExit(130)

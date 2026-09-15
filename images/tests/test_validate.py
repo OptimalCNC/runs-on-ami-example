@@ -1,6 +1,10 @@
 import importlib.util
 import json
+import os
 from pathlib import Path
+import select
+import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -68,6 +72,53 @@ class Evidence(unittest.TestCase):
 
 
 class Cleanup(unittest.TestCase):
+    def test_sigterm_cli_reaps_vm_and_removes_temporary_secrets(self):
+        script = '''
+import json, signal, sys, tempfile
+from pathlib import Path
+import validate
+
+def work():
+    with tempfile.TemporaryDirectory(prefix="cobalt-signal-test-") as directory:
+        temporary = Path(directory)
+        for name in ("ssh-key", "seed.img", "disk.qcow2"):
+            (temporary / name).write_text("temporary validation input")
+        with validate.running_vm(
+                [sys.executable, "-c", "import time; time.sleep(60)"], temporary / "qemu.log") as vm:
+            print(json.dumps({"pid": vm.pid, "directory": directory}), flush=True)
+            signal.pause()
+
+validate.main = work
+raise SystemExit(validate.cli())
+'''
+        controller = subprocess.Popen([sys.executable, "-c", script], cwd=IMAGES,
+                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        state = None
+        try:
+            ready, _, _ = select.select([controller.stdout], [], [], 10)
+            self.assertTrue(ready, "validator did not report the running VM")
+            line = controller.stdout.readline()
+            self.assertTrue(line, "validator exited before starting its VM")
+            state = json.loads(line)
+            self.assertTrue(Path(state["directory"]).is_dir())
+            controller.send_signal(signal.SIGTERM)
+            _, error = controller.communicate(timeout=15)
+            self.assertEqual(controller.returncode, 130, error)
+            self.assertEqual(error, "VM validation interrupted.\n")
+            self.assertFalse(Path(state["directory"]).exists())
+            with self.assertRaises(ProcessLookupError):
+                os.kill(state["pid"], 0)
+        finally:
+            if controller.poll() is None:
+                controller.kill()
+            controller.communicate()
+            if state is not None:
+                try:
+                    os.kill(state["pid"], signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+                shutil.rmtree(state["directory"], ignore_errors=True)
+
     def test_real_vm_process_is_reaped_when_guest_work_fails(self):
         with tempfile.TemporaryDirectory() as temporary:
             process = None

@@ -8,8 +8,10 @@ import os
 from pathlib import Path
 import shlex
 import shutil
+import signal
 import socket
 import subprocess
+import sys
 import tarfile
 import tempfile
 import time
@@ -218,5 +220,18 @@ def main():
     print(f"Cobalt VM validation passed: {args.output / 'validation.yaml'}")
 
 
+def cli():
+    def interrupt(signum, frame):
+        raise KeyboardInterrupt("VM validation interrupted")
+
+    signal.signal(signal.SIGTERM, interrupt)
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("VM validation interrupted.", file=sys.stderr)
+        return 130
+    return 0
+
+
 if __name__ == "__main__":
-    main()
+    raise SystemExit(cli())

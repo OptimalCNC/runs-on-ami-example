@@ -126,24 +126,22 @@ class Cloud:
         identity = self.aws("sts", "get-caller-identity")
         role_name = self.target.publisher_role_arn.rsplit("/", 1)[1]
         expected = f"arn:aws:sts::{self.target.account_id}:assumed-role/{role_name}/"
-        credentials = None
         if not str(identity.get("Arn", "")).startswith(expected):
             credentials = self.aws("sts", "assume-role", "--role-arn", self.target.publisher_role_arn,
                                    "--role-session-name", "image-publication", "--duration-seconds", "3600")["Credentials"]
-        elif self.profile:
-            # The CLI's explicit profile overrides ambient keys. Normalize its
-            # resolved credentials so the Rust SDK uses the same verified login.
+        else:
+            # The CLI and Rust SDK resolve ambient profiles differently. Export
+            # every existing publisher session so both use the verified login.
             credentials = self.aws("configure", "export-credentials", "--format", "process")
-        if credentials:
-            self.environment.update({
-                "AWS_ACCESS_KEY_ID": credentials["AccessKeyId"],
-                "AWS_SECRET_ACCESS_KEY": credentials["SecretAccessKey"],
-                "AWS_SESSION_TOKEN": credentials["SessionToken"],
-            })
-            self.environment.pop("AWS_PROFILE", None)
-            self.environment.pop("AWS_DEFAULT_PROFILE", None)
-            self.profile = None
-            identity = self.aws("sts", "get-caller-identity")
+        self.environment.update({
+            "AWS_ACCESS_KEY_ID": credentials["AccessKeyId"],
+            "AWS_SECRET_ACCESS_KEY": credentials["SecretAccessKey"],
+            "AWS_SESSION_TOKEN": credentials["SessionToken"],
+        })
+        self.environment.pop("AWS_PROFILE", None)
+        self.environment.pop("AWS_DEFAULT_PROFILE", None)
+        self.profile = None
+        identity = self.aws("sts", "get-caller-identity")
         require(identity.get("Account") == self.target.account_id and str(identity.get("Arn", "")).startswith(expected),
                 "AWS session is not the publisher role declared by the installation")
 

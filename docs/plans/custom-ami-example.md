@@ -9,8 +9,9 @@
 
 The current implementation separates RunsOn installation, image build and
 publishing, and RunsOn execution. Start with the dedicated
-[installation guide](../../runs-on/README.md); the independent image module
-comes next. The workflow paths and dispatch procedures below record the former
+[installation guide](../../runs-on/README.md) and
+[image guide](../../images/README.md). RunsOn execution comes next. The workflow
+paths and dispatch procedures below record the former
 architecture, whose build, qualification, application, and automatic cleanup
 workflows have been removed.
 

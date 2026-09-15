@@ -3,10 +3,15 @@ name: Build and validate image
 on:
   pull_request:
     paths:
-      - images/**
+      - images/build.py
+      - images/validate.py
+      - images/contracts.py
+      - images/vm.py
+      - images/requirements.txt
+      - images/common/**
+      - images/xenomai-cobalt/**
       - tests/cobalt/**
       - scripts/install-tools.py
-      - scripts/check-kernel-config.py
       - .github/workflows/image-build-validate.yml
   workflow_dispatch:
     inputs:
@@ -86,7 +91,8 @@ jobs:
             .local/build/build.yaml \
             .local/build/image-manifest.json \
             .local/build/parent-inventory.json \
-            .local/build/packer.log; do
+            .local/build/packer.log \
+            .local/build/serial.log; do
             if [[ -f "$file" ]]; then
               cp "$file" .local/reports/
             fi

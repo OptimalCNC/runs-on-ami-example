@@ -111,10 +111,57 @@ class CredentialTests(unittest.TestCase):
         }}
 
     def test_already_assumed_github_publisher_does_not_assume_again(self):
-        cloud = publish.Cloud(self.target)
-        with patch.object(cloud, "aws", return_value=self.publisher) as aws:
+        with patch.dict(os.environ, {
+                "AWS_ACCESS_KEY_ID": "oidc-key", "AWS_SECRET_ACCESS_KEY": "oidc-secret",
+                "AWS_SESSION_TOKEN": "oidc-token"}, clear=True):
+            cloud = publish.Cloud(self.target)
+        with patch.object(cloud, "aws", side_effect=[
+                self.publisher, self.credentials["Credentials"], self.publisher]) as aws:
             cloud.authenticate()
-        self.assertEqual(aws.call_args_list, [call("sts", "get-caller-identity")])
+        self.assertEqual(aws.call_args_list, [
+            call("sts", "get-caller-identity"),
+            call("configure", "export-credentials", "--format", "process"),
+            call("sts", "get-caller-identity"),
+        ])
+        self.assertEqual(cloud.environment["AWS_ACCESS_KEY_ID"], "temporary-key")
+
+    def test_ambient_profile_selection_is_resolved_before_the_rust_uploader_runs(self):
+        for selector in ("AWS_DEFAULT_PROFILE", "AWS_PROFILE"):
+            with self.subTest(selector=selector):
+                with patch.dict(os.environ, {selector: "publisher"}, clear=True):
+                    cloud = publish.Cloud(self.target)
+                observations = []
+                responses = [self.publisher, self.credentials["Credentials"], self.publisher]
+
+                def aws(*arguments):
+                    observations.append((arguments, dict(cloud.environment), cloud.profile))
+                    return responses.pop(0)
+
+                with patch.object(cloud, "aws", side_effect=aws):
+                    cloud.authenticate()
+                self.assertEqual(observations[1][0], ("configure", "export-credentials", "--format", "process"))
+                self.assertEqual(observations[1][1][selector], "publisher")
+                self.assertEqual(observations[2][0], ("sts", "get-caller-identity"))
+                self.assertEqual(observations[2][1]["AWS_ACCESS_KEY_ID"], "temporary-key")
+                self.assertEqual(observations[2][1]["AWS_SECRET_ACCESS_KEY"], "temporary-secret")
+                self.assertEqual(observations[2][1]["AWS_SESSION_TOKEN"], "temporary-token")
+                self.assertNotIn("AWS_PROFILE", observations[2][1])
+                self.assertNotIn("AWS_DEFAULT_PROFILE", observations[2][1])
+                self.assertIsNone(observations[2][2])
+
+    def test_already_assumed_profile_exports_the_same_verified_credentials_for_upload(self):
+        cloud = publish.Cloud(self.target, profile="publisher")
+        with patch.object(cloud, "aws", side_effect=[
+                self.publisher, self.credentials["Credentials"], self.publisher]) as aws:
+            cloud.authenticate()
+        self.assertEqual(aws.call_args_list, [
+            call("sts", "get-caller-identity"),
+            call("configure", "export-credentials", "--format", "process"),
+            call("sts", "get-caller-identity"),
+        ])
+        self.assertIsNone(cloud.profile)
+        self.assertEqual(cloud.environment["AWS_ACCESS_KEY_ID"], "temporary-key")
+        self.assertEqual(cloud.environment["AWS_SESSION_TOKEN"], "temporary-token")
 
     def test_local_login_assumes_the_exact_role_then_verifies_the_new_identity(self):
         with patch.dict(os.environ, {"AWS_PROFILE": "old", "AWS_DEFAULT_PROFILE": "old"}):
@@ -387,6 +434,8 @@ class PublicationTests(unittest.TestCase):
         self.cloud.calls.clear()
         result = publish.cleanup_record(self.published, self.target, cloud=self.cloud)
         self.assertEqual(result["status"], "deleted")
+        self.assertEqual(read_yaml(self.state)["status"], "deleted")
+        self.assertEqual(read_yaml(self.published)["status"], "deleted")
         self.assertEqual(self.cloud.mutations(), [("deregister", AMI), ("delete_snapshot", SNAPSHOT)])
         self.cloud.calls.clear()
         result = publish.cleanup_record(self.published, self.target, cloud=self.cloud)
