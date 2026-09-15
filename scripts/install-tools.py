@@ -40,10 +40,10 @@ def install(name, spec, destination):
     if name == "aws_cli":
         subprocess.run([str(unpacked / "aws/install"), "--install-dir", str(destination / "aws-installed"),
                         "--bin-dir", str(binary_dir), "--update"], check=True)
-    elif name == "amazon_plugin":
-        binary = next(unpacked.glob("packer-plugin-amazon_v*"))
+    elif name == "qemu_plugin":
+        binary = next(unpacked.glob("packer-plugin-qemu_v*"))
         subprocess.run([str(binary_dir / "packer"), "plugins", "install", "--path", str(binary),
-                        "github.com/hashicorp/amazon"], check=True,
+                        "github.com/hashicorp/qemu"], check=True,
                        env={**os.environ, "PACKER_PLUGIN_PATH": str(destination / "plugins")})
     else:
         source = unpacked / spec["binary"]
@@ -57,13 +57,13 @@ def install(name, spec, destination):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--directory", default=".tools")
-    parser.add_argument("--group", choices=("build", "cloud", "validation"), default="build")
+    parser.add_argument("--group", choices=("image", "cloud", "validation"), default="image")
     parser.add_argument("--output", type=Path, help="write installed tool locations as JSON")
     args = parser.parse_args()
     destination = Path(args.directory).resolve()
     pins = read_json(ROOT / "images/xenomai-cobalt/inputs.lock.json")["tools"]
-    groups = {"cloud": ["aws_cli"], "build": ["packer", "amazon_plugin", "session_manager", "aws_cli"],
-              "validation": ["packer", "amazon_plugin", "terraform", "actionlint"]}
+    groups = {"cloud": ["aws_cli"], "image": ["packer", "qemu_plugin"],
+              "validation": ["packer", "qemu_plugin", "terraform", "actionlint"]}
     for name in groups[args.group]:
         install(name, pins[name], destination)
     if args.output:

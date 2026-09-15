@@ -1,5 +1,6 @@
 import dataclasses
 import json
+import os
 from pathlib import Path
 import tempfile
 import subprocess
@@ -15,6 +16,26 @@ from deployment_config import (OperatorSpec, assemble_bindings, assemble_manifes
 
 
 class DeploymentBoundaryTests(unittest.TestCase):
+    def test_image_config_writes_explicit_destination_without_github_context(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            manifest = deployment().snapshot(directory / "inputs")
+            environment = {key: value for key, value in os.environ.items() if not key.startswith("GITHUB_")}
+            for build_id in (None, "789-2-stock"):
+                with self.subTest(build_id=build_id):
+                    output = directory / "config/settings.json"
+                    command = [sys.executable, str(ROOT / "scripts/image-config.py"),
+                               "--deployment", str(manifest), "--output", str(output)]
+                    if build_id:
+                        command += ["--build-id", build_id]
+                    subprocess.run(command, cwd=directory, env=environment, check=True)
+                    value = json.loads(output.read_text())
+                    expected = {"region": "us-east-1", "role_arn": "arn:aws:iam::123456789012:role/example",
+                                "environment": "ami-build"}
+                    if build_id:
+                        expected.update(build_id=build_id, controller_ami_id="ami-0123456789abcdef0")
+                    self.assertEqual(value, expected)
+
     def test_manifest_is_independent_of_repository_and_working_directory(self):
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)

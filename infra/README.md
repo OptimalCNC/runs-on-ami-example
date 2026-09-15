@@ -2,8 +2,9 @@
 
 **Status:** Legacy infrastructure reference for the retired combined image
 pipeline. New installations use the dedicated [RunsOn module](../runs-on/README.md),
-which exports independent installation and publishing contracts. Image build
-and publishing are being implemented next, followed by RunsOn execution.
+which exports independent installation and publishing contracts. The
+[image module](../images/README.md) consumes the publishing contract; RunsOn
+execution comes next.
 
 The infrastructure below supported an EC2/Packer controller, foundation
 identities, an artifact store, and image-management access. Its RunsOn adapter

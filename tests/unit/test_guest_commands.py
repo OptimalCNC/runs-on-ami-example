@@ -146,8 +146,8 @@ class StandaloneToolInstaller(unittest.TestCase):
             directory = Path(temporary)
             destination = directory / "tools with spaces"
             pins = {}
-            for name in ("packer", "amazon_plugin", "terraform", "actionlint"):
-                binary = "packer-plugin-amazon_v1.0" if name == "amazon_plugin" else name
+            for name in ("packer", "qemu_plugin", "terraform", "actionlint"):
+                binary = "packer-plugin-qemu_v1.0" if name == "qemu_plugin" else name
                 script = "#!/bin/sh\nexit 0\n"
                 if name == "packer":
                     script = '#!/bin/sh\nmkdir -p "$PACKER_PLUGIN_PATH"\nprintf "%s\\n" "$*" > "$PACKER_PLUGIN_PATH/installed"\n'
@@ -164,5 +164,5 @@ class StandaloneToolInstaller(unittest.TestCase):
                                                              "packer_plugin_path": str(destination / "plugins")})
             for name in ("packer", "terraform", "actionlint"):
                 self.assertTrue(os.access(destination / "bin" / name, os.X_OK))
-            self.assertIn("github.com/hashicorp/amazon", (destination / "plugins" / "installed").read_text())
+            self.assertIn("github.com/hashicorp/qemu", (destination / "plugins" / "installed").read_text())
             self.assertFalse((directory / "unrelated").exists())
