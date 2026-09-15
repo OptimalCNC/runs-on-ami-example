@@ -1,5 +1,8 @@
 # Ubuntu 24.04 Xenomai Cobalt AMIs with RunsOn Flex
 
+Start with the dedicated [RunsOn installation guide](runs-on/README.md) to
+provision the runner platform and its image-publishing destination and role.
+
 This example builds a small Ubuntu 24.04 AMI with Xenomai 3 Cobalt and uses it as a
 RunsOn Flex runner. It starts from a plain Canonical Ubuntu image and installs
 the runner user, GitHub Actions agent, and matching RunsOn bootstrap described

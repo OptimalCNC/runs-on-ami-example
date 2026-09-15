@@ -1,0 +1,31 @@
+schema_version: 1
+account_id: "123456789012"
+region: us-east-1
+name: runs-on
+environment: production
+github_organization: your-github-organization
+
+# Paths are relative to this configuration file, normally .local/config.yaml.
+license_file: license.txt
+notification_email_file: notification-email.txt
+
+# The existing AWS identity running this installer must be allowed to assume
+# the deployment role. Use the IAM role ARN, not an STS assumed-role session ARN.
+trusted_principal_arns:
+  - arn:aws:iam::123456789012:role/YourAdministratorRole
+
+# Optional local publisher identities allowed to assume the publishing role.
+publisher_principal_arns:
+  - arn:aws:iam::123456789012:role/YourImagePublisherLoginRole
+
+# Optional GitHub Actions OIDC access, restricted to this repository/environment.
+publisher_github_repository: ""
+publisher_github_environment: image-publish
+
+# Empty resolves the current repository OIDC prefix through authenticated gh.
+# This handles GitHub's immutable repository subjects with numeric IDs.
+publisher_github_subject_prefix: ""
+
+# If this account already has the GitHub Actions OIDC provider, use its ARN.
+existing_github_oidc_provider_arn: ""
+vpc_cidr: 10.80.0.0/16

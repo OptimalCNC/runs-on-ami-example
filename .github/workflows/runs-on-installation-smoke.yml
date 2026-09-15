@@ -1,0 +1,34 @@
+name: Check RunsOn installation
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: RunsOn environment to check
+        required: true
+        default: production
+        type: string
+
+permissions: {}
+
+jobs:
+  smoke:
+    runs-on: runs-on=${{ github.run_id }}-${{ github.run_attempt }}/runner=2cpu-linux-x64/env=${{ inputs.environment }}/spot=false
+    timeout-minutes: 10
+    steps:
+      - name: Verify the registered EC2 runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$RUNNER_OS" = Linux
+          test "$RUNNER_ARCH" = X64
+          token=$(curl --fail --silent --show-error --max-time 10 -X PUT \
+            -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' \
+            http://169.254.169.254/latest/api/token)
+          identity=$(curl --fail --silent --show-error --max-time 10 \
+            -H "X-aws-ec2-metadata-token: $token" \
+            http://169.254.169.254/latest/dynamic/instance-identity/document)
+          jq -e '.instanceId | startswith("i-")' <<< "$identity"
+          jq '{accountId, region, instanceId, instanceType, imageId}' <<< "$identity"
+          uname -sr
+          printf 'RunsOn installed, launched an EC2 runner, and executed this job.\n'

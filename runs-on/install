@@ -1,0 +1,8 @@
+#!/bin/sh
+set -eu
+
+installation_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+if [ -x "$installation_dir/.venv/bin/python" ]; then
+    exec "$installation_dir/.venv/bin/python" "$installation_dir/installer.py" "$@"
+fi
+exec python3 "$installation_dir/installer.py" "$@"
