@@ -1,10 +1,18 @@
 # Plan 1 — Reproducible Ubuntu 24.04 Xenomai Cobalt AMIs with RunsOn
 
-**Status:** Migrated implementation plan; the image build and cloud acceptance tests have not been executed.  
+**Status:** Historical plan for the retired combined EC2/Packer image pipeline.
+
 **Intended home:** A standalone example repository, independent of MetaNC and Orocos.  
 **Suggested checked-in path:** `docs/plans/custom-ami-example.md`  
 **Date:** 2026-09-12  
 **Companion:** `02-xenomai-development-images-plan.md`, which can adopt the qualified image recipe and infrastructure established here.
+
+The current implementation separates RunsOn installation, image build and
+publishing, and RunsOn execution. Start with the dedicated
+[installation guide](../../runs-on/README.md); the independent image module
+comes next. The workflow paths and dispatch procedures below record the former
+architecture, whose build, qualification, application, and automatic cleanup
+workflows have been removed.
 
 ## 1. Objective and boundary
 
