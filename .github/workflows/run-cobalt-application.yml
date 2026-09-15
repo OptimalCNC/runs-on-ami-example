@@ -27,7 +27,6 @@ jobs:
       execution_uri: ${{ steps.register.outputs.uri }}
       execution_sha256: ${{ steps.register.outputs.sha256 }}
       build_id: ${{ steps.config.outputs.build_id }}
-      ami_id: ${{ steps.config.outputs.ami_id }}
       region: ${{ steps.config.outputs.region }}
       recipe_id: ${{ steps.config.outputs.recipe_id }}
       kernel_release: ${{ steps.config.outputs.kernel_release }}
@@ -92,6 +91,7 @@ jobs:
             --record .deployment/accepted-image.json --build-id "$BUILD_ID" --output .deployment/config.json
           python3 scripts/accepted_image.py inspect --deployment .deployment/deployment.json \
             --record .deployment/accepted-image.json --output .deployment/admission.json \
+            --name-pattern 'ami-example-OptimalCNC-runs-on-ami-example-cobalt-*' \
             --minimum-seconds "$(( $(jq .deadlines.registration_seconds .deployment/deployment.json) + 900 ))"
           jq -r 'to_entries[] | "\(.key)=\(.value)"' .deployment/config.json >> "$GITHUB_OUTPUT"
         env:
@@ -120,8 +120,8 @@ jobs:
     needs: prepare
     runs-on:
       - runs-on=${{ github.run_id }}-${{ github.run_attempt }}-one-a
-      - runner=t3-small-30gb
-      - ami=${{ needs.prepare.outputs.ami_id }}
+      - runner=t3-small-16gb
+      - image=cobalt
       - env=ami-example
       - region=${{ needs.prepare.outputs.region }}
     timeout-minutes: 15

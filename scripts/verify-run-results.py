@@ -20,8 +20,8 @@ def verify_guest(guest, result, deployment):
     for field, expected in {"imageId": result["cloud"]["ami_id"], "accountId": deployment.account_id,
                             "region": deployment.region, "instanceType": deployment.instance_type}.items():
         require(identity[field] == expected, f"guest identity {field} differs")
-    require(guest["runner_version"] == result["execution"]["inherited_runner_version"], "runner agent changed after snapshot")
-    require(guest["runner_listener_sha256"] == result["payload"]["parent_inventory"]["runner_listener_sha256"], "runner agent binary changed")
+    require(guest["runner_version"] == result["execution"]["runner_version"], "runner agent changed after snapshot")
+    require(guest["runner_listener_sha256"] == result["payload"]["runner_inventory"]["runner_listener_sha256"], "runner agent binary changed")
     require(guest["bootstrap_files"] == result["execution"]["bootstrap_files"], "bootstrap files changed after snapshot")
     require(guest["packages_sha256"] == result["payload"]["packages_sha256"], "installed packages changed after snapshot")
     require(guest["snap_hashes"] == result["payload"]["snap_hashes"], "inherited snap content changed after snapshot")

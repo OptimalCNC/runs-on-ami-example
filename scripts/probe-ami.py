@@ -12,7 +12,7 @@ from urllib.parse import unquote, urlparse
 
 from example import (ROOT, AmiIdentity, AwsCommandError, Cloud, CobaltIdentity, ImageIdentity, ParentSelection,
                      file_sha, load_bindings, load_deployment, match, read_json, require, resource_tags, run,
-                     OWNER_TAG, BUILD_TAG, tags_of, timestamp, utcnow, write_json)
+                     OWNER_TAG, BUILD_TAG, tags_of, timestamp, utcnow, verify_inventory, write_json)
 from preflight import inspect_ami, inspect_instance_type, inspect_management, inspect_root_volume, resolve_parent
 from qualification import QualificationRun
 
@@ -156,7 +156,7 @@ def probe(cloud, identity, build, output, result=None, fault=False):
             require(guest["identity"]["accountId"] == d.account_id and guest["identity"]["region"] == d.region,
                     "guest cloud identity differs")
         else:
-            require(not guest["registered"] and not guest["workspaces"] and not guest["secure_boot"], "parent is not a clean unsigned-kernel base")
+            verify_inventory(guest)
             inventory = output / "inventory.json"
             write_json(inventory, guest)
             parent = AmiIdentity.parse({**dataclasses.asdict(identity), "inventory_file": inventory.name,

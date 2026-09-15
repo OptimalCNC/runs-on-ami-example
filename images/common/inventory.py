@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Describe a clean inherited RunsOn image before changing its packages."""
+"""Describe a clean Ubuntu image before changing its packages or runner tools."""
 import argparse
 import glob
 import hashlib
@@ -37,8 +37,8 @@ def inventory():
         "os_version": os_release["VERSION_ID"].strip('"'),
         "package_inventory": package_text,
         "packages_sha256": hashlib.sha256(package_text.encode()).hexdigest(),
-        "runner_version": subprocess.check_output([str(listener), "--version"], text=True).strip(),
-        "runner_listener_sha256": sha(listener),
+        "runner_version": subprocess.check_output([str(listener), "--version"], text=True).strip() if listener.is_file() else None,
+        "runner_listener_sha256": sha(listener) if listener.is_file() else None,
         "bootstrap_files": {p: sha(p) for p in bootstraps},
         "snap_hashes": {p.name: sha(p) for p in sorted(Path("/var/lib/snapd/snaps").glob("*.snap"))},
         "registered": bool(registration), "workspaces": workspaces,

@@ -1,7 +1,10 @@
 # Ubuntu 24.04 Xenomai Cobalt AMIs with RunsOn Flex
 
-This example builds an Ubuntu 24.04 AMI with Xenomai 3 Cobalt and uses it as a
-RunsOn Flex runner. A temporary Packer builder compiles a Dovetail-enabled
+This example builds a small Ubuntu 24.04 AMI with Xenomai 3 Cobalt and uses it as a
+RunsOn Flex runner. It starts from a plain Canonical Ubuntu image and installs
+the runner user, GitHub Actions agent, and matching RunsOn bootstrap described
+in the [RunsOn Linux AMI guide](https://runs-on.com/docs/guides/building-custom-ami/#linux-amis).
+A temporary Packer builder compiles a Dovetail-enabled
 Linux kernel with Cobalt integration and matching Xenomai userspace tools,
 libraries, and headers. Fresh RunsOn jobs then build and run a small Cobalt
 application that requires the running Cobalt kernel.
@@ -16,9 +19,14 @@ no latency target.
 The image build controller uses a separately pinned stock RunsOn AMI. It is
 never snapshotted. The example targets Ubuntu 24.04, x86-64, one exact Nitro
 runtime type, on-demand capacity, and an unsigned kernel with Secure Boot
-disabled. Choose the parent inventory and runtime instance types, disk sizes, and
-Packer builder size in the deployment specification. Candidate probes and
-smoke runners use the built AMI's root size. The infrastructure supports
+disabled. The candidate root defaults to 16 GiB. Compilation and downloads use
+a separate 16 GiB EBS disk that is excluded from the AMI and deleted with the
+builder. The image keeps Python, Pip, venv, jq, Git, build essentials with GCC/G++,
+CMake, Ninja, and the Cobalt SDK. Kernel build tools, the stock kernel, package
+caches, and build inputs are removed before snapshotting.
+Choose parent images and Packer settings in the deployment specification;
+the [RunsOn configuration](.github/runs-on.yml) gives Cobalt jobs a 16 GiB root
+and the stock controller a 30 GiB root. The infrastructure supports
 installing [RunsOn Flex](https://runs-on.com/docs/) or importing an existing
 installation; Fleet needs a separate adapter.
 
@@ -90,9 +98,10 @@ The [infrastructure guide](infra/README.md#review-and-apply) owns these commands
 The RunsOn environment must propagate the common EC2 tag
 `ami-example:runs-on-repository=<owner>/<repo>`. Disable pools, sticky disks,
 persistent workspaces, and custom provisioning hooks. Its test-runner role
-must not have image-publishing permissions. Exact job labels select the AMI,
-region, environment, instance type, vCPU count, on-demand capacity, and a
-unique routing key.
+must not have image-publishing permissions. The RunsOn configuration selects
+the image, instance type, vCPU count, disk, and on-demand capacity. Job labels
+select the runner, region, environment, and a unique routing key. Set the
+custom image's owner and name pattern for your repository before dispatching.
 
 Enable the repository variable `AMI_EXAMPLE_CLOUD_ENABLED=true` after the
 [resource and cost review](docs/operations.md#cost-approval-and-execution-stages).
@@ -145,8 +154,11 @@ Promote the record to the private deployment state using
 `scripts/deployment-state.py promote`, then manually dispatch **Run Cobalt
 application**. Promotion verifies the live image and requires the previous
 selection version, or an explicit empty initial selection. The workflow
-freezes the selected record for its run attempt and launches one fresh runner
-from that exact retained AMI. It compiles and executes the Cobalt test,
+freezes the accepted record for its run attempt. The application selects
+`image=cobalt`, whose owner and name pattern resolve the newest matching AMI.
+Admission requires that image to be the accepted one; qualify and promote each
+rebuild before running the application. Runtime checks also verify the actual
+AMI identity. It compiles and executes the Cobalt test,
 retains its report, and terminates the runner. Admission rejects an expired image. The application job has read-only
 repository access; separate control jobs use the controller's OIDC role.
 

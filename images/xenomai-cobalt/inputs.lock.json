@@ -11,6 +11,19 @@
     "version": "6.12.90"
   },
   "os": {
+    "build_only_packages": [
+      "autoconf",
+      "automake",
+      "autotools-dev",
+      "bc",
+      "bison",
+      "flex",
+      "libelf-dev",
+      "libltdl-dev",
+      "libssl-dev",
+      "libtool-bin",
+      "m4"
+    ],
     "distribution": "ubuntu",
     "packages": {
       "autoconf": {
@@ -42,6 +55,11 @@
         "filename": "pool/main/b/bison/bison_3.8.2+dfsg-1build2_amd64.deb",
         "sha256": "18f487c400da3e968a44ecb3783a443641bcd14e2b080ed9ed1167f4aa2c1612",
         "version": "2:3.8.2+dfsg-1build2"
+      },
+      "build-essential": {
+        "filename": "pool/main/b/build-essential/build-essential_12.10ubuntu1_amd64.deb",
+        "sha256": "9b2159b95a4c01937309783c7c8a6ec8dfbcb7ffd604951c9713ac52ee9c7268",
+        "version": "12.10ubuntu1"
       },
       "ca-certificates": {
         "filename": "pool/main/c/ca-certificates/ca-certificates_20260601~24.04.1_all.deb",
@@ -78,6 +96,11 @@
         "sha256": "7438ff160b020a74970672189ecae25d0ca650de6d7f543f12a3134192cffbd9",
         "version": "13.3.0-6ubuntu2~24.04.1"
       },
+      "git": {
+        "filename": "pool/main/g/git/git_2.43.0-1ubuntu7.3_amd64.deb",
+        "sha256": "099bb129f543adc4c14203334b0fa0a909f8bf038c4d56bc9cc7c774ebf78f87",
+        "version": "1:2.43.0-1ubuntu7.3"
+      },
       "grub-common": {
         "filename": "pool/main/g/grub2/grub-common_2.12-1ubuntu7.3_amd64.deb",
         "sha256": "464e7c3a9f261b2120a6755fbf753384669c666a5cc7cd571cf836d6da88373f",
@@ -93,19 +116,44 @@
         "sha256": "3a75c03e5d409f4e266b3d908e3278a439a221d0576db55eab588cac9388cefe",
         "version": "0.142ubuntu25.8"
       },
+      "jq": {
+        "filename": "pool/main/j/jq/jq_1.7.1-3ubuntu0.24.04.2_amd64.deb",
+        "sha256": "f59183392f84fe67b407b494d8ba6185e9b0e4a106ffcb369490bd20a83fd40e",
+        "version": "1.7.1-3ubuntu0.24.04.2"
+      },
       "libelf-dev": {
         "filename": "pool/main/e/elfutils/libelf-dev_0.190-1.1ubuntu0.1_amd64.deb",
         "sha256": "81affb95c29f7323f2ae24386aaa1f61d311578e3e27c5f78ef7b7d55cd3cf49",
         "version": "0.190-1.1ubuntu0.1"
+      },
+      "libicu74": {
+        "filename": "pool/main/i/icu/libicu74_74.2-1ubuntu3.1_amd64.deb",
+        "sha256": "c9a70989678660eed9a1e904c74fa043da8bec8e2036856fc16e31ced79b04f8",
+        "version": "74.2-1ubuntu3.1"
+      },
+      "libkrb5-3": {
+        "filename": "pool/main/k/krb5/libkrb5-3_1.20.1-6ubuntu2.8_amd64.deb",
+        "sha256": "63ab8110daea359f55d8135d395de198257acb1f948500c561745addddfece4c",
+        "version": "1.20.1-6ubuntu2.8"
       },
       "libltdl-dev": {
         "filename": "pool/main/libt/libtool/libltdl-dev_2.4.7-7build1_amd64.deb",
         "sha256": "3a706efe1d9d8b493bd2335fabaa9ec28549c9134750fad6c0a5aa9868c6ee9c",
         "version": "2.4.7-7build1"
       },
+      "liblttng-ust1t64": {
+        "filename": "pool/main/u/ust/liblttng-ust1t64_2.13.7-1.1ubuntu2_amd64.deb",
+        "sha256": "020744e76395d7a5e7134a0a9f5a7fc7bdee4d1b769db9dd1be068f96c778d85",
+        "version": "2.13.7-1.1ubuntu2"
+      },
       "libssl-dev": {
         "filename": "pool/main/o/openssl/libssl-dev_3.0.13-0ubuntu3.15_amd64.deb",
         "sha256": "cefc6371d90d953a4cbb35d72d871f057e4b961a3107186f67fe96a88040cdb8",
+        "version": "3.0.13-0ubuntu3.15"
+      },
+      "libssl3t64": {
+        "filename": "pool/main/o/openssl/libssl3t64_3.0.13-0ubuntu3.15_amd64.deb",
+        "sha256": "3d0955bc049bbcca0f4c3e78a3a8b994593d96db7d84f4320217224433844534",
         "version": "3.0.13-0ubuntu3.15"
       },
       "libtool-bin": {
@@ -143,15 +191,35 @@
         "sha256": "e691b9cc40841c41bbdc50bd794c876cb1b1801306ea27b06e9a1458180df1e9",
         "version": "3.12.3-0ubuntu2.1"
       },
+      "python3-pip": {
+        "filename": "pool/universe/p/python-pip/python3-pip_24.0+dfsg-1ubuntu1.3_all.deb",
+        "sha256": "4e1af0b6f0b52c847ffa7b192b9f650845b99ff300138af05ab9a6252eb75682",
+        "version": "24.0+dfsg-1ubuntu1.3"
+      },
+      "python3-venv": {
+        "filename": "pool/universe/p/python3-defaults/python3-venv_3.12.3-0ubuntu2.1_amd64.deb",
+        "sha256": "16d50387b7656796b79e2c059d06774dfe9fe3f42808d8d50b332ceb780f508a",
+        "version": "3.12.3-0ubuntu2.1"
+      },
       "rsync": {
         "filename": "pool/main/r/rsync/rsync_3.2.7-1ubuntu1.5_amd64.deb",
         "sha256": "8f952895697d19a6f1caa71f17c7d4e8c1f1fb485eb824ffe3e4c77dd587b338",
         "version": "3.2.7-1ubuntu1.5"
       },
+      "sudo": {
+        "filename": "pool/main/s/sudo/sudo_1.9.15p5-3ubuntu5.24.04.2_amd64.deb",
+        "sha256": "d5361d4021dc7cb60d49b94b186ba908c10e9e38f33a55cba049175411eb1251",
+        "version": "1.9.15p5-3ubuntu5.24.04.2"
+      },
       "xz-utils": {
         "filename": "pool/main/x/xz-utils/xz-utils_5.6.1+really5.4.5-1ubuntu0.3_amd64.deb",
         "sha256": "778edae086bc8f34d80f36f301bc8fb3eff2d906c146dfb533ea6840b6d64e00",
         "version": "5.6.1+really5.4.5-1ubuntu0.3"
+      },
+      "zlib1g": {
+        "filename": "pool/main/z/zlib/zlib1g_1.3.dfsg-3.1ubuntu2.2_amd64.deb",
+        "sha256": "84b9cf5752b29c9f92c27cd4c4ba9bbcc70b5ccf9b1b515421a28ae23212e273",
+        "version": "1:1.3.dfsg-3.1ubuntu2.2"
       },
       "zstd": {
         "filename": "pool/main/libz/libzstd/zstd_1.5.5+dfsg2-2build1.1_amd64.deb",
@@ -171,6 +239,7 @@
     "images/common/finalize-image.sh",
     "images/common/guest-report.py",
     "images/common/install-packages.py",
+    "images/common/install-runner.py",
     "images/common/inventory.py",
     "images/common/packer-user-data.sh",
     "images/common/runner-image-env",
@@ -184,6 +253,18 @@
     "scripts/check-kernel-config.py",
     "scripts/example.py"
   ],
+  "runner": {
+    "bootstrap": {
+      "sha256": "a387bf964c573daabaf753d42213bfec5931b9a71d01325442253e6caa3dd115",
+      "url": "https://github.com/runs-on/bootstrap/releases/download/v0.1.12/bootstrap-v0.1.12-linux-x86_64",
+      "version": "0.1.12"
+    },
+    "github": {
+      "sha256": "70920811a4f8ad4328818682bca5c6469c1c942fab52448868071d0063816613",
+      "url": "https://github.com/actions/runner/releases/download/v2.337.0/actions-runner-linux-x64-2.337.0.tar.gz",
+      "version": "2.337.0"
+    }
+  },
   "schema_version": 1,
   "tools": {
     "actionlint": {

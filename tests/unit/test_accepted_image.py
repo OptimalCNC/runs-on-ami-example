@@ -79,6 +79,32 @@ class AcceptedImageContract(unittest.TestCase):
         with self.assertRaisesRegex(InvalidInput, "actual UEFI"):
             selected_record(result, deployment(), "1" * 64)
 
+    def test_name_lookup_selects_latest_owned_image_before_launch(self):
+        cloud = accepted_cloud()
+        image = cloud.images[0]
+        older = {**image, "ImageId": "ami-22222222222222222", "CreationDate": "2026-09-11T01:00:00Z"}
+        with patch.object(cloud, "call", side_effect=[{"Images": [image]}, {"Images": [image, older]}]) as call:
+            self.assertEqual(self.accepted.inspect_latest(cloud, "example-cobalt-*")["ImageId"], self.accepted.ami_id)
+        self.assertEqual(call.call_args.args, ("ec2", "describe-images", {
+            "Owners": [self.accepted.account_id],
+            "Filters": [{"Name": "name", "Values": ["example-cobalt-*"]},
+                        {"Name": "state", "Values": ["available"]},
+                        {"Name": "architecture", "Values": ["x86_64"]}],
+        }))
+        self.assertEqual(cloud.mutations, [])
+
+    def test_name_lookup_rejects_unaccepted_or_ambiguous_newest_image(self):
+        cloud = accepted_cloud()
+        image = cloud.images[0]
+        replacement = {**image, "ImageId": "ami-22222222222222222", "CreationDate": "2026-09-13T01:00:00Z"}
+        for matches in ([image, replacement], [replacement, image], [replacement],
+                        [image, {**replacement, "CreationDate": image["CreationDate"]}], []):
+            with self.subTest(matches=matches), \
+                 patch.object(cloud, "call", side_effect=[{"Images": [image]}, {"Images": matches}]), \
+                 self.assertRaisesRegex(InvalidInput, "name pattern"):
+                self.accepted.inspect_latest(cloud, "example-cobalt-*")
+        self.assertEqual(cloud.mutations, [])
+
     def test_prepare_exposes_exact_accepted_ami_with_explicit_execution_identity(self):
         with patch.dict(os.environ, {}, clear=True):
             selected = prepare(deployment(), self.record, "124-2-one")
@@ -106,6 +132,18 @@ class AcceptedImageContract(unittest.TestCase):
             verify(accepted_cloud(), self.accepted, {**report, "ctest_passed": False}, "124-2-one", "i-22222222222222222")
         with self.assertRaisesRegex(InvalidInput, "expected instance"):
             verify(accepted_cloud(), self.accepted, report, "124-2-one", "i-33333333333333333")
+
+    def test_rebuild_between_admission_and_launch_cannot_pass_runtime_verification(self):
+        report = smoke("a", "2")
+        replacement = "ami-22222222222222222"
+        for guest in (report["identity"], report["environment"]):
+            guest["identity"]["imageId"] = replacement
+        with self.assertRaisesRegex(InvalidInput, "imageId"):
+            verify(accepted_cloud(), self.accepted, report, "123-1-one", "i-22222222222222222")
+        cloud = accepted_cloud()
+        cloud.machines[0]["ImageId"] = replacement
+        with self.assertRaisesRegex(InvalidInput, "unexpected AMI"):
+            verify(cloud, self.accepted, smoke("a", "2"), "123-1-one", "i-22222222222222222")
 
     def test_evidence_url_is_optional_and_supports_non_github_provenance(self):
         self.assertEqual(self.accepted.qualification_url, "")
@@ -140,7 +178,8 @@ class AcceptedImageContract(unittest.TestCase):
                                  "region": "us-east-1", "artifact_bucket": "example-artifacts"})
             cloud = accepted_cloud()
             for arguments in (["accept", "--result", str(result), "--evidence-url", "s3://audit/qualified.json"],
-                              ["inspect", "--output", str(output)]):
+                              ["inspect", "--output", str(output)],
+                              ["inspect", "--output", str(output), "--name-pattern", "example-cobalt-*"]):
                 with patch.dict(os.environ, {}, clear=True), \
                      patch("sys.argv", ["accepted_image.py", *arguments, "--deployment", str(context), "--record", str(record)]), \
                      patch.object(accepted_image, "Cloud", return_value=cloud):

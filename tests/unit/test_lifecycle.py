@@ -238,14 +238,17 @@ class Artifacts(unittest.TestCase):
                 d = deployment()
                 image = result()["payload"]
                 write_json(root / "images/xenomai-cobalt/inputs.lock.json",
-                           {"xenomai": image["xenomai"], "kernel": {"release": image["kernel_release"]}, "tools": {}})
+                           {"xenomai": image["xenomai"], "kernel": {"release": image["kernel_release"]}, "tools": {},
+                            "runner": {"bootstrap": {"version": d.require_runs_on().bootstrap_version}}})
                 destination = root / "artifacts/123-1-one"
                 cloud = MagicMock()
                 cloud.call.side_effect = lambda service, operation, payload: {
                     "create-key-pair": {"KeyName": "fixture", "KeyPairId": "key-fixture", "KeyMaterial": "fixture-private-key"},
                     "delete-key-pair": {}, "describe-images": {"Images": [{
                         "ImageId": "ami-11111111111111111", "State": "available", "BootMode": "uefi",
-                        "CreationDate": "2026-09-12T01:00:00Z", "BlockDeviceMappings": []}]},
+                        "CreationDate": "2026-09-12T01:00:00Z", "RootDeviceName": "/dev/sda1",
+                        "BlockDeviceMappings": [{"DeviceName": "/dev/sda1", "Ebs": {
+                            "SnapshotId": "snap-11111111111111111", "VolumeSize": d.root_volume_gib}}]}]},
                 }[operation]
                 uploads = {}
                 def retain(path, key):

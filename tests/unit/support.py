@@ -35,6 +35,10 @@ def parent_inventory():
             "registered": False, "workspaces": [], "secure_boot": False, "os_version": "24.04", "snap_hashes": {}}
 
 
+def source_inventory():
+    return {**parent_inventory(), "runner_version": None, "runner_listener_sha256": None, "bootstrap_files": {}}
+
+
 _fixture_inventory = FIXTURE_ROOT / "parent.json"
 _fixture_inventory.write_text(json.dumps(parent_inventory()) + "\n")
 _fixture_inventory_sha256 = hashlib.sha256(_fixture_inventory.read_bytes()).hexdigest()
@@ -79,13 +83,14 @@ def result():
                     "initramfs_sha256": sha, "initramfs_content": {"main/init": {"sha256": sha, "mode": "0o755"}},
                     "xenomai": {"version": "3.3.3", "core": "cobalt", "prefix": "/usr/xenomai"},
                     "xenomai_files": {"lib/libcobalt.so.2": {"sha256": sha, "mode": "0o755"}},
-                    "toolchain": {"gcc": "gcc 13.3.0", "ld": "ld 2.42"}, "parent_inventory": parent},
+                    "toolchain": {"gcc": "gcc 13.3.0", "ld": "ld 2.42"}, "parent_inventory": parent,
+                    "runner_inventory": {key: parent[key] for key in ("runner_version", "runner_listener_sha256", "bootstrap_files")}},
         "cloud": {"account_id": d.account_id, "region": d.region, "ami_id": "ami-11111111111111111",
                   "snapshot_ids": ["snap-11111111111111111"], "architecture": "x86_64", "boot_mode": "uefi", "ami_boot_mode": "uefi", "instance_type": d.instance_type},
         "execution": {"build_id": "123-1-one", "workflow_ref": "example/repo/.github/workflows/build-and-test-image.yml@refs/heads/main",
                       "run_id": "123", "run_attempt": "1", "controller_instance_id": "i-00000000000000000", "runs_on_version": d.require_runs_on().version,
                       "tool_versions": {"packer": "1.16.0", "amazon_plugin": "1.8.2", "aws_cli": "2.31.8", "session_manager": "1.2.707.0"},
-                      "inherited_runner_version": "2.328.0", "bootstrap_files": parent["bootstrap_files"]},
+                      "runner_version": "2.328.0", "bootstrap_files": parent["bootstrap_files"]},
         "validation": {"direct_boot": {"status": "pending"}, "runs_on": [], "reproducibility": {"status": "pending"}},
         "lifecycle": {"created_at": "2026-09-12T01:00:00Z", "expires_at": "2026-09-12T07:00:00Z", "retain": False,
                       "artifact_locations": ["s3://example-artifacts/example/repo/123-1-one/"], "cleanup": {"status": "pending"}},

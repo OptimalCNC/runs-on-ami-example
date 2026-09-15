@@ -25,6 +25,29 @@ def image_environment_module():
     return result
 
 
+class SourceInventory(unittest.TestCase):
+    def test_plain_ubuntu_inventory_records_absent_runner_without_executing_it(self):
+        spec = importlib.util.spec_from_file_location("source_inventory", ROOT / "images/common/inventory.py")
+        command = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(command)
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            (directory / "etc").mkdir()
+            (directory / "etc/os-release").write_text('ID=ubuntu\nVERSION_ID="24.04"\n')
+            packages = "python3\t3.12.3\tamd64\tinstalled\n"
+            with patch.object(command, "Path", side_effect=lambda path: directory / str(path).lstrip("/")), \
+                    patch.object(command, "packages", return_value=packages), \
+                    patch.object(command.glob, "glob", return_value=[]), \
+                    patch.object(command.subprocess, "check_output") as execute:
+                captured = command.inventory()
+            execute.assert_not_called()
+            self.assertEqual(captured["os_version"], "24.04")
+            self.assertIsNone(captured["runner_version"])
+            self.assertIsNone(captured["runner_listener_sha256"])
+            self.assertEqual(captured["bootstrap_files"], {})
+            self.assertEqual(captured["packages_sha256"], hashlib.sha256(packages.encode()).hexdigest())
+
+
 class StandaloneSmoke(unittest.TestCase):
     def test_identity_uses_explicit_inputs_without_runner_environment(self):
         with tempfile.TemporaryDirectory() as temporary:

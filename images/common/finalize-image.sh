@@ -1,6 +1,6 @@
 #!/bin/bash
 set -euo pipefail
-# This cleanup contract is qualified only against the locked Ubuntu 24 RunsOn parent.
+# Finalize the Ubuntu 24.04 image after installing its runner and Cobalt payload.
 recipe=/opt/ami-example-recipe
 [[ "$EUID" -eq 0 && -f "$recipe/recipe.json" && -f /etc/ami-example.json ]]
 python3 "$recipe/images/common/inventory.py" > /tmp/ami-example-final-inventory.json
@@ -13,9 +13,12 @@ if i['registered'] or i['workspaces'] or i['secure_boot']:
 if not i['bootstrap_files']:
     raise SystemExit('RunsOn bootstrap is missing')
 PY
-rm -rf /usr/src/ami-example /opt/ami-example-inputs /opt/ami-example-recipe
+apt-get clean
+rm -rf /var/lib/apt/lists/* /opt/ami-example-recipe
+umount /mnt/ami-example-build
+rmdir /mnt/ami-example-build
 rm -rf /home/runner/_diag
-rm -f /tmp/ami-example-inputs.tar /tmp/ami-example-final-inventory.json
+rm -f /tmp/ami-example-final-inventory.json
 for user_home in /root /home/ubuntu /home/runner; do
   rm -rf "$user_home/.aws" "$user_home/.docker" "$user_home/.cache" "$user_home/.git-credentials"
   rm -rf "$user_home/.config/gh" "$user_home/.config/git/credentials"
@@ -36,3 +39,5 @@ rm -rf /var/log/journal/*
 find /var/log -type f -exec truncate --no-create -s 0 {} +
 find /tmp /var/tmp -mindepth 1 -maxdepth 1 -exec rm -rf {} +
 sync
+fstrim /
+df --block-size=1 --output=source,fstype,size,used,avail /

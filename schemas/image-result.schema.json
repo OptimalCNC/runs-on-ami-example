@@ -34,7 +34,7 @@
     },
     "payload": {
       "type": "object",
-      "required": ["schema_version", "recipe_id", "kernel_release", "config_sha256", "payload_hashes", "packages_sha256", "package_inventory", "snap_hashes", "normalized_configuration", "initramfs_sha256", "initramfs_content", "xenomai", "xenomai_files", "toolchain", "parent_inventory"],
+      "required": ["schema_version", "recipe_id", "kernel_release", "config_sha256", "payload_hashes", "packages_sha256", "package_inventory", "snap_hashes", "normalized_configuration", "initramfs_sha256", "initramfs_content", "xenomai", "xenomai_files", "toolchain", "parent_inventory", "runner_inventory"],
       "properties": {
         "schema_version": {"const": 1},
         "recipe_id": {"$ref": "#/$defs/sha256"},
@@ -50,6 +50,7 @@
         "xenomai": {"$ref": "#/$defs/cobalt"},
         "xenomai_files": {"type": "object", "minProperties": 1, "additionalProperties": {"$ref": "#/$defs/installed_file"}},
         "toolchain": {"type": "object", "required": ["gcc", "ld"], "properties": {"gcc": {"type": "string"}, "ld": {"type": "string"}}, "additionalProperties": false},
+        "runner_inventory": {"type": "object", "required": ["runner_version", "runner_listener_sha256", "bootstrap_files"], "properties": {"runner_version": {"type": "string"}, "runner_listener_sha256": {"$ref": "#/$defs/sha256"}, "bootstrap_files": {"$ref": "#/$defs/hash_map"}}, "additionalProperties": false},
         "parent_inventory": {"type": "object", "required": ["packages_sha256", "package_inventory", "runner_version", "runner_listener_sha256", "bootstrap_files", "registered", "workspaces", "secure_boot", "os_version"]}
       },
       "additionalProperties": false
@@ -71,7 +72,7 @@
     },
     "execution": {
       "type": "object",
-      "required": ["build_id", "controller_instance_id", "runs_on_version", "tool_versions", "inherited_runner_version", "bootstrap_files"],
+      "required": ["build_id", "controller_instance_id", "runs_on_version", "tool_versions", "runner_version", "bootstrap_files"],
       "properties": {
         "build_id": {"type": "string", "pattern": "^[1-9][0-9]*-[1-9][0-9]*-(one|two)$"},
         "workflow_ref": {"type": "string"},
@@ -80,7 +81,7 @@
         "controller_instance_id": {"$ref": "#/$defs/instance"},
         "runs_on_version": {"type": "string"},
         "tool_versions": {"type": "object", "required": ["packer", "amazon_plugin", "aws_cli", "session_manager"], "additionalProperties": {"type": "string"}},
-        "inherited_runner_version": {"type": "string"},
+        "runner_version": {"type": "string"},
         "bootstrap_files": {"$ref": "#/$defs/hash_map"}
       },
       "additionalProperties": false

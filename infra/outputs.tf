@@ -11,6 +11,7 @@ output "controller_ami_id" { value = var.controller_ami_id }
 output "instance_type" { value = var.instance_type }
 output "builder_instance_type" { value = var.builder_instance_type }
 output "root_volume_gib" { value = var.root_volume_gib }
+output "parent_root_volume_gib" { value = var.parent_root_volume_gib }
 output "controller_policy_json" { value = data.aws_iam_policy_document.controller.json }
 output "required_runs_on_common_tag" {
   value = { "ami-example:runs-on-repository" = var.foundation.repository }

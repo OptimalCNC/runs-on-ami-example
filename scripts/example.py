@@ -154,7 +154,7 @@ class VerifiedParent(AmiIdentity):
     """An image identity whose captured inventory has been read and verified."""
 
     @classmethod
-    def load(cls, value: dict, base_dir: Path, installation: RunsOnInstallation, name: str = "parent") -> VerifiedParent:
+    def load(cls, value: dict, base_dir: Path, installation: RunsOnInstallation | None = None, name: str = "parent") -> VerifiedParent:
         identity = cls.parse(value, name)
         path = (base_dir / identity.inventory_file).resolve()
         require(path.is_file(), f"parent inventory is missing: {path}")
@@ -273,7 +273,6 @@ class InfrastructureBindings(CleanupContext):
         require(type(value["vcpus"]) is int and 1 <= value["vcpus"] <= 64, "vcpus must be 1..64")
         for name in ("root_volume_gib", "parent_root_volume_gib"):
             require(type(value[name]) is int and 8 <= value[name] <= 256, f"{name} must be 8..256")
-        require(value["root_volume_gib"] >= value["parent_root_volume_gib"], "candidate root must cover the parent root")
         require(type(value["retain_hours"]) is int and 1 <= value["retain_hours"] <= 168, "retention must be 1..168 hours")
         require(type(value["private"]) is bool, "private must be a boolean")
         require(isinstance(value["deadlines"], dict) and set(value["deadlines"]) == {"boot_seconds", "registration_seconds", "workflow_seconds"}, "deadline keys differ")
@@ -299,8 +298,8 @@ class BuildInputs(InfrastructureBindings):
         bindings = InfrastructureBindings.parse({f.name: value[f.name] for f in dataclasses.fields(InfrastructureBindings)})
         installation = bindings.require_runs_on()
         directory = Path.cwd() if base_dir is None else Path(base_dir)
-        parents = {name: VerifiedParent.load(value[name], directory, installation, name)
-                   for name in ("source_ami", "controller_ami")}
+        parents = {"source_ami": VerifiedParent.load(value["source_ami"], directory, name="source_ami"),
+                   "controller_ami": VerifiedParent.load(value["controller_ami"], directory, installation, "controller_ami")}
         return cls(**{f.name: getattr(bindings, f.name) for f in dataclasses.fields(InfrastructureBindings)}, **parents)
 
     def image_inputs(self) -> dict:
@@ -327,7 +326,7 @@ class BuildInputs(InfrastructureBindings):
         return path
 
 
-def verify_inventory(inventory: dict, installation: RunsOnInstallation) -> None:
+def verify_inventory(inventory: dict, installation: RunsOnInstallation | None = None) -> None:
     fields = {"os_version", "registered", "workspaces", "secure_boot", "packages_sha256", "package_inventory",
               "runner_version", "bootstrap_files", "runner_listener_sha256", "snap_hashes"}
     require(isinstance(inventory, dict) and fields <= set(inventory), "parent inventory fields are missing")
@@ -336,17 +335,21 @@ def verify_inventory(inventory: dict, installation: RunsOnInstallation) -> None:
     require(inventory["secure_boot"] is False, "unsigned-kernel qualification requires Secure Boot disabled")
     match(inventory["packages_sha256"], SHA256, "parent package inventory")
     require(hashlib.sha256(inventory["package_inventory"].encode()).hexdigest() == inventory["packages_sha256"], "parent package inventory digest is inconsistent")
-    match(inventory["runner_version"], r"\d+\.\d+\.\d+", "inherited runner version")
-    require(bool(inventory["bootstrap_files"]), "missing inherited RunsOn bootstrap")
-    match(inventory["runner_listener_sha256"], SHA256, "inherited runner binary digest")
+    if inventory["runner_version"] is None:
+        require(inventory["runner_listener_sha256"] is None, "absent runner must have no binary digest")
+    else:
+        match(inventory["runner_version"], r"\d+\.\d+\.\d+", "inherited runner version")
+        match(inventory["runner_listener_sha256"], SHA256, "inherited runner binary digest")
     for path, checksum in inventory["snap_hashes"].items():
         match(path, r"[A-Za-z0-9_.-]+\.snap", "inherited snap file")
         match(checksum, SHA256, "inherited snap digest")
     for path, checksum in inventory["bootstrap_files"].items():
         match(path, r"/usr/local/bin/runs-on-bootstrap-v?\d+\.\d+\.\d+", "inherited bootstrap path")
         match(checksum, SHA256, "inherited bootstrap digest")
-    require(any(Path(p).name in {f"runs-on-bootstrap-{installation.bootstrap_version}", f"runs-on-bootstrap-v{installation.bootstrap_version}"} for p in inventory["bootstrap_files"]),
-            "parent must contain the bootstrap version selected by the RunsOn installation")
+    if installation is not None:
+        require(inventory["runner_version"] is not None, "controller parent must contain the GitHub Actions runner")
+        require(any(Path(p).name in {f"runs-on-bootstrap-{installation.bootstrap_version}", f"runs-on-bootstrap-v{installation.bootstrap_version}"} for p in inventory["bootstrap_files"]),
+                "controller parent must contain the bootstrap version selected by the RunsOn installation")
 
 
 def load_deployment(path: str | Path) -> BuildInputs:
@@ -364,7 +367,7 @@ def load_cleanup_context(path: str | Path) -> CleanupContext:
     return CleanupContext.parse({f.name: value[f.name] for f in dataclasses.fields(CleanupContext)})
 
 
-def load_parent_record(path: str | Path, installation: RunsOnInstallation) -> VerifiedParent:
+def load_parent_record(path: str | Path, installation: RunsOnInstallation | None = None) -> VerifiedParent:
     source = Path(path).resolve()
     return VerifiedParent.load(read_json(source), source.parent, installation)
 

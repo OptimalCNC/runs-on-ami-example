@@ -4,9 +4,9 @@ export LC_ALL=C TZ=UTC
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 recipe=/opt/ami-example-recipe
 [[ "$EUID" -eq 0 && -f "$recipe/recipe.json" && -f "$recipe/source-inventory.json" ]]
-source_dir=/usr/src/ami-example/linux
-xenomai_dir=/usr/src/ami-example/xenomai
-userspace_build=/usr/src/ami-example/xenomai-build
+source_dir=/mnt/ami-example-build/linux
+xenomai_dir=/mnt/ami-example-build/xenomai
+userspace_build=/mnt/ami-example-build/xenomai-build
 output=/var/lib/ami-example
 lock="$recipe/images/xenomai-cobalt/inputs.lock.json"
 mkdir -p "$source_dir" "$xenomai_dir" "$userspace_build" "$output"
@@ -22,11 +22,11 @@ for name, value in {'SOURCE_URL': k['url'], 'SOURCE_SHA256': k['sha256'],
  print(f'{name}={shlex.quote(str(value))}')
 PY
 )"
-archive=/opt/ami-example-inputs/linux-dovetail.tar.gz
+archive=/mnt/ami-example-build/inputs/linux-dovetail.tar.gz
 curl --fail --location --retry 3 --proto '=https' --tlsv1.2 "$SOURCE_URL" -o "$archive"
 printf '%s  %s\n' "$SOURCE_SHA256" "$archive" | sha256sum --check --strict
 tar -xzf "$archive" --strip-components=1 -C "$source_dir"
-archive=/opt/ami-example-inputs/xenomai.tar.gz
+archive=/mnt/ami-example-build/inputs/xenomai.tar.gz
 curl --fail --location --retry 3 --proto '=https' --tlsv1.2 "$XENOMAI_URL" -o "$archive"
 printf '%s  %s\n' "$XENOMAI_SHA256" "$archive" | sha256sum --check --strict
 tar -xzf "$archive" --strip-components=1 -C "$xenomai_dir"
@@ -51,7 +51,7 @@ release=$("${kernel_make[@]}" -s kernelrelease)
 [[ "$release" == "$KERNEL_RELEASE" ]]
 printf '%s\n' "$release" > "$output/kernel-release"
 "${kernel_make[@]}" -j"$(nproc)" bzImage modules
-"${kernel_make[@]}" modules_install
+"${kernel_make[@]}" INSTALL_MOD_STRIP=1 modules_install
 rm -f "/lib/modules/$release/build" "/lib/modules/$release/source"
 install -m 0644 arch/x86/boot/bzImage "/boot/vmlinuz-$release"
 install -m 0644 System.map "/boot/System.map-$release"
@@ -67,7 +67,7 @@ export CXXFLAGS="$CFLAGS"
 "$xenomai_dir/configure" --prefix="$XENOMAI_PREFIX" --with-core=cobalt \
   --enable-smp --disable-registry --disable-doc-build CC=gcc-13 CXX=g++-13
 make -j"$(nproc)"
-make install
+make install-strip
 [[ "$("$XENOMAI_PREFIX/bin/xeno-config" --core)" == cobalt ]]
 [[ "$("$XENOMAI_PREFIX/bin/xeno-config" --version)" == "$XENOMAI_VERSION" ]]
 printf '%s/lib\n' "$XENOMAI_PREFIX" > /etc/ld.so.conf.d/xenomai.conf
@@ -83,4 +83,3 @@ GRUB_CMDLINE_LINUX="\${GRUB_CMDLINE_LINUX:-} xenomai.allowed_group=$XENOMAI_GID"
 EOF
 update-grub
 grep -F "Ubuntu, with Linux $release" /boot/grub/grub.cfg
-python3 "$recipe/images/common/write-image-manifest.py"

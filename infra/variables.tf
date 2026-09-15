@@ -58,10 +58,19 @@ variable "builder_instance_type" {
 
 variable "root_volume_gib" {
   type    = number
-  default = 80
+  default = 16
   validation {
     condition     = var.root_volume_gib >= 8 && var.root_volume_gib <= 256 && floor(var.root_volume_gib) == var.root_volume_gib
-    error_message = "Select an integer root volume size from 8 through 256 GiB, at least as large as each selected AMI."
+    error_message = "Select an integer candidate root volume size from 8 through 256 GiB, at least as large as the source AMI."
+  }
+}
+
+variable "parent_root_volume_gib" {
+  type    = number
+  default = 30
+  validation {
+    condition     = var.parent_root_volume_gib >= 8 && var.parent_root_volume_gib <= 256 && floor(var.parent_root_volume_gib) == var.parent_root_volume_gib
+    error_message = "Select an integer parent probe root volume size from 8 through 256 GiB, at least as large as each selected parent AMI."
   }
 }
 

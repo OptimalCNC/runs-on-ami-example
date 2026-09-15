@@ -37,7 +37,7 @@ def compare(first, second):
     require(first.recipe_id == second.recipe_id, "recipes differ; this is not a reproducibility comparison")
     require(first.build_id != second.build_id, "two independent builds are required")
     require(first.ami_id != second.ami_id, "candidate AMI was reused")
-    fields = ("kernel_release", "config_sha256", "payload_hashes", "xenomai", "xenomai_files", "packages_sha256", "snap_hashes", "normalized_configuration", "initramfs_content", "toolchain")
+    fields = ("kernel_release", "config_sha256", "payload_hashes", "xenomai", "xenomai_files", "packages_sha256", "snap_hashes", "normalized_configuration", "initramfs_content", "toolchain", "runner_inventory")
     differences = {}
     for field in fields:
         a, b = first.payload[field], second.payload[field]

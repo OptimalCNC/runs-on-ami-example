@@ -57,6 +57,7 @@ class StackConfig:
     controller_ami_id: str
     instance_type: str
     root_volume_gib: int
+    parent_root_volume_gib: int
     private: bool
     vpc_cidr: str
     overrides: dict
@@ -92,11 +93,11 @@ class StackConfig:
             reference = service.get(key)
             return relative_file(Path(spec.directory) / "deployment.json", reference) if reference else None
         choices = {key: value[key] for key in ("account_id", "region", "repository", "source_ami",
-                                               "controller_ami", "instance_type", "root_volume_gib")}
+                                               "controller_ami", "instance_type", "root_volume_gib", "parent_root_volume_gib")}
         choices["runs_on"] = {**service, "environment": environment, "private": private, "vpc_cidr": cidr}
         return cls(value["account_id"], value["region"], value["repository"], name, environment,
                    value["source_ami"]["id"], value["controller_ami"]["id"], value["instance_type"],
-                   value["root_volume_gib"], private, cidr, overrides,
+                   value["root_volume_gib"], value["parent_root_volume_gib"], private, cidr, overrides,
                    private_file("license_file"), private_file("notification_email_file"), digest(choices))
 
     def parameters(self, defaults: dict) -> dict:

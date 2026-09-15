@@ -62,6 +62,19 @@ source "amazon-ebs" "kernel" {
     kms_key_id            = "alias/aws/ebs"
     delete_on_termination = true
   }
+  # Kernel sources, objects and retained downloads never enter the AMI snapshot.
+  launch_block_device_mappings {
+    device_name           = "/dev/sdf"
+    volume_type           = "gp3"
+    volume_size           = 16
+    encrypted             = true
+    kms_key_id            = "alias/aws/ebs"
+    delete_on_termination = true
+  }
+  ami_block_device_mappings {
+    device_name = "/dev/sdf"
+    no_device   = true
+  }
   run_tags        = var.build_tags
   run_volume_tags = var.build_tags
   tags            = var.candidate_tags
@@ -104,7 +117,7 @@ build {
     labels   = ["file"]
     content {
       direction   = "download"
-      source      = "/tmp/ami-example-inputs.tar"
+      source      = "/mnt/ami-example-build/inputs.tar"
       destination = "${var.output_directory}/inputs.tar"
     }
   }

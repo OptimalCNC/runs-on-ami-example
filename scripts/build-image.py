@@ -48,6 +48,8 @@ def main(argv=None):
     config_output = args.config_output or destination / "image-config.json"
     d = load_deployment(args.deployment)
     lock = read_json(ROOT / "images/xenomai-cobalt/inputs.lock.json")
+    require(lock["runner"]["bootstrap"]["version"] == d.require_runs_on().bootstrap_version,
+            "locked bootstrap must match the deployed RunsOn bootstrap version")
     recipe_id, hashes = recipe(lock, d)
     if not args.execute:
         print("Would launch one on-demand Packer builder; a full build also creates an AMI and EBS snapshots.")
@@ -75,7 +77,7 @@ def main(argv=None):
     write_json(stage / "recipe.json", {"recipe_id": recipe_id})
     candidate_tags = {v["Key"]: v["Value"] for v in resource_tags(d, build, "candidate", expiry)}
     candidate_tags.update({"ami-example:recipe-id": recipe_id, "ami-example:retain": str(args.retain).lower()})
-    resource_name = f"ami-example-{d.repository.replace('/', '-')[:48]}-{build}"
+    resource_name = f"ami-example-{d.repository.replace('/', '-')[:48]}-cobalt-{build}"
     key = cloud.call("ec2", "create-key-pair", {
         "KeyName": resource_name, "KeyType": "ed25519",
         "TagSpecifications": [{"ResourceType": "key-pair", "Tags": resource_tags(d, build, "builder", expiry)}],
@@ -126,6 +128,9 @@ def main(argv=None):
         from preflight import inspect_ami
         inspect_ami(cloud, candidate_identity)
         snapshots = [m["Ebs"]["SnapshotId"] for m in candidate["BlockDeviceMappings"] if "Ebs" in m]
+        require(len(snapshots) == 1 and all(m["DeviceName"] == candidate["RootDeviceName"]
+                                          for m in candidate["BlockDeviceMappings"] if "Ebs" in m),
+                "candidate must contain only its root snapshot, without the disposable build disk")
         if args.retain:
             expiry = timestamp(utcnow() + dt.timedelta(hours=d.retain_hours))
             cloud.call("ec2", "create-tags", {"Resources": [ami_id, *snapshots], "Tags": [{"Key": EXPIRY_TAG, "Value": expiry}]})
@@ -142,8 +147,8 @@ def main(argv=None):
             "execution": {"build_id": build,
                           "controller_instance_id": controller["instance_id"], "runs_on_version": d.require_runs_on().version,
                           "tool_versions": {name: pin["version"] for name, pin in lock["tools"].items()},
-                          "inherited_runner_version": image["parent_inventory"]["runner_version"],
-                          "bootstrap_files": image["parent_inventory"]["bootstrap_files"]},
+                          "runner_version": image["runner_inventory"]["runner_version"],
+                          "bootstrap_files": image["runner_inventory"]["bootstrap_files"]},
             "validation": {"direct_boot": {"status": "pending"}, "runs_on": [], "reproducibility": {"status": "pending"}},
             "lifecycle": {"created_at": candidate["CreationDate"], "expires_at": expiry, "retain": args.retain,
                           "artifact_locations": [input_uri, f"s3://{d.artifact_bucket}/{d.repository}/{build}/"],

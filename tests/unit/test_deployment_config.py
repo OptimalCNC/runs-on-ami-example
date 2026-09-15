@@ -7,9 +7,9 @@ import sys
 import unittest
 from unittest.mock import patch
 
-from support import ROOT, deployment, deployment_dict, parent_inventory
+from support import ROOT, deployment, deployment_dict, parent_inventory, source_inventory
 from example import (BuildInputs, CleanupContext, InfrastructureBindings, InvalidInput,
-                     load_bindings, load_cleanup_context, load_deployment, recipe, write_json)
+                     file_sha, load_bindings, load_cleanup_context, load_deployment, recipe, write_json)
 from deployment_config import (OperatorSpec, assemble_bindings, assemble_manifest,
                                bootstrap_values, foundation_inputs, load_spec, management_inputs)
 
@@ -53,6 +53,36 @@ class DeploymentBoundaryTests(unittest.TestCase):
             self.assertEqual(load_cleanup_context(manifest), deployment().cleanup())
             self.assertEqual(load_bindings(manifest).probe_profile_name, "example-probe")
 
+    def test_plain_source_is_accepted_but_controller_requires_runson(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            path = directory / "source.json"
+            write_json(path, source_inventory())
+            value = deployment_dict()
+            value["root_volume_gib"] = 16
+            value["source_ami"].update(inventory_file=str(path), inventory_sha256=file_sha(path))
+            parsed = BuildInputs.parse(value)
+            self.assertIsNone(parsed.source_ami.inventory["runner_version"])
+            self.assertEqual(parsed.controller_ami.inventory, parent_inventory())
+            self.assertEqual((parsed.root_volume_gib, parsed.parent_root_volume_gib), (16, 30))
+            value["controller_ami"] = dict(value["source_ami"])
+            with self.assertRaisesRegex(InvalidInput, "controller parent must contain the GitHub Actions runner"):
+                BuildInputs.parse(value)
+
+    def test_plain_source_still_requires_clean_ubuntu_2404_and_consistent_runner_evidence(self):
+        for change, error in (({"os_version": "22.04"}, "Ubuntu 24.04"),
+                              ({"registered": True}, "not clean"),
+                              ({"workspaces": ["/home/runner/_work/repo"]}, "not clean"),
+                              ({"secure_boot": True}, "Secure Boot"),
+                              ({"runner_listener_sha256": "1" * 64}, "absent runner")):
+            with self.subTest(change=change), tempfile.TemporaryDirectory() as temporary:
+                path = Path(temporary) / "source.json"
+                write_json(path, {**source_inventory(), **change})
+                value = deployment_dict()
+                value["source_ami"].update(inventory_file=str(path), inventory_sha256=file_sha(path))
+                with self.assertRaisesRegex(InvalidInput, error):
+                    BuildInputs.parse(value)
+
     def test_snapshot_detects_evidence_changed_after_loading(self):
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
@@ -85,14 +115,15 @@ class DeploymentBoundaryTests(unittest.TestCase):
                                                for role in ("source", "controller")}
             write_json(root / "bindings.json", bindings)
             records = []
-            for name in ("first", "second"):
+            for name, inventory in (("first", source_inventory()), ("second", parent_inventory())):
                 directory = root / name
                 directory.mkdir()
-                (directory / "inventory.json").write_bytes(original.source_ami.inventory_path.read_bytes())
-                write_json(directory / "parent.json", {**original.source_ami.record(), "inventory_file": "inventory.json"})
+                write_json(directory / "inventory.json", inventory)
+                write_json(directory / "parent.json", {**original.source_ami.record(), "inventory_file": "inventory.json",
+                                                       "inventory_sha256": file_sha(directory / "inventory.json")})
                 records.append(directory / "parent.json")
             result = assemble_manifest(root / "bindings.json", *records, root / "assembled")
-            self.assertEqual(load_deployment(result).source_ami.inventory, parent_inventory())
+            self.assertEqual(load_deployment(result).source_ami.inventory, source_inventory())
             captured = json.loads(records[0].read_text())
             captured["id"] = "ami-22222222222222222"
             write_json(records[0], captured)
@@ -121,9 +152,9 @@ class OperatorAssemblyTests(unittest.TestCase):
                       "subnet_id": "subnet-0123456789abcdef0", "source_ami_id": "ami-0123456789abcdef0", "controller_ami_id": "ami-0123456789abcdef0"}
         parent = {"id": "ami-0123456789abcdef0", "owner": "345678901234", "architecture": "x86_64", "boot_mode": "uefi", "root_volume_gib": 30}
         observed = {"schema_version": 1, **scope, "network": {"subnet_id": "subnet-0123456789abcdef0", "vpc_id": "vpc-0123456789abcdef0", "vpc_cidr": "10.60.0.0/16"},
-                    "instance_type": {"name": "t3.small", "vcpus": 2}, "parents": {"source": parent, "controller": dict(parent)}}
+                    "instance_type": {"name": "t3.small", "vcpus": 2}, "parents": {"source": {**parent, "root_volume_gib": 8}, "controller": dict(parent)}}
         management.update(observed["network"])
-        management.update({key: spec.values[key] for key in ("instance_type", "builder_instance_type", "root_volume_gib")})
+        management.update({key: spec.values[key] for key in ("instance_type", "builder_instance_type", "root_volume_gib", "parent_root_volume_gib")})
         management["foundation"] = dict(foundation)
         service = {**scope, "stack_name": "example-runs-on", "runs_on": {"environment": "ami-example", "version": "3.3.1", "bootstrap_version": "0.1.12"}}
         return foundation, management, observed, service
@@ -154,6 +185,19 @@ class OperatorAssemblyTests(unittest.TestCase):
         values = list(self.fixtures(spec))
         values[2]["parents"]["source"]["owner"] = "999999999999"
         with self.assertRaisesRegex(InvalidInput, "parent selection differs"):
+            assemble_bindings(spec, *values)
+
+    def test_source_volume_must_fit_candidate_independently_of_controller_probe_volume(self):
+        spec = self.make_spec()
+        self.assertEqual((spec.values["root_volume_gib"], spec.values["parent_root_volume_gib"]), (16, 30))
+        values = list(self.fixtures(spec))
+        self.assertEqual(assemble_bindings(spec, *values).root_volume_gib, 16)
+        values[2]["parents"]["source"]["root_volume_gib"] = 17
+        with self.assertRaisesRegex(InvalidInput, "source parent root exceeds candidate"):
+            assemble_bindings(spec, *values)
+        values[2]["parents"]["source"]["root_volume_gib"] = 8
+        values[2]["parents"]["controller"]["root_volume_gib"] = 31
+        with self.assertRaisesRegex(InvalidInput, "controller parent root exceeds"):
             assemble_bindings(spec, *values)
 
     def test_foundation_environment_must_match_requested_oidc_environment(self):

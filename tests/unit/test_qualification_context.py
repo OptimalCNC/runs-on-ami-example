@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import jsonschema
 
-from support import ROOT, FakeCloud, deployment, deployment_dict, guest, module, parent_inventory, result, smoke, tags
+from support import ROOT, FakeCloud, deployment, deployment_dict, guest, module, source_inventory, result, smoke, tags
 from accepted_image import AcceptedImage, selected_record
 from example import BUILD_TAG, InfrastructureBindings, InvalidInput, RUNS_ON_TAG, VerifiedParent, read_json, tags_of, write_json
 from qualification import QualificationRun
@@ -148,15 +148,15 @@ class QualificationContext(unittest.TestCase):
                  patch.object(probe, "Cloud", return_value=cloud), patch.object(probe, "load_deployment") as manifest, \
                  patch.object(probe, "inspect_ami", return_value=image), patch.object(probe, "inspect_instance_type", return_value={}), \
                  patch.object(probe, "inspect_management"), patch.object(probe, "wait_online"), \
-                 patch.object(probe, "command", return_value=parent_inventory()), patch.object(probe, "diagnostics", return_value=[]):
+                 patch.object(probe, "command", return_value=source_inventory()), patch.object(probe, "diagnostics", return_value=[]):
                 probe.main(["--capture-inventory", "--bindings", "bindings.json", "--selection", "selection.json",
                             "--output", "capture", "--build-id", "125-1-stock", "--execute"])
             manifest.assert_not_called()
-            parent = VerifiedParent.load(read_json(output / "parent.json"), output, deployment().require_runs_on())
+            parent = VerifiedParent.load(read_json(output / "parent.json"), output)
             self.assertEqual((parent.id, parent.owner, parent.boot_mode),
                              (selected["id"], selected["owner"], "uefi-preferred"))
             self.assertEqual(parent.inventory_path, output / "inventory.json")
-            self.assertEqual(parent.inventory, parent_inventory())
+            self.assertEqual(parent.inventory, source_inventory())
             self.assertTrue(read_json(output / "probe.json")["terminated"])
             cloud.wait_terminated.assert_called_once_with([instance["InstanceId"]])
 

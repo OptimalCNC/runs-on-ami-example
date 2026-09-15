@@ -28,5 +28,6 @@
   "controller_ami_id": "ami-22222222222222222",
   "instance_type": "t3.small",
   "builder_instance_type": "c7i.large",
-  "root_volume_gib": 80
+  "root_volume_gib": 16,
+  "parent_root_volume_gib": 30
 }

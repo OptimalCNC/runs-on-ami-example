@@ -17,7 +17,7 @@ from runs_on import ReviewedChangeSet, StackAws, StackConfig, public_change_set,
 
 def config(directory, account="111111111111", region="us-west-2", repository="first/project"):
     return StackConfig(account, region, repository, "example-stack", "example", "ami-" + "1" * 17,
-                       "ami-" + "2" * 17, "t3.small", 80, False, "10.70.0.0/16", {},
+                       "ami-" + "2" * 17, "t3.small", 16, 30, False, "10.70.0.0/16", {},
                        directory / "license", directory / "email", "a" * 64)
 
 
@@ -149,7 +149,7 @@ class RunsOnStack(unittest.TestCase):
                     f"arn:aws:iam::{value.account_id}:role/builder",
                     f"arn:aws:iam::{value.account_id}:role/probe"])
                 self.assertEqual(parameters["DeploymentInstanceType"], value.instance_type)
-                self.assertEqual(parameters["DeploymentRootVolumeGiB"], value.root_volume_gib)
+                self.assertEqual(parameters["DeploymentRootVolumeGiB"], max(value.root_volume_gib, value.parent_root_volume_gib))
                 self.assertEqual(parameters["DeploymentSourceAmiId"], value.source_ami_id)
                 self.assertEqual(parameters["DeploymentControllerAmiId"], value.controller_ami_id)
                 template = read_json(self.directory / value.account_id / "template.json")

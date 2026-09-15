@@ -13,7 +13,7 @@ from example import (Cloud, CloudTarget, CleanupContext, ImageIdentity, Infrastr
 
 DEFAULTS = {
     "environment": "ami-build", "name_prefix": "ami-example", "subnet_id": None,
-    "instance_type": "t3.small", "builder_instance_type": "c7i.large", "root_volume_gib": 80,
+    "instance_type": "t3.small", "builder_instance_type": "c7i.large", "root_volume_gib": 16,
     "parent_root_volume_gib": 30, "retain_hours": 24, "private": True,
     "artifact_retention_days": 365, "github_oidc_subject_prefix": None, "infrastructure": {},
     "deadlines": {"boot_seconds": 900, "registration_seconds": 900, "workflow_seconds": 14400},
@@ -47,7 +47,6 @@ class OperatorSpec:
             match(resolved["subnet_id"], r"subnet-[0-9a-f]{17}", "subnet_id")
         for name in ("root_volume_gib", "parent_root_volume_gib"):
             require(type(resolved[name]) is int and 8 <= resolved[name] <= 256, f"{name} must be 8..256")
-        require(resolved["root_volume_gib"] >= resolved["parent_root_volume_gib"], "candidate root must cover parent root")
         require(type(resolved["retain_hours"]) is int and 1 <= resolved["retain_hours"] <= 168, "retain_hours must be 1..168")
         require(type(resolved["artifact_retention_days"]) is int and resolved["artifact_retention_days"] >= 30,
                 "artifact_retention_days must be at least 30")
@@ -165,6 +164,8 @@ class DeploymentObservations:
             require((identity.id, identity.owner) == (selection.id, selection.owner), f"{role} parent selection differs")
             volume = parent["root_volume_gib"]
             require(type(volume) is int and 8 <= volume <= spec.values["parent_root_volume_gib"], f"{role} parent root exceeds selected volume")
+            if role == "source":
+                require(volume <= spec.values["root_volume_gib"], "source parent root exceeds candidate root volume")
             parents[role] = ObservedParent(identity, volume)
         return cls(spec.scope(), {"subnet_id": subnet, "vpc_id": vpc, "vpc_cidr": cidr}, machine["name"], machine["vcpus"], parents)
 
@@ -184,7 +185,7 @@ def management_inputs(spec: OperatorSpec, foundation: dict, observed: dict) -> d
     value = spec.values
     result = {"foundation": foundation, **observed.network,
               "source_ami_id": value["source_ami"]["id"], "controller_ami_id": value["controller_ami"]["id"],
-              **{key: value[key] for key in ("instance_type", "builder_instance_type", "root_volume_gib")}}
+              **{key: value[key] for key in ("instance_type", "builder_instance_type", "root_volume_gib", "parent_root_volume_gib")}}
     if "existing_security_group_id" in value["infrastructure"]:
         result["existing_security_group_id"] = value["infrastructure"]["existing_security_group_id"]
     return result
@@ -202,7 +203,7 @@ def assemble_bindings(spec: OperatorSpec, foundation: dict, management: dict, ob
     observed = DeploymentObservations.parse(spec, observed)
     expected_management = {**observed.network,
                            "source_ami_id": spec.values["source_ami"]["id"], "controller_ami_id": spec.values["controller_ami"]["id"],
-                           **{key: spec.values[key] for key in ("instance_type", "builder_instance_type", "root_volume_gib")}}
+                           **{key: spec.values[key] for key in ("instance_type", "builder_instance_type", "root_volume_gib", "parent_root_volume_gib")}}
     require(all(management.get(key) == value for key, value in expected_management.items()),
             "management policy image or network bindings differ")
     require(service.get("stack_name") == spec.values["runs_on"]["stack_name"], "inspected RunsOn stack differs")
@@ -225,7 +226,7 @@ def assemble_manifest(bindings_path: str | Path, source_parent: str | Path, cont
     selected = {role: ParentSelection.parse(value, role) for role, value in selections.items()}
     bindings = load_bindings(bindings_path)
     installation = bindings.require_runs_on()
-    parents = {"source_ami": load_parent_record(source_parent, installation),
+    parents = {"source_ami": load_parent_record(source_parent),
                "controller_ami": load_parent_record(controller_parent, installation)}
     for role, selection in selected.items():
         parent = parents[role + "_ami"]

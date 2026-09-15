@@ -65,7 +65,7 @@ def prepare(config, foundation, source, lock, directory, output):
                   DeploymentSourceAmiId=config.source_ami_id,
                   DeploymentControllerAmiId=config.controller_ami_id,
                   DeploymentInstanceType=config.instance_type,
-                  DeploymentRootVolumeGiB=config.root_volume_gib,
+                  DeploymentRootVolumeGiB=max(config.root_volume_gib, config.parent_root_volume_gib),
                   DeploymentEbsKeyArn=foundation["ebs_key_arn"],
                   DeploymentManagementRoleArns=roles)
     require(not (set(values) - set(template["Parameters"])), "unsupported vendor template parameter")

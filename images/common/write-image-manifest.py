@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 import subprocess
 import tempfile
-from inventory import packages, sha
+from inventory import inventory, packages, sha
 
 recipe = Path("/opt/ami-example-recipe")
 identity = json.loads((recipe / "recipe.json").read_text())
@@ -57,7 +57,9 @@ image = {"schema_version": 1, "recipe_id": identity["recipe_id"], "kernel_releas
          "xenomai": xenomai, "xenomai_files": xenomai_files,
          "toolchain": {"gcc": subprocess.check_output(["/usr/bin/gcc-13", "--version"], text=True).splitlines()[0],
                        "ld": subprocess.check_output(["/usr/bin/ld.bfd", "--version"], text=True).splitlines()[0]},
-         "parent_inventory": json.loads(Path("/var/lib/ami-example/parent-inventory.json").read_text())}
+         "parent_inventory": json.loads(Path("/var/lib/ami-example/parent-inventory.json").read_text()),
+         "runner_inventory": {key: value for key, value in inventory().items()
+                              if key in ("runner_version", "runner_listener_sha256", "bootstrap_files")}}
 Path("/var/lib/ami-example/packages.tsv").write_text(package_text)
 Path("/etc/ami-example.json").write_text(json.dumps(image, sort_keys=True, indent=2) + "\n")
 Path("/etc/ami-example.json").chmod(0o644)

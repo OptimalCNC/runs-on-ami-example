@@ -70,17 +70,19 @@ resources. Importing a reference does not update that resource's policies:
 | RunsOn installation | Common tag `ami-example:runs-on-repository=<repository>`, fresh ephemeral runners, and no image-publishing role for test guests |
 
 Choose exact regional Ubuntu 24.04 x86-64 parent IDs, verified publishers, and
-boot modes in the specification. The source and controller may use the same
-public parent. An account-owned copy is an optional retention choice. Source
+boot modes in the specification. Use plain Canonical Ubuntu for the source
+and a stock RunsOn image for the controller. An account-owned copy is an optional retention choice. Source
 inventory records the clean parent; a registered controller is not an
 inventory source.
 
 Select the runtime and builder instance types separately. Parent inventory
 and controller disks must fit their selected parents; candidate probes and
 smoke runners must fit the built AMI's root disk. Direct burstable probes use
-Standard CPU credits. The observed RunsOn service version and inherited bootstrap version
-are independent identities, and the captured inventory must match the selected
-bootstrap.
+Standard CPU credits. The default candidate root is 16 GiB; compilation uses an
+additional disposable 16 GiB disk. Parent probes and the stock controller use
+30 GiB roots. The observed RunsOn service and bootstrap versions are independent
+identities. The controller inventory and image's locked bootstrap must match
+the selected bootstrap version.
 
 Top-level `private` selects management-instance public-IP behavior;
 the supported RunsOn policy uses public service subnets and requires

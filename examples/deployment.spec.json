@@ -5,10 +5,10 @@
   "repository": "example-org/example-images",
   "source_ami": {
     "id": "ami-0123456789abcdef0",
-    "owner": "234567890123"
+    "owner": "099720109477"
   },
   "controller_ami": {
-    "id": "ami-0123456789abcdef0",
+    "id": "ami-0fedcba9876543210",
     "owner": "234567890123"
   },
   "runs_on": {

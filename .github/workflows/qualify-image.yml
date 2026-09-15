@@ -292,7 +292,7 @@ jobs:
       - probe
     runs-on:
       - runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.variant }}-a
-      - runner=t3-small-30gb
+      - runner=t3-small-16gb
       - ami=${{ needs.build.outputs.ami_id }}
       - env=ami-example
       - region=${{ needs.configure.outputs.region }}
@@ -351,7 +351,7 @@ jobs:
       - smoke-a
     runs-on:
       - runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.variant }}-b
-      - runner=t3-small-30gb
+      - runner=t3-small-16gb
       - ami=${{ needs.build.outputs.ami_id }}
       - env=ami-example
       - region=${{ needs.configure.outputs.region }}

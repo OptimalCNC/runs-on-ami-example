@@ -190,7 +190,7 @@ data "aws_iam_policy_document" "controller" {
     condition {
       test     = "NumericLessThanEquals"
       variable = "ec2:VolumeSize"
-      values   = [tostring(var.root_volume_gib)]
+      values   = [tostring(max(var.root_volume_gib, var.parent_root_volume_gib, 16))]
     }
   }
   statement {

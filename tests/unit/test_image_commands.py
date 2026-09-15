@@ -18,7 +18,8 @@ class BuildCloud(FakeCloud):
     def __init__(self, deployment):
         super().__init__()
         self.deployment = deployment
-        self.images[0].update(State="available", BootMode="uefi")
+        self.images[0].update(State="available", BootMode="uefi", RootDeviceName="/dev/sda1")
+        self.images[0]["BlockDeviceMappings"][0]["DeviceName"] = "/dev/sda1"
         self.retained_contents = {}
 
     def call(self, service, operation, payload=None):
@@ -191,6 +192,24 @@ class ImageCommands(unittest.TestCase):
         self.assertEqual(self.cloud.retained_contents["789-2-stock/packer.log"], b"packer diagnostics\n")
         self.assertIn("789-2-stock/artifact-index.json", self.cloud.retained)
         self.assertFalse((self.directory / "config/789-2-stock.json").exists())
+
+    def test_candidate_with_disposable_build_disk_is_rejected_with_diagnostics_and_key_cleanup(self):
+        self.cloud.images[0]["BlockDeviceMappings"].append({
+            "DeviceName": "/dev/sdf", "Ebs": {"SnapshotId": "snap-22222222222222222", "VolumeSize": 16}})
+        with self.assertRaisesRegex(InvalidInput, "only its root snapshot, without the disposable build disk"):
+            self.build.main(self.arguments("789-2-one"))
+        output = self.directory / "output/789-2-one"
+        self.assertEqual(self.packer_commands, ["validate", "build"])
+        self.assertEqual(self.cloud.keys, [])
+        self.assertFalse((output / "work/builder-key.pem").exists())
+        self.assertFalse((output / "image-result.json").exists())
+        self.assertFalse((self.directory / "config/789-2-one.json").exists())
+        self.assertEqual(self.cloud.retained_contents["789-2-one/packer.log"], b"packer diagnostics\n")
+        self.assertEqual(self.cloud.retained_contents["789-2-one/inputs.tar"], b"retained build inputs")
+        index = read_json(output / "artifact-index.json")
+        self.assertTrue({"controller.json", "preflight.json", "packer-manifest.json", "image-manifest.json",
+                         "packer.log", "inputs.tar", "deployment/manifest.json"} <= set(index))
+        self.assertIn("789-2-one/artifact-index.json", self.cloud.retained)
 
     def test_malformed_build_id_stops_before_cloud(self):
         for build_id in ("../789-2-stock", "789-0-stock", "789-2-unknown"):

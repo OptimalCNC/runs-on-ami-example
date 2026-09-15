@@ -65,6 +65,21 @@ class AcceptedImage:
                 "accepted image expires before the required lifetime has elapsed")
         return image
 
+    def inspect_latest(self, cloud, name_pattern, minimum_seconds=0):
+        image = self.inspect(cloud, minimum_seconds)
+        images = cloud.call("ec2", "describe-images", {
+            "Owners": [self.account_id],
+            "Filters": [{"Name": "name", "Values": [name_pattern]},
+                        {"Name": "state", "Values": ["available"]},
+                        {"Name": "architecture", "Values": ["x86_64"]}],
+        })["Images"]
+        require(bool(images), "no available image matches the RunsOn name pattern")
+        newest = max(parse_time(candidate["CreationDate"]) for candidate in images)
+        latest = [candidate for candidate in images if parse_time(candidate["CreationDate"]) == newest]
+        require(len(latest) == 1 and latest[0]["ImageId"] == self.ami_id,
+                "latest image matching the RunsOn name pattern has not been accepted; qualify and accept it first")
+        return image
+
 
 def selected_record(result, deployment, checksum, evidence_url=""):
     require(result["status"] == "qualified" and result["lifecycle"]["retain"] is True,
@@ -139,6 +154,7 @@ def main():
             command.add_argument("--build-id", required=True)
         if task == "inspect":
             command.add_argument("--minimum-seconds", type=int, default=0)
+            command.add_argument("--name-pattern", help="require RunsOn's latest matching image to be the accepted image")
         if task == "verify":
             command.add_argument("--smoke", required=True, type=Path)
             command.add_argument("--instance-id", required=True)
@@ -156,7 +172,9 @@ def main():
     cloud = Cloud(deployment)
     if args.task == "inspect":
         require(args.minimum_seconds >= 0, "minimum image lifetime must be nonnegative")
-        write_json(args.output, accepted.inspect(cloud, args.minimum_seconds))
+        image = (accepted.inspect_latest(cloud, args.name_pattern, args.minimum_seconds) if args.name_pattern
+                 else accepted.inspect(cloud, args.minimum_seconds))
+        write_json(args.output, image)
     elif args.task == "verify":
         spec = importlib.util.spec_from_file_location("verify_results", ROOT / "scripts/verify-run-results.py")
         module = importlib.util.module_from_spec(spec)

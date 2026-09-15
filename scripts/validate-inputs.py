@@ -35,6 +35,12 @@ def static_checks(root=ROOT):
     for name, package in lock["os"]["packages"].items():
         require(bool(package["version"]) and "*" not in package["version"], f"unlocked package: {name}")
         match(package["sha256"], SHA256, name + " hash")
+    require(set(lock["os"]["build_only_packages"]) <= set(lock["os"]["packages"]), "unlocked build-only package")
+    for name, pin in lock["runner"].items():
+        match(pin["version"], r"\d+\.\d+\.\d+", name + " version")
+        match(pin["sha256"], SHA256, name + " hash")
+        require(pin["url"].startswith("https://github.com/") and f"/v{pin['version']}/" in pin["url"],
+                f"runner download must select its locked release: {name}")
     for name in lock["recipe_files"]:
         require((root / name).is_file(), f"recipe file missing: {name}")
     config = (root / "images/xenomai-cobalt/kernel.config").read_text()

@@ -25,8 +25,8 @@ authorize Terraform apply, AMI copies, probes, or workflow dispatches.
 | Stage | Resources to approve | Expected lifetime and cleanup |
 | --- | --- | --- |
 | Supporting infrastructure | IAM/OIDC roles, SSM profiles, no-ingress security group, versioned S3 bucket; reuse existing equivalents where selected | Persistent until explicit teardown; IAM and security groups have no direct usage charge, S3 data/requests do |
-| Parent inventory | Launch directly from pinned public RunsOn AMIs; one short EC2 inventory probe, or two if the controller differs | Probes terminate in `finally`, delete their root volumes, and are tagged for orphan sweeping; no parent copy or new snapshot is needed |
-| Stock qualification | One RunsOn controller plus one temporary Packer builder, each with a root EBS volume | Terminated when the job completes; no candidate AMI is created |
+| Parent inventory | Launch one inventory probe from plain Ubuntu and one from the stock RunsOn controller image | Probes terminate in `finally`, delete their root volumes, and are tagged for orphan sweeping; no parent copy or new snapshot is needed |
+| Stock qualification | One RunsOn controller plus one temporary Packer builder with root and disposable build volumes | Terminated when the job completes; no candidate AMI is created |
 | Single-build qualification | One controller, one builder, one direct probe, two fresh RunsOn smoke instances, and one candidate AMI/snapshot set | Instances terminate after testing; candidate retention follows the explicit deployment policy |
 | Retained-image qualification | One direct probe and two fresh RunsOn smoke instances from an existing retained candidate | Verifies the immutable candidate record before launching; terminates new instances and preserves the original image expiry |
 | Accepted-image application | One fresh RunsOn instance from the frozen accepted-image selection | Compiles and runs the Cobalt test, retains evidence, then terminates; does not extend image retention |
@@ -68,8 +68,11 @@ every cleanup job would prevent it from enforcing the intended expiry.
 
 ## Lock the parent images
 
-Resolve exact regional stock RunsOn AMI IDs and owners manually. The build has
-no `most_recent` lookup. Use the pinned public image directly, record its
+Select a plain Canonical Ubuntu 24.04 x86-64 source image and a stock RunsOn
+controller image. Resolve their exact regional AMI IDs and owners, choosing a
+source root no larger than the 16 GiB candidate root. The build uses those
+pinned parents; the application discovers custom images by name pattern.
+Use each pinned public image directly, record its
 exact AMI boot mode (`uefi`, `uefi-preferred`, or `legacy-bios`), and ensure
 Secure Boot is disabled. A `uefi-preferred` parent requires a UEFI-capable
 qualified instance type; the controller verifies that every actual boot uses
@@ -80,13 +83,16 @@ an already deprecated image is rejected. A public parent can be withdrawn by
 its publisher. If longer-term parent availability is needed, obtain separate
 approval for a copy and retain it without disposable build ownership tags.
 
-The parent must already contain the GitHub runner at
-`/home/runner/bin/Runner.Listener`, its clean unregistered runner home, SSH,
-the SSM agent, and `/usr/local/bin/runs-on-bootstrap-[v]<version>` matching
-`runs_on.bootstrap_version`. Record that bootstrap version separately from
-the service's `runs_on.version`; they have independent version numbers.
-GitHub's agent freshness requirements still apply;
-refresh the reviewed parent and lock together when needed. The image input lock
+The source must provide the `ubuntu` user, Python 3, cloud-init, SSH, and the
+SSM agent. Use the standard Ubuntu server AMI with these management tools.
+Provisioning creates `runner` with UID 1001 and passwordless sudo, installs the
+locked GitHub runner under `/home/runner`, and installs the locked bootstrap
+at `/usr/local/bin/runs-on-bootstrap-v<version>`. The controller parent already
+contains its clean, unregistered GitHub runner and RunsOn bootstrap.
+The locked bootstrap version must match `runs_on.bootstrap_version`, which is
+separate from the service's `runs_on.version`.
+Refresh the runner lock and rebuild within GitHub's runner freshness window.
+The image input lock
 selects an immutable Ubuntu snapshot. Choose a compatible parent whose
 packages do not require downgrades; installations refuse downgrades and
 any unreviewed package-state change.
@@ -119,13 +125,14 @@ for the actual region using the rates reviewed for this deployment.
 Capture writes a `parent.json` identity and `inventory.json` evidence into
 the requested output directory. Use a unique build ID for every capture.
 Generate the controller selection with `--parent controller` and capture it
-into a separate directory, or reuse the same parent record when source and
-controller select the same clean image. A registered controller's runtime
+into a separate directory. A registered controller's runtime
 workspace is not clean-parent evidence.
 
-The inventory contains package versions, runner version and binary digest,
-bootstrap paths and digests, and registration, workspace, and Secure Boot
-checks. Resolve the deployment manifest only after these records exist;
+The inventory contains package versions and registration, workspace, and
+Secure Boot checks. Source runner fields are empty; the controller also records
+its runner version, binary digest, and bootstrap paths and digests. The built
+image records its newly installed runner independently of the source inventory.
+Resolve the deployment manifest only after these records exist;
 resolution verifies their hashes and selected identities. The manifest uses
 relative references to the captured inventories. Keep those files together
 when moving a deployment; publishing snapshots the complete input bundle.
@@ -310,8 +317,9 @@ expiry tags are reported through inventory review rather than guessed.
 Each workflow freezes the deployment bundle's exact S3 version and SHA-256
 before launching runners, then saves an explicit execution record. An
 application run also freezes the accepted-image record's exact version and
-digest. Later jobs fetch those exact objects; publishing a new deployment or
-promoting a new image does not change an existing run attempt.
+digest. Later jobs fetch those exact objects. The RunsOn image name pattern is
+resolved at runner launch; if a newer image appears after admission, runtime
+identity checks reject a runner that differs from the frozen accepted record.
 
 Bundles contain the manifest and parent evidence and remain in the private,
 versioned S3 state prefix. Current deployment and accepted-image pointers are

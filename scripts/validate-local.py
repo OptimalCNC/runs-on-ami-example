@@ -62,7 +62,7 @@ def main():
             variables = {
                 "region": "us-east-1", "source_ami": "ami-0123456789abcdef0",
                 "instance_type": "c7i.large", "subnet_id": "subnet-0123456789abcdef0", "security_group_id": "sg-0123456789abcdef0",
-                "builder_profile_name": "ami-example-builder", "root_device_name": "/dev/sda1", "root_volume_gib": 80,
+                "builder_profile_name": "ami-example-builder", "root_device_name": "/dev/sda1", "root_volume_gib": 16,
                 "ami_name": "ami-example-validation", "recipe_directory": str(ROOT / "images"),
                 "output_directory": str(directory), "build_tags": {"ami-example:owner": "example/repo"},
                 "candidate_tags": {"ami-example:owner": "example/repo"}, "associate_public_ip_address": False,
