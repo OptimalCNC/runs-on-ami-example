@@ -1,0 +1,9 @@
+runners:
+  t3-small-30gb:
+    family: ["t3.small"]
+    cpu: [2]
+    image: ubuntu24-full-x64 # Each workflow job overrides this with its exact AMI.
+    volume: 30gb:gp3:125mbs:3000iops
+    spot: false
+    retry: "false"
+    private: false

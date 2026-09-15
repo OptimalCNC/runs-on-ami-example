@@ -131,7 +131,7 @@ def prepare(cloud, context: QualificationRun, source_uri, output, config_output=
     result["lifecycle"]["cleanup"] = {"status": "pending"}
     write_json(destination / "image-result.json", result)
     cloud.retain(destination / "image-result.json", f"{context.build_id}/qualification/image-result.json")
-    config = {"build_id": context.build_id, **d.runner_settings(), "ami_id": result["cloud"]["ami_id"],
+    config = {"build_id": context.build_id, "region": result["cloud"]["region"], "ami_id": result["cloud"]["ami_id"],
               "recipe_id": result["source"]["recipe_id"], "kernel_release": result["payload"]["kernel_release"]}
     write_json(config_output or destination / "image-config.json", config)
     return result

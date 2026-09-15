@@ -9,8 +9,7 @@ def configuration(deployment, build=None):
     config = {"region": deployment.region, "role_arn": deployment.controller_role_arn, "environment": deployment.environment}
     if build is not None:
         build = match(build, r"[1-9][0-9]*-[1-9][0-9]*-(one|two|stock)", "build ID")
-        config.update(deployment.runner_settings(), build_id=build, controller_ami_id=deployment.controller_ami.id,
-                      parent_root_volume_gib=deployment.parent_root_volume_gib)
+        config.update(build_id=build, controller_ami_id=deployment.controller_ami.id)
     return config
 
 

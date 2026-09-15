@@ -43,13 +43,7 @@ jobs:
       execution_sha256: ${{ steps.register.outputs.sha256 }}
       build_id: ${{ steps.config.outputs.build_id }}
       controller_ami_id: ${{ steps.config.outputs.controller_ami_id }}
-      instance_type: ${{ steps.config.outputs.instance_type }}
-      vcpus: ${{ steps.config.outputs.vcpus }}
-      runs_on_environment: ${{ steps.config.outputs.runs_on_environment }}
       region: ${{ steps.config.outputs.region }}
-      private: ${{ steps.config.outputs.private }}
-      root_volume_gib: ${{ steps.config.outputs.root_volume_gib }}
-      parent_root_volume_gib: ${{ steps.config.outputs.parent_root_volume_gib }}
     steps:
       - uses: actions/checkout@v7.0.1
         with:
@@ -132,16 +126,11 @@ jobs:
     if: startsWith(needs.configure.outputs.build_id, format('{0}-{1}-', github.run_id, github.run_attempt))
     needs: configure
     runs-on:
-      - runs-on=${{ needs.configure.outputs.build_id }}-controller
-      - family=${{ needs.configure.outputs.instance_type }}
-      - cpu=${{ needs.configure.outputs.vcpus }}
+      - runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.variant }}-controller
+      - runner=t3-small-30gb
       - ami=${{ needs.configure.outputs.controller_ami_id }}
-      - spot=false
-      - retry=false
-      - env=${{ needs.configure.outputs.runs_on_environment }}
+      - env=ami-example
       - region=${{ needs.configure.outputs.region }}
-      - private=${{ needs.configure.outputs.private }}
-      - volume=${{ needs.configure.outputs.parent_root_volume_gib }}gb:gp3:125mbs:3000iops
     environment: ${{ vars.AMI_DEPLOYMENT_ENVIRONMENT || 'ami-build' }}
     timeout-minutes: 105
     permissions:
@@ -302,16 +291,11 @@ jobs:
       - build
       - probe
     runs-on:
-      - runs-on=${{ needs.configure.outputs.build_id }}-a
-      - family=${{ needs.configure.outputs.instance_type }}
-      - cpu=${{ needs.configure.outputs.vcpus }}
+      - runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.variant }}-a
+      - runner=t3-small-30gb
       - ami=${{ needs.build.outputs.ami_id }}
-      - spot=false
-      - retry=false
-      - env=${{ needs.configure.outputs.runs_on_environment }}
+      - env=ami-example
       - region=${{ needs.configure.outputs.region }}
-      - private=${{ needs.configure.outputs.private }}
-      - volume=${{ needs.configure.outputs.root_volume_gib }}gb:gp3:125mbs:3000iops
     timeout-minutes: 15
     permissions:
       contents: read
@@ -366,16 +350,11 @@ jobs:
       - probe
       - smoke-a
     runs-on:
-      - runs-on=${{ needs.configure.outputs.build_id }}-b
-      - family=${{ needs.configure.outputs.instance_type }}
-      - cpu=${{ needs.configure.outputs.vcpus }}
+      - runs-on=${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.variant }}-b
+      - runner=t3-small-30gb
       - ami=${{ needs.build.outputs.ami_id }}
-      - spot=false
-      - retry=false
-      - env=${{ needs.configure.outputs.runs_on_environment }}
+      - env=ami-example
       - region=${{ needs.configure.outputs.region }}
-      - private=${{ needs.configure.outputs.private }}
-      - volume=${{ needs.configure.outputs.root_volume_gib }}gb:gp3:125mbs:3000iops
     timeout-minutes: 15
     permissions:
       contents: read

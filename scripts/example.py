@@ -286,11 +286,6 @@ class InfrastructureBindings(CleanupContext):
         require(self.runs_on is not None, "configure the actual RunsOn installation before building or routing jobs")
         return self.runs_on
 
-    def runner_settings(self) -> dict:
-        return {"instance_type": self.instance_type, "vcpus": self.vcpus,
-                "runs_on_environment": self.require_runs_on().environment, "region": self.region,
-                "private": self.private, "root_volume_gib": self.root_volume_gib}
-
 
 @dataclasses.dataclass(frozen=True)
 class BuildInputs(InfrastructureBindings):

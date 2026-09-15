@@ -84,9 +84,7 @@ class AcceptedImageContract(unittest.TestCase):
             selected = prepare(deployment(), self.record, "124-2-one")
         self.assertEqual(selected["build_id"], "124-2-one")
         self.assertEqual(selected["ami_id"], "ami-11111111111111111")
-        self.assertEqual(selected["instance_type"], "t3.small")
-        self.assertEqual(selected["runs_on_environment"], "ami-example")
-        self.assertEqual(selected["root_volume_gib"], 80)
+        self.assertEqual(selected["region"], self.accepted.region)
         self.assertEqual(selected["recipe_id"], "1" * 64)
         self.assertEqual(selected["kernel_release"], self.accepted.kernel_release)
         with self.assertRaises(InvalidInput):

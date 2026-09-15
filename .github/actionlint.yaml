@@ -1,4 +1,4 @@
 self-hosted-runner:
   labels:
-    - spot=false
-    - retry=false
+    - runner=t3-small-30gb
+    - env=ami-example

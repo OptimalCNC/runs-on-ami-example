@@ -54,7 +54,7 @@ class Inputs(unittest.TestCase):
                                                 "runs_on": None})
         self.assertIsNone(parsed.runs_on)
         with self.assertRaisesRegex(InvalidInput, "actual RunsOn installation"):
-            parsed.runner_settings()
+            parsed.require_runs_on()
 
     def test_bootstrap_version_is_locked_independently_of_service_version(self):
         value = deployment_dict()

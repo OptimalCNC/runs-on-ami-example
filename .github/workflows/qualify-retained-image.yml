@@ -35,12 +35,7 @@ jobs:
       ami_id: ${{ steps.config.outputs.ami_id }}
       recipe_id: ${{ steps.config.outputs.recipe_id }}
       kernel_release: ${{ steps.config.outputs.kernel_release }}
-      instance_type: ${{ steps.config.outputs.instance_type }}
-      vcpus: ${{ steps.config.outputs.vcpus }}
-      runs_on_environment: ${{ steps.config.outputs.runs_on_environment }}
       region: ${{ steps.config.outputs.region }}
-      private: ${{ steps.config.outputs.private }}
-      root_volume_gib: ${{ steps.config.outputs.root_volume_gib }}
     steps:
       - uses: actions/checkout@v7.0.1
         with:
@@ -199,16 +194,11 @@ jobs:
       - prepare
       - probe
     runs-on:
-      - runs-on=${{ needs.prepare.outputs.build_id }}-a
-      - family=${{ needs.prepare.outputs.instance_type }}
-      - cpu=${{ needs.prepare.outputs.vcpus }}
+      - runs-on=${{ github.run_id }}-${{ github.run_attempt }}-one-a
+      - runner=t3-small-30gb
       - ami=${{ needs.prepare.outputs.ami_id }}
-      - spot=false
-      - retry=false
-      - env=${{ needs.prepare.outputs.runs_on_environment }}
+      - env=ami-example
       - region=${{ needs.prepare.outputs.region }}
-      - private=${{ needs.prepare.outputs.private }}
-      - volume=${{ needs.prepare.outputs.root_volume_gib }}gb:gp3:125mbs:3000iops
     timeout-minutes: 15
     permissions:
       contents: read
@@ -262,16 +252,11 @@ jobs:
       - probe
       - smoke-a
     runs-on:
-      - runs-on=${{ needs.prepare.outputs.build_id }}-b
-      - family=${{ needs.prepare.outputs.instance_type }}
-      - cpu=${{ needs.prepare.outputs.vcpus }}
+      - runs-on=${{ github.run_id }}-${{ github.run_attempt }}-one-b
+      - runner=t3-small-30gb
       - ami=${{ needs.prepare.outputs.ami_id }}
-      - spot=false
-      - retry=false
-      - env=${{ needs.prepare.outputs.runs_on_environment }}
+      - env=ami-example
       - region=${{ needs.prepare.outputs.region }}
-      - private=${{ needs.prepare.outputs.private }}
-      - volume=${{ needs.prepare.outputs.root_volume_gib }}gb:gp3:125mbs:3000iops
     timeout-minutes: 15
     permissions:
       contents: read

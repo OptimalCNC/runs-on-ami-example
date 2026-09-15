@@ -136,12 +136,6 @@ class ImageCommands(unittest.TestCase):
                 if build_id:
                     self.assertEqual(value["build_id"], build_id)
                     self.assertEqual(value["controller_ami_id"], "ami-0123456789abcdef0")
-                    self.assertEqual(value["instance_type"], "t3.small")
-                    self.assertEqual(value["vcpus"], 2)
-                    self.assertEqual(value["runs_on_environment"], "ami-example")
-                    self.assertIs(value["private"], True)
-                    self.assertEqual(value["parent_root_volume_gib"], 30)
-                    self.assertEqual(value["root_volume_gib"], 80)
                 else:
                     self.assertEqual(set(value), {"region", "role_arn", "environment"})
         self.cloud_factory.assert_not_called()
