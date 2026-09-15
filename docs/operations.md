@@ -1,12 +1,19 @@
 # Operating the Ubuntu 24.04 Xenomai Cobalt example
 
-This document owns the transition from local implementation to an approved,
-qualified AWS deployment, and the operation of its disposable resources.
+**Status:** Legacy reference. The combined image build, qualification,
+application, and automatic cleanup workflows are retired. Use the dedicated
+[RunsOn installation guide](../runs-on/README.md) for current deployment and its
+stock-image smoke test. The independent image build/publishing module comes
+next, followed by RunsOn execution.
+
+This document records the former pipeline's execution model and preserves
+standalone recovery procedures for its existing resources and evidence.
 The image payload is a Dovetail-enabled Linux kernel with Xenomai 3 Cobalt
 integration and matching userspace development tools in `/usr/xenomai`.
 Local checks cannot establish EC2 bootability, SSM networking, RunsOn
 registration, IAM correctness in a particular account, or reproducibility of
-compiled payloads. Those claims require the live stages below.
+compiled payloads. The former live stages below describe what its historical
+qualification evidence establishes.
 
 ## Cost approval and execution stages
 
@@ -48,23 +55,19 @@ Artifacts = retained S3 GiB, object requests, versions, and GitHub artifact stor
 Other = public IPv4 hours, existing NAT processing/egress, and applicable GitHub runner minutes
 ```
 
-The independent GitHub-hosted watchdog remains running while the image builds;
-include its minutes, especially for private repositories. Any optionally
+The former GitHub-hosted watchdog ran while the image built; its minutes were
+part of execution costs, especially for private repositories. Any optionally
 retained parent snapshots and S3 inputs continue to cost after candidate cleanup. RunsOn
 installation/licensing and any new NAT gateway or VPC endpoint need a separate
 resource plan if no suitable installation/network exists; this Terraform root
-does not create them. Independent manual dispatches can overlap and multiply
-the estimate. They never automatically cancel an older build.
+does not create them. Independent manual dispatches could overlap and multiply
+the estimate.
 
-For another execution, use a new manual dispatch or re-run all jobs. Partial
-reruns are rejected when earlier job outputs refer to another execution, and
-comparison artifacts are selected for the current run attempt only.
-
-Enable `AMI_EXAMPLE_CLOUD_ENABLED=true` only after approving the chosen scope.
-Keep the protected GitHub environment restricted to reviewed branches. The
-hourly cleanup schedule relies on that environment being able to run
-unattended after the initial approval. Requiring a new manual reviewer for
-every cleanup job would prevent it from enforcing the intended expiry.
+The retired dispatches and hourly cleanup schedule no longer run.
+`AMI_EXAMPLE_CLOUD_ENABLED` and the former workflow environment settings do not
+enable a current image pipeline. Review any retained resources using the
+[standalone cleanup commands](#artifacts-and-cleanup); retain their source
+context and operator access until cleanup is complete.
 
 ## Lock the parent images
 
@@ -230,33 +233,16 @@ The Packer bound covers preparation, compilation, input transfer, and AWS
 snapshot availability. Size the builder and choose deadlines for the selected
 parent, image payload, and regional conditions.
 
-The independent watchdog reports job failures and deadline violations. Its
-workflow calls GitHub's cancellation API when monitoring fails or a deadline
-expires; an ordinary upstream job failure leaves finalization running.
-A job that never acquires a runner does not need to run a timeout handler.
-The default-branch `workflow_run` cleanup reacts when the cancelled workflow
-completes, and an hourly sweep removes expired example-owned orphans if a
-controller or finalizer disappeared. GitHub scheduling delays, credential
-outages or disabled workflows can delay that sweep; keep an operational
-owner able to run the same cleanup command directly.
+The retired watchdog cancelled failed or overdue GitHub executions, while
+default-branch completion and hourly cleanup triggers recovered owned orphans.
+Those workflows have been removed. Recovery now requires an operator to run
+the standalone cleanup commands with the saved context.
 
-After normal qualification, approve and run both drills:
-
-1. Dispatch `stage=qualification`, `fault=probe-identity`, `retain=false`.
-   The controller deliberately expects the wrong kernel in the direct probe.
-   The probe must fail, terminate, retain console/initialization evidence, and
-   prevent either candidate smoke job from running. Finalization must dispose
-   of owned candidates and snapshots.
-2. Dispatch a fresh build and cancel it while its builder is active. Confirm
-   the separate cleanup workflow runs from the default branch, the temporary
-   builder/probe/test instances reach `terminated`, and no disposable AMI,
-   detached volume, snapshot or key pair remains for that run. Verify the
-   hourly sweep too, or invoke its expired-resource path after a deliberately
-   short test expiry in a reviewed deployment change.
-
-Record exact execution IDs and evidence for success, controlled failure,
-and interruption in the deployment's private records. Report which drills
-were actually completed for that deployment.
+The historical failure drills covered an intentional probe identity mismatch
+and cancellation during an active build. Their evidence should identify the
+execution, retained diagnostics, terminated instances, and disposal of owned
+AMIs and snapshots. These drills are not available as current workflow
+dispatches; preserve existing results for the independent modules' migration.
 
 ## Artifacts and cleanup
 
@@ -285,8 +271,8 @@ The input archive's versioned location is also in the image result.
 
 Review cleanup using the saved cleanup context. It contains the owning
 repository, account, region, and artifact bucket and remains usable without
-parent inventories or an accepted image. A workflow saves this context when
-it fetches the deployment bundle. Standalone cleanup can take the bindings
+parent inventories or an accepted image. The retired workflows saved this
+context when fetching the deployment bundle. Standalone cleanup can take the bindings
 file, from which it reads only these four fields, or a saved minimal context.
 The following commands only review resources:
 
@@ -314,12 +300,12 @@ unavailable; image/snapshot evidence is preserved for recovery. Snapshots
 referenced by any remaining account AMI are never deleted. Missing or malformed
 expiry tags are reported through inventory review rather than guessed.
 
-Each workflow freezes the deployment bundle's exact S3 version and SHA-256
-before launching runners, then saves an explicit execution record. An
-application run also freezes the accepted-image record's exact version and
-digest. Later jobs fetch those exact objects. The RunsOn image name pattern is
-resolved at runner launch; if a newer image appears after admission, runtime
-identity checks reject a runner that differs from the frozen accepted record.
+The retired workflows froze the deployment bundle's exact S3 version and
+SHA-256 before launching runners, then saved an explicit execution record.
+Application runs also froze the accepted-image record's exact version and
+digest. Their runtime identity checks rejected a runner that differed from the
+frozen accepted record. Use those saved identities when recovering historical
+executions.
 
 Bundles contain the manifest and parent evidence and remain in the private,
 versioned S3 state prefix. Current deployment and accepted-image pointers are

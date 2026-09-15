@@ -1,10 +1,14 @@
 # Xenomai Cobalt example infrastructure
 
-The infrastructure connects an AWS deployment to the reusable image recipe.
-Terraform provisions or imports the foundation identities and artifact store,
-then configures image-management access after the RunsOn network is known.
-The RunsOn adapter prepares and manages the pinned vendor CloudFormation
-stack. A deployment may also import an existing compatible installation.
+**Status:** Legacy infrastructure reference for the retired combined image
+pipeline. New installations use the dedicated [RunsOn module](../runs-on/README.md),
+which exports independent installation and publishing contracts. Image build
+and publishing are being implemented next, followed by RunsOn execution.
+
+The infrastructure below supported an EC2/Packer controller, foundation
+identities, an artifact store, and image-management access. Its RunsOn adapter
+managed a vendor CloudFormation stack. Keep this reference and existing states
+for migration and recovery of those resources.
 
 Terraform and AWS provider versions are pinned in the source, with provider
 lock files committed beside their roots. Operator inputs, Terraform state,
@@ -102,9 +106,9 @@ long-lived access key outside Terraform so it does not enter Terraform state.
 
 ## Trust and authorization
 
-The controller's OIDC trust matches the actual repository subject plus
-`:environment:<environment>`, with audience `sts.amazonaws.com`. Select the
-protected GitHub environment through the repository variable
+The legacy controller's OIDC trust matches the actual repository subject plus
+`:environment:<environment>`, with audience `sts.amazonaws.com`. Its protected
+GitHub environment was selected through the repository variable
 `AMI_DEPLOYMENT_ENVIRONMENT` (default `ami-build`), matching the specification.
 The RunsOn service environment is a separate setting. Read the
 repository's subject configuration with
@@ -148,12 +152,17 @@ build. SSM SSH sessions use role-session names beginning `ami-example-`.
 Retained parent copies, if selected, use a separately reviewed bootstrap
 operation and do not receive disposable-build ownership tags.
 
-Watchdogs use GitHub `actions:write` for bounded cancellation. Smoke jobs
-have `contents:read` and no OIDC or image-management role. Recovery runs
-trusted default-branch code, consumes the saved execution context, and
-selects resources by live identity and ownership checks.
+The retired watchdogs used GitHub `actions:write` for bounded cancellation, and
+image smoke jobs used `contents:read` without an image-management role. Their
+default-branch recovery workflow is also retired. Use the saved execution
+context with the [standalone cleanup commands](../docs/operations.md#artifacts-and-cleanup)
+to recover remaining legacy resources.
 
 ## Review and apply
+
+The commands below document the retired infrastructure sequence and its state
+formats. Use them to understand or recover existing legacy resources. Follow
+the [current installation guide](../runs-on/README.md) when provisioning RunsOn.
 
 For an existing deployment, preserve a backup of Terraform state and follow
 [`state-migration.json`](state-migration.json) before planning the split roots.
@@ -177,8 +186,8 @@ existing prefix cannot be recovered from the legacy Terraform inputs.
 The accepted-image record is preserved locally without promotion. This
 command performs no cloud operation or Terraform state application.
 
-Bootstrap follows the dependencies below. Save each plan and its outputs
-under the private deployment directory; review resource and cost changes
+The former bootstrap followed the dependencies below. Save each plan and its
+outputs under the private deployment directory; review resource and cost changes
 before applying an exact plan.
 
 1. Provision or import the foundation identities and artifact store. The
@@ -194,8 +203,8 @@ before applying an exact plan.
 5. Resolve the specification, bindings, and parent records into the manifest,
    then validate and publish the deployment bundle.
 
-For a new deployment, generate the foundation inputs and save an explicit
-Terraform plan. The commands below use local state in `.deployment/`; use a
+The former deployment generated foundation inputs and saved an explicit
+Terraform plan. These commands use local state in `.deployment/`; use a
 protected backend instead when multiple operators share ownership.
 
 ```sh
@@ -348,7 +357,7 @@ python3 scripts/deployment-state.py publish \
   --output .deployment/state/published.json
 ```
 
-Generate the GitHub setup values from the resolved bindings:
+The legacy GitHub setup values can be recovered from the resolved bindings:
 
 ```sh
 python3 scripts/deployment-config.py bootstrap \
@@ -356,13 +365,12 @@ python3 scripts/deployment-config.py bootstrap \
   --output .deployment/state/github-settings.json
 ```
 
-Configure `AMI_CONTROLLER_ROLE_ARN`, `AMI_REGION`, and `AMI_STATE_URI` in the
-selected protected GitHub environment. The state URI is the prefix used by
-`publish`, within the configured artifact bucket. Workflows authenticate
-through OIDC, freeze the bundle's exact S3 version and SHA-256, and pass the
-resolved manifest explicitly to commands. Keep deployment bundles and image
-selection records in private versioned state; GitHub artifacts contain only
-the reports selected by the workflow.
+The retired workflows consumed `AMI_CONTROLLER_ROLE_ARN`, `AMI_REGION`, and
+`AMI_STATE_URI` from the selected protected GitHub environment. The state URI
+was the prefix used by `publish`, within the artifact bucket. Retain deployment
+bundles, image selections, and required operator access while legacy resources
+remain; these settings are not consumed by the current installation smoke
+workflow.
 
 
 Use a protected Terraform backend for a shared deployment. The artifact
