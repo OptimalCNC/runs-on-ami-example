@@ -22,7 +22,9 @@ jobs:
           echo "$GITHUB_WORKSPACE/.tools/bin" >> "$GITHUB_PATH"
           echo "PACKER_PLUGIN_PATH=$GITHUB_WORKSPACE/.tools/plugins" >> "$GITHUB_ENV"
       - run: python3 -m pip install --require-hashes -r requirements-validation.txt
+      - run: python3 -m pip install -r images/requirements.txt
       - run: python3 scripts/validate-local.py --tools
+      - run: python3 -m unittest discover -s images/tests -v
 
   installation:
     runs-on: ubuntu-24.04

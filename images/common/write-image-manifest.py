@@ -36,7 +36,7 @@ normalized_paths = ["/etc/default/grub.d/99-ami-example.cfg", "/etc/apt/sources.
                     "/usr/local/bin/runner-image-env", "/usr/local/bin/ami-example-smoke",
                     "/usr/local/bin/ami-example-guest-report", "/etc/fstab", "/boot/grub/grub.cfg",
                     "/etc/security/limits.d/99-xenomai.conf", "/etc/systemd/system.conf.d/99-xenomai.conf",
-                    "/etc/ld.so.conf.d/xenomai.conf"]
+                    "/etc/ld.so.conf.d/xenomai.conf", "/etc/udev/rules.d/99-xenomai.rules"]
 with tempfile.TemporaryDirectory(prefix="ami-example-initramfs-") as temporary:
     subprocess.run(["unmkinitramfs", f"/boot/initrd.img-{release}", temporary], check=True)
     initramfs_content = {}

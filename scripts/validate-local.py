@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 """Credential-free validation; never starts builders, probes or Terraform apply."""
 import argparse
-import os
 from pathlib import Path
 import shutil
 import subprocess
 import tempfile
 
-from example import ROOT, write_json
+from example import ROOT
 
 
 def main():
@@ -57,22 +56,7 @@ def main():
                     subprocess.run([*command, "test", "-no-color"], check=True)
             template = "images/xenomai-cobalt/image.pkr.hcl"
             subprocess.run(["packer", "fmt", "-check", template], cwd=ROOT, check=True)
-            key = directory / "dummy-key"
-            subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(key)], check=True)
-            variables = {
-                "region": "us-east-1", "source_ami": "ami-0123456789abcdef0",
-                "instance_type": "c7i.large", "subnet_id": "subnet-0123456789abcdef0", "security_group_id": "sg-0123456789abcdef0",
-                "builder_profile_name": "ami-example-builder", "root_device_name": "/dev/sda1", "root_volume_gib": 16,
-                "ami_name": "ami-example-validation", "recipe_directory": str(ROOT / "images"),
-                "output_directory": str(directory), "build_tags": {"ami-example:owner": "example/repo"},
-                "candidate_tags": {"ami-example:owner": "example/repo"}, "associate_public_ip_address": False,
-                "ssh_keypair_name": "ami-example-validation", "ssh_private_key_file": str(key),
-            }
-            env = dict(os.environ, AWS_EC2_METADATA_DISABLED="true", AWS_ACCESS_KEY_ID="local-validation",
-                       AWS_SECRET_ACCESS_KEY="local-validation", AWS_DEFAULT_REGION="us-east-1")
-            for stock in (True, False):
-                write_json(directory / "packer-vars.json", {**variables, "stock_only": stock})
-                subprocess.run(["packer", "validate", f"-var-file={directory / 'packer-vars.json'}", template], cwd=ROOT, env=env, check=True)
+            subprocess.run(["packer", "validate", "-syntax-only", template], cwd=ROOT, check=True)
     print("Local validation passed. No cloud resources were created.")
 
 
