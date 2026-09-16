@@ -103,7 +103,7 @@ and reports `status: passed` only after the checks succeed.
 
 This establishes boot and functional Cobalt execution on the selected VM.
 EC2 launch, RunsOn bootstrap integration, runner registration, and job scheduling
-belong to the separate RunsOn execution module. Functional validation does not
+belong to the separate [RunsOn execution module](../execution/README.md). Functional validation does not
 measure real-time latency.
 
 The [Build and validate image workflow](../.github/workflows/image-build-validate.yml)
@@ -161,9 +161,11 @@ encryption key, waits for its snapshot, registers a UEFI x86-64 AMI with ENA
 support, and checks the resulting identity. It does not run Build or Validate;
 choose the artifact whose validation evidence you accept. Successful publication
 writes `published-image.yaml` with `status: available`, the AMI and snapshot IDs,
-source disk digest, target identity, and compatibility requirements. Availability
-is an AWS publication result; RunsOn execution will establish runtime
-qualification.
+source disk digest, baked-manifest digest (`artifact.manifest_sha256`), target
+identity, and compatibility requirements. [RunsOn execution](../execution/README.md)
+checks the guest manifest against that digest before accepting its kernel and
+SDK evidence. Availability is an AWS publication result; execution establishes
+runtime qualification.
 
 The current upload includes zero blocks to preserve encrypted snapshot data, so
 a sparse 16 GiB raw disk still transfers its full logical 16 GiB. Publication

@@ -86,6 +86,7 @@ class BuiltImage:
     disk_size_bytes: int
     recipe_id: str
     manifest_path: Path
+    manifest_sha256: str
     manifest: dict
     compatibility: Compatibility
 
@@ -124,4 +125,4 @@ class BuiltImage:
             raise ValueError("payload must identify the Cobalt kernel and SDK")
         if sha256(disk_path) != disk_digest:
             raise ValueError("raw disk checksum differs from build record")
-        return cls(path, disk_path, disk_digest, size, recipe, manifest_path, manifest, compatibility)
+        return cls(path, disk_path, disk_digest, size, recipe, manifest_path, manifest_digest, manifest, compatibility)
