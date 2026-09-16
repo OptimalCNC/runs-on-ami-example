@@ -99,7 +99,6 @@ DefaultLimitMEMLOCK=infinity
 DefaultLimitRTPRIO=99
 EOF
 install -m 0755 "$recipe/images/common/runner-image-env" /usr/local/bin/runner-image-env
-install -m 0755 "$recipe/images/xenomai-cobalt/smoke.sh" /usr/local/bin/ami-example-smoke
 install -m 0755 "$recipe/images/common/guest-report.py" /usr/local/bin/ami-example-guest-report
 bash "$recipe/images/xenomai-cobalt/build-kernel.sh"
 # Keep the application toolchain; remove tools used only to build the image and

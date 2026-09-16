@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Install exact, checksum-verified tools in an unprivileged local directory."""
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -10,7 +11,16 @@ import tarfile
 import urllib.request
 import zipfile
 
-from example import ROOT, file_sha, read_json, require
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def file_sha(path):
+    with path.open("rb") as source:
+        return hashlib.file_digest(source, "sha256").hexdigest()
+
+
+def read_json(path):
+    return json.loads(path.read_text())
 
 
 def install(name, spec, destination):
@@ -20,7 +30,8 @@ def install(name, spec, destination):
     if not archive.exists() or file_sha(archive) != spec["sha256"]:
         with urllib.request.urlopen(spec["url"], timeout=60) as source, archive.open("wb") as target:
             shutil.copyfileobj(source, target)
-    require(file_sha(archive) == spec["sha256"], f"download checksum mismatch: {name}")
+    if file_sha(archive) != spec["sha256"]:
+        raise ValueError(f"download checksum mismatch: {name}")
     unpacked = destination / name
     unpacked.mkdir(parents=True, exist_ok=True)
     if archive.suffix == ".zip":
@@ -34,7 +45,7 @@ def install(name, spec, destination):
         with tarfile.open(archive) as source:
             source.extractall(unpacked, filter="data")
     else:
-        subprocess.run(["dpkg-deb", "-x", str(archive), str(unpacked)], check=True)
+        raise ValueError(f"unsupported tool archive: {archive.name}")
     binary_dir = destination / "bin"
     binary_dir.mkdir(exist_ok=True)
     if name == "aws_cli":
@@ -48,7 +59,7 @@ def install(name, spec, destination):
     else:
         source = unpacked / spec["binary"]
         source.chmod(0o755)
-        target = binary_dir / ("session-manager-plugin" if name == "session_manager" else name)
+        target = binary_dir / name
         target.unlink(missing_ok=True)
         target.symlink_to(source)
     print(f"Installed {name} {spec['version']}")

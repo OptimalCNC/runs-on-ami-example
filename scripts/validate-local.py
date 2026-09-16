@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-"""Credential-free validation; never starts builders, probes or Terraform apply."""
+"""Check image and installation modules without creating cloud resources."""
 import argparse
+import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 
-from example import ROOT
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def main():
@@ -17,10 +19,14 @@ def main():
     args = parser.parse_args()
     if args.cobalt_runtime and not args.xenomai_prefix:
         parser.error("--cobalt-runtime requires --xenomai-prefix")
-    subprocess.run(["python3", "scripts/validate-inputs.py"], cwd=ROOT, check=True)
-    subprocess.run(["python3", "-m", "unittest", "discover", "-s", "tests/unit", "-v"], cwd=ROOT, check=True)
-    for path in sorted((ROOT / "images").rglob("*.sh")):
-        subprocess.run(["bash", "-n", str(path)], check=True)
+    subprocess.run([sys.executable, "scripts/validate-inputs.py"], cwd=ROOT, check=True)
+    for tests in ("images/tests", "runs-on/tests"):
+        subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", tests, "-v"], cwd=ROOT, check=True)
+    for directory, subdirectories, files in os.walk(ROOT / "images"):
+        subdirectories[:] = sorted(name for name in subdirectories if not name.startswith("."))
+        for name in sorted(files):
+            if name.endswith(".sh"):
+                subprocess.run(["bash", "-n", str(Path(directory) / name)], check=True)
     with tempfile.TemporaryDirectory(prefix="ami-example-validate-") as temporary:
         directory = Path(temporary)
         if args.xenomai_prefix:
@@ -35,25 +41,31 @@ def main():
             print("Cobalt application build and execution require the Cobalt SDK and kernel; not run locally.", flush=True)
         if args.tools:
             subprocess.run(["actionlint", "-shellcheck=", *map(str, (ROOT / ".github/workflows").glob("*.yml"))], check=True)
-            terraform_cache = ROOT / "infra/.terraform/providers"
-            for terraform_root in ("infra/foundation", "infra", "infra/operator"):
+            for terraform_root in ("runs-on/bootstrap", "runs-on/deployment"):
                 source = ROOT / terraform_root
                 target = directory / terraform_root
                 target.mkdir(parents=True, exist_ok=True)
                 # Validate reusable source with synthetic inputs, independent of local state/tfvars.
-                for pattern in ("*.tf", ".terraform.lock.hcl", "*.tfvars.json.example"):
+                for pattern in ("*.tf", ".terraform.lock.hcl"):
                     for path in source.glob(pattern):
                         shutil.copyfile(path, target / path.name)
                 if (source / "tests").is_dir():
                     shutil.copytree(source / "tests", target / "tests")
                 command = ["terraform", f"-chdir={target}"]
-                subprocess.run([*command, "fmt", "-check", "-recursive"], check=True)
-                plugins = [f"-plugin-dir={terraform_cache}"] if terraform_cache.is_dir() else []
-                subprocess.run([*command, "init", "-backend=false", "-input=false", "-lockfile=readonly", *plugins], check=True)
-                terraform_cache = target / ".terraform/providers"
-                subprocess.run([*command, "validate"], check=True)
+                environment = {key: value for key, value in os.environ.items()
+                               if not key.startswith(("TF_VAR_", "TF_CLI_ARGS"))}
+                environment.update(TF_DATA_DIR=str(target / ".terraform"),
+                                   TF_WORKSPACE="default", TF_IN_AUTOMATION="true")
+                subprocess.run([*command, "fmt", "-check", "-recursive"], env=environment, check=True)
+                caches = (ROOT / "runs-on/.local/terraform" / source.name / "providers",
+                          source / ".terraform/providers")
+                terraform_cache = next((path for path in caches if path.is_dir()), None)
+                plugins = [f"-plugin-dir={terraform_cache}"] if terraform_cache else []
+                subprocess.run([*command, "init", "-backend=false", "-input=false", "-lockfile=readonly", *plugins],
+                               env=environment, check=True)
+                subprocess.run([*command, "validate"], env=environment, check=True)
                 if (target / "tests").is_dir():
-                    subprocess.run([*command, "test", "-no-color"], check=True)
+                    subprocess.run([*command, "test", "-no-color"], env=environment, check=True)
             template = "images/xenomai-cobalt/image.pkr.hcl"
             subprocess.run(["packer", "fmt", "-check", template], cwd=ROOT, check=True)
             subprocess.run(["packer", "validate", "-syntax-only", template], cwd=ROOT, check=True)

@@ -14,7 +14,14 @@ import unittest
 from unittest.mock import patch
 import zipfile
 
-from support import ROOT, module
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def module(name):
+    spec = importlib.util.spec_from_file_location(name.replace("-", "_"), ROOT / "scripts" / (name + ".py"))
+    result = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(result)
+    return result
 
 
 def image_environment_module():
@@ -46,43 +53,6 @@ class SourceInventory(unittest.TestCase):
             self.assertIsNone(captured["runner_listener_sha256"])
             self.assertEqual(captured["bootstrap_files"], {})
             self.assertEqual(captured["packages_sha256"], hashlib.sha256(packages.encode()).hexdigest())
-
-
-class StandaloneSmoke(unittest.TestCase):
-    def test_identity_uses_explicit_inputs_without_runner_environment(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            directory = Path(temporary)
-            reporter = directory / "ami-example-guest-report"
-            reporter.write_text(
-                "#!/usr/bin/python3\n"
-                "import json, pathlib, sys\n"
-                "args = dict(zip(sys.argv[1::2], sys.argv[2::2]))\n"
-                "pathlib.Path(args.pop('--output')).write_text(json.dumps(args))\n"
-            )
-            reporter.chmod(0o755)
-            output = directory / "reports with spaces"
-            completed = subprocess.run([
-                "/bin/bash", str(ROOT / "images/xenomai-cobalt/smoke.sh"), "identity",
-                "--release", "6.12.90-cip24-xenomai-cobalt", "--recipe", "a" * 64,
-                "--build-id", "123-1-one", "--stage", "a", "--output", str(output),
-            ], env={"PATH": f"{directory}:/usr/bin:/bin"}, capture_output=True, text=True)
-            self.assertEqual(completed.returncode, 0, completed.stderr)
-            self.assertEqual(json.loads((output / "identity.json").read_text()), {
-                "--release": "6.12.90-cip24-xenomai-cobalt", "--recipe": "a" * 64,
-                "--build-id": "123-1-one", "--stage": "a",
-            })
-
-    def test_test_command_requires_source_before_creating_outputs(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            output = Path(temporary) / "reports"
-            completed = subprocess.run([
-                "/bin/bash", str(ROOT / "images/xenomai-cobalt/smoke.sh"), "test",
-                "--release", "6.12.90", "--recipe", "a" * 64, "--build-id", "123-1-one",
-                "--stage", "a", "--output", str(output),
-            ], env={"PATH": "/usr/bin:/bin"}, capture_output=True, text=True)
-            self.assertEqual(completed.returncode, 2)
-            self.assertIn("test requires --source", completed.stderr)
-            self.assertFalse(output.exists())
 
 
 class ImageEnvironment(unittest.TestCase):

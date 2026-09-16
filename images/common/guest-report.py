@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Guest observations with optional EC2 identity for controller checks."""
+"""Guest observations with optional EC2 identity for execution reports."""
 import argparse
 import glob
 import gzip
@@ -103,25 +103,10 @@ def main():
     parser.add_argument("--release", required=True)
     parser.add_argument("--recipe", required=True)
     parser.add_argument("--output")
-    parser.add_argument("--stage", choices=("probe", "a", "b"), default="probe")
-    parser.add_argument("--build-id")
     parser.add_argument("--environment", action="store_true")
     parser.add_argument("--platform", choices=("ec2", "vm"), default="ec2")
     args = parser.parse_args()
-    if args.platform == "vm" and args.stage != "probe":
-        parser.error("runner freshness stages require EC2 identity")
     result = report(args.release, args.recipe, args.platform)
-    if args.stage in ("a", "b"):
-        if not args.build_id or not re.fullmatch(r"[1-9]\d*-[1-9]\d*-(one|two)", args.build_id):
-            raise ValueError("invalid sentinel build ID")
-        sentinel = Path(f"/var/tmp/ami-example-{args.build_id}-sentinel")
-        if not args.environment:
-            if sentinel.exists():
-                raise ValueError(f"freshness sentinel exists: {sentinel}")
-            if args.stage == "a":
-                with sentinel.open("x") as stream:
-                    stream.write(result["identity"]["instanceId"] + "\n")
-        result.update({"stage": args.stage, "sentinel": str(sentinel), "sentinel_absent_at_start": True})
     if args.environment:
         image = json.loads(Path("/etc/ami-example.json").read_text())
         for key, value in {"AMI_EXAMPLE_RECIPE_ID": args.recipe, "AMI_EXAMPLE_KERNEL_RELEASE": args.release,

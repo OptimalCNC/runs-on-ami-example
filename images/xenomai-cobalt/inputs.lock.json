@@ -249,8 +249,7 @@
     "images/xenomai-cobalt/build-kernel.sh",
     "images/xenomai-cobalt/image.pkr.hcl",
     "images/xenomai-cobalt/kernel.config",
-    "images/xenomai-cobalt/provision.sh",
-    "images/xenomai-cobalt/smoke.sh"
+    "images/xenomai-cobalt/provision.sh"
   ],
   "runner": {
     "bootstrap": {
