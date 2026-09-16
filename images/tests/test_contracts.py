@@ -46,6 +46,7 @@ class BuiltImageContract(unittest.TestCase):
         image = self.load()
         self.assertEqual(image.disk_path, self.disk)
         self.assertEqual(image.manifest["recipe_id"], image.recipe_id)
+        self.assertEqual(image.manifest_sha256, self.record["payload"]["sha256"])
         self.assertEqual(image.compatibility.boot_mode, "uefi")
 
     def test_corrupted_content_cannot_be_validated_or_published(self):

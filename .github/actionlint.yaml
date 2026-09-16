@@ -1,0 +1,8 @@
+self-hosted-runner:
+  labels:
+    - family=*
+    - cpu=*
+    - volume=*
+    - spot=*
+    - retry=*
+    - private=*

@@ -361,7 +361,7 @@ class PublicationTests(unittest.TestCase):
         manifest.write_text("{}")
         self.build = BuiltImage(
             self.root / "build.yaml", disk, sha256(disk), disk.stat().st_size, "a" * 64,
-            manifest, {}, Compatibility("x86_64", "uefi", False, 1, True, "2.13.2"),
+            manifest, sha256(manifest), {}, Compatibility("x86_64", "uefi", False, 1, True, "2.13.2"),
         )
         self.target = publish.PublishingTarget("example", ACCOUNT, REGION, ROLE, KEY, tuple(TAGS.items()))
         self.cloud = FakeCloud()
@@ -383,6 +383,7 @@ class PublicationTests(unittest.TestCase):
         self.assertEqual(result["artifact"], {
             "sha256": self.build.disk_sha256, "size_bytes": self.build.disk_size_bytes,
             "recipe_id": self.build.recipe_id,
+            "manifest_sha256": self.build.manifest_sha256,
         })
         self.assertEqual(result["compatibility"], self.build.compatibility.as_dict())
         self.assertEqual(read_yaml(self.published), result)
@@ -402,6 +403,13 @@ class PublicationTests(unittest.TestCase):
             self.execute()
         self.assertEqual(self.published.read_bytes(), before)
         self.assertEqual(self.cloud.calls, [])
+
+    def test_publication_carries_the_manifest_digest_verified_with_the_build(self):
+        expected = self.build.manifest_sha256
+        self.build.manifest_path.write_text("a different local file after the build was parsed")
+        result = self.execute()
+        self.assertEqual(result["artifact"]["manifest_sha256"], expected)
+        self.assertNotEqual(result["artifact"]["manifest_sha256"], sha256(self.build.manifest_path))
 
     def test_lost_upload_response_discovers_and_deletes_the_partial_snapshot(self):
         self.cloud.failure = "upload"

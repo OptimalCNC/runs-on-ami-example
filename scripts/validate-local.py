@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check image and installation modules without creating cloud resources."""
+"""Check image, installation, and execution modules without creating cloud resources."""
 import argparse
 import os
 from pathlib import Path
@@ -20,7 +20,7 @@ def main():
     if args.cobalt_runtime and not args.xenomai_prefix:
         parser.error("--cobalt-runtime requires --xenomai-prefix")
     subprocess.run([sys.executable, "scripts/validate-inputs.py"], cwd=ROOT, check=True)
-    for tests in ("images/tests", "runs-on/tests"):
+    for tests in ("images/tests", "runs-on/tests", "execution/tests"):
         subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", tests, "-v"], cwd=ROOT, check=True)
     for directory, subdirectories, files in os.walk(ROOT / "images"):
         subdirectories[:] = sorted(name for name in subdirectories if not name.startswith("."))

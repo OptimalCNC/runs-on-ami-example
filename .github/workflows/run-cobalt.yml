@@ -1,0 +1,92 @@
+name: Build and test on Xenomai Cobalt
+
+on:
+  workflow_dispatch:
+    inputs:
+      installation:
+        description: Nonsecret installation.yaml contract
+        required: true
+        type: string
+      published_image:
+        description: Available published-image.yaml contract
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      ami_id: ${{ steps.inputs.outputs.ami_id }}
+      environment: ${{ steps.inputs.outputs.environment }}
+      region: ${{ steps.inputs.outputs.region }}
+      input_artifact_name: cobalt-inputs-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - run: python3 -m pip install -r execution/requirements.txt
+      - name: Parse the installation and publication contracts
+        id: inputs
+        run: |
+          python3 execution/prepare.py --event "$GITHUB_EVENT_PATH" \
+            --output execution/.local/request.json --github-output "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cobalt-inputs-${{ github.run_id }}-${{ github.run_attempt }}
+          path: execution/.local/request.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+
+  cobalt:
+    needs: prepare
+    runs-on:
+      - runs-on=${{ github.run_id }}-${{ github.run_attempt }}
+      - family=t3.small
+      - cpu=2
+      - volume=16gb:gp3:125mbs:3000iops
+      - spot=false
+      - retry=false
+      - private=false
+      - env=${{ needs.prepare.outputs.environment }}
+      - region=${{ needs.prepare.outputs.region }}
+      - ami=${{ needs.prepare.outputs.ami_id }}
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.prepare.outputs.input_artifact_name }}
+          path: execution/.local
+      - name: Install execution command dependencies
+        run: |
+          python3 -m venv "$RUNNER_TEMP/execution-venv"
+          "$RUNNER_TEMP/execution-venv/bin/python3" -m pip install -r execution/requirements.txt
+      - name: Activate the image SDK for later steps
+        run: |
+          /usr/local/bin/runner-image-env --format env >> "$GITHUB_ENV"
+          echo /usr/xenomai/bin >> "$GITHUB_PATH"
+      - name: Verify the runner, build the application, and test Cobalt
+        run: |
+          "$RUNNER_TEMP/execution-venv/bin/python3" execution/execute.py \
+            --inputs execution/.local/request.json --output execution/.local/result
+      - name: Retain execution evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cobalt-execution-${{ github.run_id }}-${{ github.run_attempt }}
+          path: execution/.local/
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 7

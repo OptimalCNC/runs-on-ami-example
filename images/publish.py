@@ -371,7 +371,8 @@ def publish_image(build: BuiltImage, target: PublishingTarget, output: Path, nam
         "schema_version": 1, "kind": "image-publication", "status": "uploading",
         "publication_id": publication_id, "target": target.identity(),
         "account_id": target.account_id, "region": target.region,
-        "artifact": {"sha256": build.disk_sha256, "size_bytes": build.disk_size_bytes, "recipe_id": build.recipe_id},
+        "artifact": {"sha256": build.disk_sha256, "size_bytes": build.disk_size_bytes,
+                     "recipe_id": build.recipe_id, "manifest_sha256": build.manifest_sha256},
         "compatibility": compatibility, "snapshot_id": None, "ami_id": None,
         "ami_name": name, "created_at": datetime.now(timezone.utc).isoformat(),
     }

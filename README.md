@@ -7,9 +7,9 @@ workflow.
 
 The repository separates RunsOn installation, image build and publishing, and
 execution through RunsOn. The independent [image module](images/README.md)
-provides separate Build, Validate, and Publish operations. RunsOn execution
-comes next: it will consume a published image and prove that it registers as a
-runner and executes the intended job.
+provides separate Build, Validate, and Publish operations. [RunsOn
+execution](execution/README.md) consumes a published image and proves that it
+registers as a runner and builds and tests an application using Xenomai Cobalt.
 
 The image recipe builds Ubuntu 24.04 with a Dovetail-enabled Linux kernel,
 Xenomai 3 Cobalt integration, and matching userspace development tools. The
@@ -23,14 +23,14 @@ and pinned validation tools without creating AWS resources:
 ```sh
 python3 -m venv .tools/validation-venv
 . .tools/validation-venv/bin/activate
-python3 -m pip install -r images/requirements.txt -r runs-on/requirements.txt
+python3 -m pip install -r images/requirements.txt -r runs-on/requirements.txt -r execution/requirements.txt
 python3 scripts/install-tools.py --group validation
 export PATH="$PWD/.tools/bin:$PATH"
 export PACKER_PLUGIN_PATH="$PWD/.tools/plugins"
 python3 scripts/validate-local.py --tools
 ```
 
-The checks run the image and installer tests, validate locked inputs, and check
+The checks run the image, installer, and execution tests, validate locked inputs, and check
 shell scripts, workflows, Packer configuration, and the installation's Terraform
 blueprints. Terraform initialization uses the committed provider locks, and
 these checks run without AWS credentials. Building the
@@ -72,15 +72,18 @@ RunsOn environment. The [installation guide](runs-on/README.md#finish-the-github
 provides the dispatch command and acceptance criteria. The check uses a stock
 image to prove EC2 launch, runner registration, and job execution.
 
-Custom-image qualification will be provided by the separate RunsOn execution
-module, consuming the image module's `published-image.yaml`. Its result will
-identify the actual artifact and runtime tested.
+[RunsOn execution](execution/README.md) provides custom-image qualification,
+consuming `installation.yaml` and the image module's `published-image.yaml`.
+Its workflow checks the actual EC2 image and kernel, then compiles and runs
+the Cobalt application as the ordinary runner user.
 
 ## Operate and reuse
 
 [RunsOn installation](runs-on/README.md) owns deployment, permissions, exported
 contracts, and installation removal. [Image build and publishing](images/README.md)
 owns disk artifacts, VM validation, published AMIs, and their cleanup.
+[RunsOn execution](execution/README.md) owns the application workflow and its
+runtime evidence.
 
 When reusing a qualified image recipe or application test, record its reviewed
 Git commit and the associated qualification evidence in the companion project's
