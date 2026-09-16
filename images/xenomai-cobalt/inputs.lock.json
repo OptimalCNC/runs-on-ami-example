@@ -236,22 +236,20 @@
     "version": "24.04"
   },
   "recipe_files": [
+    "images/build.py",
+    "images/common/check-kernel-config.py",
     "images/common/finalize-image.sh",
     "images/common/guest-report.py",
     "images/common/install-packages.py",
     "images/common/install-runner.py",
     "images/common/inventory.py",
-    "images/common/packer-user-data.sh",
     "images/common/runner-image-env",
     "images/common/write-image-manifest.py",
+    "images/vm.py",
     "images/xenomai-cobalt/build-kernel.sh",
     "images/xenomai-cobalt/image.pkr.hcl",
     "images/xenomai-cobalt/kernel.config",
-    "images/xenomai-cobalt/provision.sh",
-    "images/xenomai-cobalt/smoke.sh",
-    "scripts/build-image.py",
-    "scripts/check-kernel-config.py",
-    "scripts/example.py"
+    "images/xenomai-cobalt/provision.sh"
   ],
   "runner": {
     "bootstrap": {
@@ -266,17 +264,18 @@
     }
   },
   "schema_version": 1,
+  "source_image": {
+    "architecture": "x86_64",
+    "format": "qcow2",
+    "sha256": "d0fe84bb5f80853425fa6be28e2c106f30104c3cfe8611933f2e65c9b63f0e30",
+    "url": "https://cloud-images.ubuntu.com/releases/24.04/release-20260826/ubuntu-24.04-server-cloudimg-amd64.img"
+  },
   "tools": {
     "actionlint": {
       "binary": "actionlint",
       "sha256": "023070a287cd8cccd71515fedc843f1985bf96c436b7effaecce67290e7e0757",
       "url": "https://github.com/rhysd/actionlint/releases/download/v1.7.7/actionlint_1.7.7_linux_amd64.tar.gz",
       "version": "1.7.7"
-    },
-    "amazon_plugin": {
-      "sha256": "1b0f7af5fec3cfdb843c3dcf2fb9ab70bc634e6e27670893890af42b4a73e8bd",
-      "url": "https://releases.hashicorp.com/packer-plugin-amazon/1.8.2/packer-plugin-amazon_1.8.2_linux_amd64.zip",
-      "version": "1.8.2"
     },
     "aws_cli": {
       "sha256": "e0a2f495d50f058706954f36b26674fc2d2e37965ee03d47b934981f0d7732a7",
@@ -289,11 +288,10 @@
       "url": "https://releases.hashicorp.com/packer/1.16.0/packer_1.16.0_linux_amd64.zip",
       "version": "1.16.0"
     },
-    "session_manager": {
-      "binary": "usr/local/sessionmanagerplugin/bin/session-manager-plugin",
-      "sha256": "91cc9a1a8df6f730622d5e11a8610be6e06d5858408e8029b56d0d63aedd0a68",
-      "url": "https://s3.amazonaws.com/session-manager-downloads/plugin/1.2.707.0/ubuntu_64bit/session-manager-plugin.deb",
-      "version": "1.2.707.0"
+    "qemu_plugin": {
+      "sha256": "3f735539fbdd0368785babda272b85738866f736415dce59d04b4cb550c4db87",
+      "url": "https://releases.hashicorp.com/packer-plugin-qemu/1.1.6/packer-plugin-qemu_1.1.6_linux_amd64.zip",
+      "version": "1.1.6"
     },
     "terraform": {
       "binary": "terraform",

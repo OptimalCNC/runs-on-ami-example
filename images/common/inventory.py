@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """Describe a clean Ubuntu image before changing its packages or runner tools."""
-import argparse
 import glob
 import hashlib
 import json
@@ -47,16 +46,7 @@ def inventory():
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--expect")
-    args = parser.parse_args()
-    actual = inventory()
-    if args.expect:
-        expected = json.loads(Path(args.expect).read_text())
-        if actual != expected:
-            changed = [key for key in actual if actual[key] != expected.get(key)]
-            raise SystemExit("Inherited image inventory differs: " + ", ".join(changed))
-    print(json.dumps(actual, sort_keys=True, indent=2))
+    print(json.dumps(inventory(), sort_keys=True, indent=2))
 
 
 if __name__ == "__main__":

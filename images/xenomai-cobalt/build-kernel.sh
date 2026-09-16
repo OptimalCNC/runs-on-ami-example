@@ -3,7 +3,7 @@ set -euo pipefail
 export LC_ALL=C TZ=UTC
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 recipe=/opt/ami-example-recipe
-[[ "$EUID" -eq 0 && -f "$recipe/recipe.json" && -f "$recipe/source-inventory.json" ]]
+[[ "$EUID" -eq 0 && -f "$recipe/recipe.json" ]]
 source_dir=/mnt/ami-example-build/linux
 xenomai_dir=/mnt/ami-example-build/xenomai
 userspace_build=/mnt/ami-example-build/xenomai-build
@@ -46,7 +46,7 @@ export KCPPFLAGS="$KCFLAGS"
 cp "$recipe/images/xenomai-cobalt/kernel.config" .config
 "${kernel_make[@]}" olddefconfig
 "${kernel_make[@]}" syncconfig
-python3 "$recipe/scripts/check-kernel-config.py" "$recipe/images/xenomai-cobalt/kernel.config" .config
+python3 "$recipe/images/common/check-kernel-config.py" "$recipe/images/xenomai-cobalt/kernel.config" .config
 release=$("${kernel_make[@]}" -s kernelrelease)
 [[ "$release" == "$KERNEL_RELEASE" ]]
 printf '%s\n' "$release" > "$output/kernel-release"

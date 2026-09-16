@@ -1,13 +1,32 @@
 #!/usr/bin/env python3
-"""Credential-free recipe checks, with an optional strict deployment boundary."""
+"""Check pinned image sources, tools, packages, and kernel configuration."""
 import argparse
+import hashlib
+import json
+from pathlib import Path
 import re
 
-from example import ROOT, SHA256, CobaltIdentity, file_sha, load_deployment, match, read_json, recipe, require, write_json
+ROOT = Path(__file__).resolve().parents[1]
+SHA256 = r"[0-9a-f]{64}"
+
+
+def require(condition, message):
+    if not condition:
+        raise ValueError(message)
+
+
+def match(value, pattern, name):
+    require(isinstance(value, str) and re.fullmatch(pattern, value) is not None, f"invalid {name}")
+    return value
+
+
+def file_sha(path):
+    with path.open("rb") as source:
+        return hashlib.file_digest(source, "sha256").hexdigest()
 
 
 def static_checks(root=ROOT):
-    lock = read_json(root / "images/xenomai-cobalt/inputs.lock.json")
+    lock = json.loads((root / "images/xenomai-cobalt/inputs.lock.json").read_text())
     require(lock["schema_version"] == 1, "unsupported input-lock version")
     match(lock["kernel"]["sha256"], SHA256, "Linux archive hash")
     match(lock["kernel"]["version"], r"\d+\.\d+\.\d+", "Linux version")
@@ -22,8 +41,9 @@ def static_checks(root=ROOT):
                if name == "kernel" else f"https://gitlab.com/{repository}/-/archive/{commit}/{archive}-{commit}.tar.gz")
         require(source["url"] == url,
                 f"{name} source must be the exact upstream commit archive")
-    CobaltIdentity.parse({"version": lock["xenomai"]["version"], "core": lock["xenomai"]["core"],
-                          "prefix": lock["xenomai"]["prefix"]})
+    match(lock["xenomai"]["version"], r"3\.\d+\.\d+", "Xenomai version")
+    require(lock["xenomai"]["core"] == "cobalt", "image requires the Cobalt core")
+    require(lock["xenomai"]["prefix"] == "/usr/xenomai", "Xenomai installation prefix differs")
     require(lock["xenomai"]["allowed_group_gid"] == 4242, "Cobalt access group differs")
     require(file_sha(root / "images/xenomai-cobalt/kernel.config") == lock["kernel"]["config_sha256"], "kernel config hash differs")
     require(re.fullmatch(r"https://snapshot\.ubuntu\.com/ubuntu/\d{8}T\d{6}Z/", lock["os"]["snapshot_url"]) is not None,
@@ -54,20 +74,9 @@ def static_checks(root=ROOT):
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--deployment")
-    parser.add_argument("--output")
-    args = parser.parse_args()
-    lock = static_checks()
-    if args.deployment:
-        deployment = load_deployment(args.deployment)
-        identity, files = recipe(lock, deployment)
-        result = {"recipe_id": identity, "recipe_files": files}
-        if args.output:
-            write_json(args.output, result)
-        print(f"Deployment and recipe validated: {identity}")
-    else:
-        print("Static locked inputs validated; account-specific deployment and inventories are still required.")
+    argparse.ArgumentParser(description=__doc__).parse_args()
+    static_checks()
+    print("Pinned image inputs and kernel configuration validated.")
 
 
 if __name__ == "__main__":

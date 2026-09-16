@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Guest observations; EC2 ownership and freshness are checked by the controller."""
+"""Guest observations with optional EC2 identity for execution reports."""
 import argparse
 import glob
 import gzip
@@ -59,7 +59,7 @@ def cobalt_identity(image, config):
     return dict(xenomai)
 
 
-def report(expected_release, expected_recipe):
+def report(expected_release, expected_recipe, platform="ec2"):
     path = Path("/etc/ami-example.json")
     if path.stat().st_uid != 0 or path.stat().st_mode & 0o022:
         raise ValueError("image manifest ownership/permissions differ")
@@ -82,15 +82,20 @@ def report(expected_release, expected_recipe):
         "dpkg-query", "-W", "-f=${binary:Package}\t${Version}\t${Architecture}\t${db:Status-Status}\n"
     ], text=True).splitlines()
     package_text = "\n".join(sorted(line for line in package_lines if line.endswith("\tinstalled"))) + "\n"
-    return {"schema_version": 1, "kernel_release": release, "recipe_id": image["recipe_id"], "xenomai": xenomai,
+    result = {"schema_version": 1, "kernel_release": release, "recipe_id": image["recipe_id"], "xenomai": xenomai,
             "boot_mode": "uefi" if Path("/sys/firmware/efi").exists() else "legacy-bios",
             "config_sha256": config_sha, "cmdline": Path("/proc/cmdline").read_text().strip(),
-            "machine_id": Path("/etc/machine-id").read_text().strip(), "identity": metadata(),
+            "machine_id": Path("/etc/machine-id").read_text().strip(),
             "packages_sha256": hashlib.sha256(package_text.encode()).hexdigest(),
             "snap_hashes": {p.name: sha(p) for p in sorted(Path("/var/lib/snapd/snaps").glob("*.snap"))},
             "bootstrap_files": {p: sha(p) for p in sorted(glob.glob("/usr/local/bin/runs-on-bootstrap-*"))},
             "runner_listener_sha256": sha("/home/runner/bin/Runner.Listener"),
             "runner_version": subprocess.check_output(["/home/runner/bin/Runner.Listener", "--version"], text=True).strip()}
+    if platform == "ec2":
+        result["identity"] = metadata()
+    elif platform != "vm":
+        raise ValueError("guest platform must be ec2 or vm")
+    return result
 
 
 def main():
@@ -98,22 +103,10 @@ def main():
     parser.add_argument("--release", required=True)
     parser.add_argument("--recipe", required=True)
     parser.add_argument("--output")
-    parser.add_argument("--stage", choices=("probe", "a", "b"), default="probe")
-    parser.add_argument("--build-id")
     parser.add_argument("--environment", action="store_true")
+    parser.add_argument("--platform", choices=("ec2", "vm"), default="ec2")
     args = parser.parse_args()
-    result = report(args.release, args.recipe)
-    if args.stage in ("a", "b"):
-        if not args.build_id or not re.fullmatch(r"[1-9]\d*-[1-9]\d*-(one|two)", args.build_id):
-            raise ValueError("invalid sentinel build ID")
-        sentinel = Path(f"/var/tmp/ami-example-{args.build_id}-sentinel")
-        if not args.environment:
-            if sentinel.exists():
-                raise ValueError(f"freshness sentinel exists: {sentinel}")
-            if args.stage == "a":
-                with sentinel.open("x") as stream:
-                    stream.write(result["identity"]["instanceId"] + "\n")
-        result.update({"stage": args.stage, "sentinel": str(sentinel), "sentinel_absent_at_start": True})
+    result = report(args.release, args.recipe, args.platform)
     if args.environment:
         image = json.loads(Path("/etc/ami-example.json").read_text())
         for key, value in {"AMI_EXAMPLE_RECIPE_ID": args.recipe, "AMI_EXAMPLE_KERNEL_RELEASE": args.release,

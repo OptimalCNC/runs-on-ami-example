@@ -3,9 +3,9 @@ set -euo pipefail
 export LC_ALL=C TZ=UTC DEBIAN_FRONTEND=noninteractive
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 recipe=/opt/ami-example-recipe
-[[ "$EUID" -eq 0 && -f "$recipe/recipe.json" && -f "$recipe/source-inventory.json" ]]
+[[ "$EUID" -eq 0 && -f "$recipe/recipe.json" ]]
 mkdir -p /var/lib/ami-example
-python3 "$recipe/images/common/inventory.py" --expect "$recipe/source-inventory.json" > /var/lib/ami-example/parent-inventory.json
+python3 "$recipe/images/common/inventory.py" > /var/lib/ami-example/parent-inventory.json
 # The parent can retain its original partition size on a larger Packer root disk.
 [[ "$(findmnt --noheadings --output FSTYPE --target /)" == ext4 ]]
 root_device=$(readlink -f "$(findmnt --noheadings --output SOURCE --target /)")
@@ -25,21 +25,18 @@ fi
 # Also complete an earlier partition-only resize; resize2fs is safe to repeat.
 resize2fs "$root_device"
 df --block-size=1 --output=source,fstype,size,avail /
-if [[ "${STOCK_ONLY:-false}" == true ]]; then
-  systemctl is-active ssh
-  curl --fail --head --proto '=https' --tlsv1.2 https://snapshot.ubuntu.com/
-  exit 0
-fi
 # Only the plain Ubuntu source is used for the small image.
 python3 - <<'PY'
 import json
 from pathlib import Path
 parent = json.loads(Path('/var/lib/ami-example/parent-inventory.json').read_text())
-if parent['runner_version'] is not None or parent['bootstrap_files']:
-    raise SystemExit('select a plain Ubuntu 24.04 source AMI, without an inherited runner tool bundle')
+if parent['os_version'] != '24.04' or parent['runner_version'] is not None or parent['bootstrap_files']:
+    raise SystemExit('the source must be plain Ubuntu 24.04 without an inherited runner tool bundle')
+if parent['secure_boot'] or not Path('/sys/firmware/efi').exists():
+    raise SystemExit('build with UEFI firmware and Secure Boot disabled')
 PY
-# Nitro exposes the second EBS disk as NVMe. Require exactly one empty disk
-# besides the root, including no partition table, before making a filesystem.
+# Require exactly one empty disk besides the root, including no partition table,
+# before making a filesystem. Its contents never enter the published root disk.
 build_device=$(python3 - "$root_disk" <<'PY'
 import json, subprocess, sys
 disks = json.loads(subprocess.check_output(
@@ -89,6 +86,11 @@ cat > /etc/security/limits.d/99-xenomai.conf <<'EOF'
 @xenomai - memlock unlimited
 @xenomai - rtprio 99
 EOF
+mkdir -p /etc/udev/rules.d
+cat > /etc/udev/rules.d/99-xenomai.rules <<'EOF'
+KERNEL=="memdev-private", GROUP="xenomai", MODE="0660"
+KERNEL=="memdev-shared", GROUP="xenomai", MODE="0660"
+EOF
 # RunsOn starts its runner from a system service, which need not open a PAM session.
 # These defaults take effect on the new AMI's first boot and cover that ancestry.
 cat > /etc/systemd/system.conf.d/99-xenomai.conf <<'EOF'
@@ -97,7 +99,6 @@ DefaultLimitMEMLOCK=infinity
 DefaultLimitRTPRIO=99
 EOF
 install -m 0755 "$recipe/images/common/runner-image-env" /usr/local/bin/runner-image-env
-install -m 0755 "$recipe/images/xenomai-cobalt/smoke.sh" /usr/local/bin/ami-example-smoke
 install -m 0755 "$recipe/images/common/guest-report.py" /usr/local/bin/ami-example-guest-report
 bash "$recipe/images/xenomai-cobalt/build-kernel.sh"
 # Keep the application toolchain; remove tools used only to build the image and
@@ -107,11 +108,13 @@ import json, subprocess, sys
 lock = json.load(open(sys.argv[1]))['os']
 installed = subprocess.check_output(['dpkg-query', '-W', '-f=${binary:Package}\t${db:Status-Status}\n'], text=True)
 kernels = [line.split('\t')[0] for line in installed.splitlines()
-           if line.endswith('\tinstalled') and line.startswith(('linux-aws', 'linux-image-', 'linux-modules-', 'linux-headers-'))]
+           if line.endswith('\tinstalled') and line.startswith(('linux-aws', 'linux-virtual', 'linux-image-', 'linux-modules-', 'linux-headers-'))]
 subprocess.run(['apt-get', '-y', 'purge', '--auto-remove', *lock['build_only_packages'], *kernels], check=True)
 PY
 update-grub
+# EC2 and a fresh QEMU variable store cannot use this build VM's NVRAM entries.
+[[ -f /boot/efi/EFI/BOOT/BOOTX64.EFI ]]
 python3 "$recipe/images/common/write-image-manifest.py"
-# Transfer immutable inputs back over Packer's existing SSM/SSH channel.
+# Transfer immutable inputs back over Packer's existing SSH channel.
 tar -C /mnt/ami-example-build/inputs -cf /mnt/ami-example-build/inputs.tar .
 chmod 0644 /mnt/ami-example-build/inputs.tar
