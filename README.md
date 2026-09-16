@@ -19,27 +19,32 @@ Python 3.12 and Bash are required. These commands install the Python dependencie
 and pinned validation tools without creating AWS resources:
 
 ```sh
-python3 -m venv .tools/validation-venv
-. .tools/validation-venv/bin/activate
+python3 -m venv .github/.local/validation-venv
+. .github/.local/validation-venv/bin/activate
 python3 -m pip install -r images/requirements.txt -r runs-on/requirements.txt -r execution/requirements.txt
-python3 scripts/install-tools.py --group validation
-export PATH="$PWD/.tools/bin:$PATH"
-export PACKER_PLUGIN_PATH="$PWD/.tools/plugins"
-python3 scripts/validate-local.py --tools
+python3 images/install-tools.py
+python3 runs-on/install-tools.py --terraform-only
+python3 .github/install-tools.py
+python3 check.py --tools
 ```
 
 The checks run the image, installer, and execution tests, validate locked inputs, and check
 shell scripts, workflows, Packer configuration, and the installation's Terraform
 blueprints. Terraform initialization uses the committed provider locks, and
 these checks run without AWS credentials. Building the
-[Cobalt application](tests/cobalt) additionally requires a C compiler, CMake
+[Cobalt application](execution/cobalt) additionally requires a C compiler, CMake
 3.28+, and the Xenomai development installation; executing it requires the
 Cobalt kernel. Local configuration checks do not establish either guest
 bootability or Cobalt execution. Pull requests also run
 the [image build and VM validation workflow](.github/workflows/image-build-validate.yml)
 when its image-related paths change.
 
-With a locally built Cobalt SDK, `python3 scripts/validate-local.py
+Each module owns its tools and checks; run `python3 check.py` from its directory
+for that module's tests. The root `check.py` delegates to all three modules and
+adds workflow linting with `--tools`. Installed tools and generated files stay
+in the owning module's ignored `.local/` directory; `.github/` owns CI tooling.
+
+With a locally built Cobalt SDK, `python3 execution/check.py
 --xenomai-prefix /path/to/SDK` also configures and links the application. It
 does not run the Cobalt test on the host.
 

@@ -83,7 +83,7 @@ def checked_out_source(run: GitHubRun, root: Path) -> str:
     actual = subprocess.check_output(["git", "-C", str(root), "rev-parse", "--verify", "HEAD"],
                                      text=True, timeout=10).strip()
     require(actual == run.sha, "checked-out source HEAD differs from GITHUB_SHA")
-    require((root / "tests/cobalt/CMakeLists.txt").is_file() and (root / "tests/cobalt/main.c").is_file(),
+    require((root / "execution/cobalt/CMakeLists.txt").is_file() and (root / "execution/cobalt/main.c").is_file(),
             "checked-out Cobalt application is missing")
     return actual
 
@@ -328,7 +328,7 @@ def execute(inputs_path: Path, output: Path, *, root: Path = ROOT, environment=N
         result["guest_report"] = guest_path.name
         result["stage"] = "configure"
         build = output / "build"
-        run_logged(["/usr/bin/cmake", "-S", str(root / "tests/cobalt"), "-B", str(build), "-G", "Ninja",
+        run_logged(["/usr/bin/cmake", "-S", str(root / "execution/cobalt"), "-B", str(build), "-G", "Ninja",
                     "-DCMAKE_C_COMPILER=/usr/bin/gcc-13", "-DCMAKE_MAKE_PROGRAM=/usr/bin/ninja",
                     f"-DXENOMAI_ROOT={manifest.xenomai_prefix}"], output / "configure.log", timeout=120, root=root)
         result["stage"] = "build"

@@ -29,17 +29,24 @@ not enforce a spending cap.
 
 ## Prerequisites
 
-Install AWS CLI v2, Terraform 1.16.0, and Python 3.12 with `venv` support on
-Linux. Make `aws` and `terraform` available on `PATH`, then install the Python
-dependency:
+Use Python 3.12 with `venv` support on Linux x86-64. Install the checksum-verified
+AWS CLI and Terraform versions from [tools.lock.json](tools.lock.json), then
+install the Python dependency:
 
 ```sh
+python3 install-tools.py
+export PATH="$PWD/.local/tools/bin:$PATH"
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 ```
 
 `./install` automatically uses `.venv/bin/python`. Terraform initialization
 downloads the pinned module and AWS provider.
+
+Run `.venv/bin/python check.py --tools` for this module's Python tests and
+isolated Terraform checks. These use synthetic inputs and mock providers without
+creating AWS resources. `install-tools.py --terraform-only` installs just the
+tool needed for those checks.
 
 If you enable GitHub publishing and leave `publisher_github_subject_prefix`
 empty, also install the GitHub CLI and authenticate it with access to read the

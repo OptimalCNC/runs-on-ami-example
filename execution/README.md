@@ -1,7 +1,7 @@
 # Run a published image on RunsOn
 
 This module proves that a published AMI boots on EC2, registers as a RunsOn
-runner, and builds and runs the [Cobalt application](../tests/cobalt). It
+runner, and builds and runs the [Cobalt application](cobalt). It
 consumes the installation's `installation.yaml` and the image publisher's
 `published-image.yaml`. The workflow selects the exact AMI in that publication
 record, so its result identifies the image actually qualified.
@@ -41,6 +41,11 @@ Use Python 3.12. Local preparation and workflow dispatch need no AWS credentials
 Keep the two input records at explicit file paths; this module does not read
 Terraform state or the publisher's local build disk.
 
+Run the module's local checks with `python3 check.py`. To also compile the
+application against an installed Cobalt SDK, use
+`python3 check.py --xenomai-prefix /usr/xenomai`; add `--cobalt-runtime` to
+execute its CTest test on a running Cobalt kernel.
+
 ## Prepare and dispatch
 
 Generate the workflow inputs from the two records:
@@ -75,7 +80,7 @@ On the EC2 runner, checks compare the actual AMI, account, region, and instance
 profile with the input records. They verify UEFI boot, the baked manifest's
 digest and recipe, the running kernel and configuration, the Cobalt SDK, and
 the runner environment. The ordinary `runner` user then compiles
-`tests/cobalt` and runs its CTest test. The test starts an Alchemy task and
+`execution/cobalt` and runs its CTest test. The test starts an Alchemy task and
 requires Cobalt primary-mode execution; a stock Linux kernel cannot pass it.
 
 Follow the run in GitHub's Actions page. Local preparation or static test

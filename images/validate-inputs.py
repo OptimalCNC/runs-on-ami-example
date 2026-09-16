@@ -28,6 +28,8 @@ def file_sha(path):
 def static_checks(root=ROOT):
     lock = json.loads((root / "images/xenomai-cobalt/inputs.lock.json").read_text())
     require(lock["schema_version"] == 1, "unsupported input-lock version")
+    publishing_tools = json.loads((root / "images/tools.lock.json").read_text())
+    require(publishing_tools["schema_version"] == 1, "unsupported publishing-tool lock version")
     match(lock["kernel"]["sha256"], SHA256, "Linux archive hash")
     match(lock["kernel"]["version"], r"\d+\.\d+\.\d+", "Linux version")
     match(lock["kernel"]["release"], re.escape(lock["kernel"]["version"]) + r"(?:-[a-z0-9.]+)*-xenomai-cobalt",
@@ -48,7 +50,7 @@ def static_checks(root=ROOT):
     require(file_sha(root / "images/xenomai-cobalt/kernel.config") == lock["kernel"]["config_sha256"], "kernel config hash differs")
     require(re.fullmatch(r"https://snapshot\.ubuntu\.com/ubuntu/\d{8}T\d{6}Z/", lock["os"]["snapshot_url"]) is not None,
             "package snapshot must be date-addressed")
-    for name, tool in lock["tools"].items():
+    for name, tool in {**lock["tools"], **publishing_tools["tools"]}.items():
         match(tool["version"], r"\d+\.\d+\.\d+(?:\.\d+)?", name + " version")
         match(tool["sha256"], SHA256, name + " hash")
         require(tool["url"].startswith("https://") and "latest" not in tool["url"], f"unlocked download: {name}")

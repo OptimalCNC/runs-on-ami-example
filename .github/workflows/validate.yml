@@ -18,8 +18,8 @@ jobs:
         with:
           persist-credentials: false
       - run: |
-          python3 scripts/install-tools.py --group validation
-          echo "$GITHUB_WORKSPACE/.tools/bin" >> "$GITHUB_PATH"
-          echo "PACKER_PLUGIN_PATH=$GITHUB_WORKSPACE/.tools/plugins" >> "$GITHUB_ENV"
+          python3 images/install-tools.py
+          python3 runs-on/install-tools.py --terraform-only
+          python3 .github/install-tools.py
       - run: python3 -m pip install -r images/requirements.txt -r runs-on/requirements.txt -r execution/requirements.txt
-      - run: python3 scripts/validate-local.py --tools
+      - run: python3 check.py --tools

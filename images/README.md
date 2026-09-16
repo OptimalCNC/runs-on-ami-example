@@ -27,7 +27,7 @@ sudo apt-get install --yes --no-install-recommends \
 python3 -m venv .venv
 . .venv/bin/activate
 python3 -m pip install -r requirements.txt
-python3 ../scripts/install-tools.py --group image --directory .local/tools
+python3 install-tools.py
 export PATH="$PWD/.local/tools/bin:$PATH"
 export PACKER_PLUGIN_PATH="$PWD/.local/tools/plugins"
 ```
@@ -37,6 +37,9 @@ the versions in [inputs.lock.json](xenomai-cobalt/inputs.lock.json). Build also
 downloads the pinned Ubuntu cloud disk and public kernel, userspace, and package
 inputs. It creates no AWS resources.
 
+Run `python3 check.py --tools` to check this module's Python tests, pinned inputs,
+shell scripts, and Packer configuration without building a disk.
+
 The default build VM uses 4 CPUs and 8 GiB of memory; leave memory for the host as
 well. Its root disk is 16 GiB, with a separate disposable 16 GiB build disk.
 Allow storage for those sparse disks, downloaded inputs, logs, and validation's
@@ -45,12 +48,13 @@ data. The default validation VM uses 2 CPUs and 2 GiB of memory.
 
 Publishing additionally needs AWS CLI v2, an authorized AWS login or GitHub OIDC
 session, and [AWS Labs coldsnap](https://github.com/awslabs/coldsnap). The tool
-installer's `cloud` group installs the pinned AWS CLI. Install Rust 1.94.1 or
-newer with Cargo, then build coldsnap into the same local tool directory.
+installer's `publish` group installs AWS CLI pinned in [tools.lock.json](tools.lock.json).
+Install Rust 1.94.1 or newer with Cargo, then build coldsnap into the same local
+tool directory.
 On Ubuntu, its native dependencies need a C/C++ toolchain and CMake:
 
 ```sh
-python3 ../scripts/install-tools.py --group cloud --directory .local/tools
+python3 install-tools.py --group publish
 sudo apt-get install --yes --no-install-recommends build-essential cmake pkg-config
 cargo install --locked coldsnap --version 0.12.0 --root .local/tools
 ```
@@ -93,7 +97,7 @@ python3 validate.py \
 Validation boots the complete disk through its UEFI firmware and bootloader,
 using a disposable QEMU overlay and temporary SSH access. It checks the running
 kernel and baked image identity, then builds and runs the
-[Cobalt application](../tests/cobalt). The application starts an Alchemy task
+[Cobalt application](../execution/cobalt). The application starts an Alchemy task
 and verifies Cobalt primary-mode execution. Validation also verifies that the
 input disk's digest is unchanged.
 

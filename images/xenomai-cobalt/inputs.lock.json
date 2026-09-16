@@ -271,17 +271,6 @@
     "url": "https://cloud-images.ubuntu.com/releases/24.04/release-20260826/ubuntu-24.04-server-cloudimg-amd64.img"
   },
   "tools": {
-    "actionlint": {
-      "binary": "actionlint",
-      "sha256": "023070a287cd8cccd71515fedc843f1985bf96c436b7effaecce67290e7e0757",
-      "url": "https://github.com/rhysd/actionlint/releases/download/v1.7.7/actionlint_1.7.7_linux_amd64.tar.gz",
-      "version": "1.7.7"
-    },
-    "aws_cli": {
-      "sha256": "e0a2f495d50f058706954f36b26674fc2d2e37965ee03d47b934981f0d7732a7",
-      "url": "https://awscli.amazonaws.com/awscli-exe-linux-x86_64-2.31.8.zip",
-      "version": "2.31.8"
-    },
     "packer": {
       "binary": "packer",
       "sha256": "5edcd14ab59b535040c512dbecd6ec9ef976a000b073c19d93e4c431c948581e",
@@ -292,12 +281,6 @@
       "sha256": "3f735539fbdd0368785babda272b85738866f736415dce59d04b4cb550c4db87",
       "url": "https://releases.hashicorp.com/packer-plugin-qemu/1.1.6/packer-plugin-qemu_1.1.6_linux_amd64.zip",
       "version": "1.1.6"
-    },
-    "terraform": {
-      "binary": "terraform",
-      "sha256": "41d05b927aa174f15d1228c4eba832a323b716c68b415ef5a00179f46cc602d3",
-      "url": "https://releases.hashicorp.com/terraform/1.16.0/terraform_1.16.0_linux_amd64.zip",
-      "version": "1.16.0"
     }
   },
   "xenomai": {

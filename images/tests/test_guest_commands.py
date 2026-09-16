@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def module(name):
-    spec = importlib.util.spec_from_file_location(name.replace("-", "_"), ROOT / "scripts" / (name + ".py"))
+    spec = importlib.util.spec_from_file_location(name.replace("-", "_"), ROOT / "images" / (name + ".py"))
     result = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(result)
     return result
@@ -116,19 +116,18 @@ class StandaloneToolInstaller(unittest.TestCase):
             directory = Path(temporary)
             destination = directory / "tools with spaces"
             pins = {}
-            for name in ("packer", "qemu_plugin", "terraform", "actionlint"):
+            for name in ("packer", "qemu_plugin"):
                 binary = "packer-plugin-qemu_v1.0" if name == "qemu_plugin" else name
                 script = "#!/bin/sh\nexit 0\n"
                 if name == "packer":
                     script = '#!/bin/sh\nmkdir -p "$PACKER_PLUGIN_PATH"\nprintf "%s\\n" "$*" > "$PACKER_PLUGIN_PATH/installed"\n'
                 pins[name] = self.archive(directory, name, binary, script)
-            with patch.object(sys, "argv", ["install-tools.py", "--group", "validation", "--directory", str(destination)]), \
+            with patch.object(sys, "argv", ["install-tools.py", "--group", "build", "--directory", str(destination)]), \
                     patch.object(installer, "read_json", return_value={"tools": pins}), \
                     patch.dict(os.environ, {"PATH": "/usr/bin:/bin", "PACKER_PLUGIN_PATH": str(directory / "unrelated")}, clear=True), \
                     contextlib.redirect_stdout(io.StringIO()):
                 installer.main()
                 self.assertEqual(os.environ["PACKER_PLUGIN_PATH"], str(directory / "unrelated"))
-            for name in ("packer", "terraform", "actionlint"):
-                self.assertTrue(os.access(destination / "bin" / name, os.X_OK))
+            self.assertTrue(os.access(destination / "bin/packer", os.X_OK))
             self.assertIn("github.com/hashicorp/qemu", (destination / "plugins" / "installed").read_text())
             self.assertFalse((directory / "unrelated").exists())
