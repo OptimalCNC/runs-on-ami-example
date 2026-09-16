@@ -14,14 +14,15 @@ belong to the [installation module](../runs-on/README.md).
 ## Prerequisites and contracts
 
 Complete the installation's GitHub App setup, authorize this repository, and
-pass its stock-image smoke test. Publish the Cobalt disk using the current
+pass its stock-image smoke test. Publish the Cobalt disk using the
 image module and retain its `published-image.yaml`. The publication must be
 available in the installation's account and region, with compatible bootstrap
 and boot requirements. Its `artifact.manifest_sha256` binds the expected baked
 manifest to the publication record.
 
-The [Run Cobalt workflow](../.github/workflows/run-cobalt.yml) must first exist
-on the repository's default branch for GitHub to accept manual dispatches.
+GitHub accepts manual dispatches when the
+[Build and test on Xenomai Cobalt workflow](../.github/workflows/run-cobalt.yml)
+exists on the repository's default branch.
 Authenticate the GitHub CLI with permission to dispatch and inspect workflows
 in that repository. The workflow uses `contents: read`; its jobs receive no
 publisher credentials and request no OIDC token.
@@ -89,6 +90,9 @@ The workflow retains two artifacts for 7 days:
 | --- | --- |
 | `cobalt-inputs-RUN_ID-ATTEMPT` | The normalized installation and image identities used for this execution |
 | `cobalt-execution-RUN_ID-ATTEMPT` | `execution.yaml`, guest evidence, build/test logs, and JUnit output |
+
+Rerunning only a failed Cobalt job reuses the successful preparation job's input
+artifact. Its attempt suffix can therefore differ from the execution artifact's.
 
 Download the artifacts from the completed run's Actions page. A qualified result
 requires both a successful workflow and `execution.yaml` with `status: passed`,

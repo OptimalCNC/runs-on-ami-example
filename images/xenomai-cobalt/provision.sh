@@ -115,6 +115,3 @@ update-grub
 # EC2 and a fresh QEMU variable store cannot use this build VM's NVRAM entries.
 [[ -f /boot/efi/EFI/BOOT/BOOTX64.EFI ]]
 python3 "$recipe/images/common/write-image-manifest.py"
-# Transfer immutable inputs back over Packer's existing SSH channel.
-tar -C /mnt/ami-example-build/inputs -cf /mnt/ami-example-build/inputs.tar .
-chmod 0644 /mnt/ami-example-build/inputs.tar

@@ -43,7 +43,6 @@ override_module {
         profile_arn = "arn:aws:iam::123456789012:instance-profile/test-install-ec2-instance-profile"
       }
     }
-    alerts = { topic_arn = "arn:aws:sns:us-east-1:123456789012:test-install" }
   }
 }
 

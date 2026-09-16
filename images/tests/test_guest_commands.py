@@ -110,7 +110,7 @@ class StandaloneToolInstaller(unittest.TestCase):
         return {"url": archive.as_uri(), "sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
                 "version": "1.0", "binary": binary}
 
-    def test_installs_offline_archives_and_reports_directory_owned_plugin_path(self):
+    def test_installs_offline_archives_with_directory_owned_plugin_path(self):
         installer = module("install-tools")
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
@@ -122,16 +122,12 @@ class StandaloneToolInstaller(unittest.TestCase):
                 if name == "packer":
                     script = '#!/bin/sh\nmkdir -p "$PACKER_PLUGIN_PATH"\nprintf "%s\\n" "$*" > "$PACKER_PLUGIN_PATH/installed"\n'
                 pins[name] = self.archive(directory, name, binary, script)
-            report = directory / "output" / "tools.json"
-            with patch.object(sys, "argv", ["install-tools.py", "--group", "validation", "--directory", str(destination),
-                                            "--output", str(report)]), \
+            with patch.object(sys, "argv", ["install-tools.py", "--group", "validation", "--directory", str(destination)]), \
                     patch.object(installer, "read_json", return_value={"tools": pins}), \
                     patch.dict(os.environ, {"PATH": "/usr/bin:/bin", "PACKER_PLUGIN_PATH": str(directory / "unrelated")}, clear=True), \
                     contextlib.redirect_stdout(io.StringIO()):
                 installer.main()
                 self.assertEqual(os.environ["PACKER_PLUGIN_PATH"], str(directory / "unrelated"))
-            self.assertEqual(json.loads(report.read_text()), {"bin_directory": str(destination / "bin"),
-                                                             "packer_plugin_path": str(destination / "plugins")})
             for name in ("packer", "terraform", "actionlint"):
                 self.assertTrue(os.access(destination / "bin" / name, os.X_OK))
             self.assertIn("github.com/hashicorp/qemu", (destination / "plugins" / "installed").read_text())
