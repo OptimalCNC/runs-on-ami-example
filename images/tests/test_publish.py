@@ -27,7 +27,7 @@ TAGS = {"runs-on-installation": "example"}
 def target_value():
     """The handoff shape exported by the independent installer."""
     return {
-        "schema_version": 1,
+        "schema_version": 3,
         "kind": "ami-publishing-target",
         "name": "example",
         "account_id": ACCOUNT,
@@ -44,11 +44,17 @@ def target_value():
             "type": "ec2-ami",
             "upload_method": "ebs-direct-api",
             "disk_format": "raw",
-            "encrypted": True,
-            "kms_key_arn": KEY,
+            "encrypted": False,
             "required_tags": deepcopy(TAGS),
         },
     }
+
+
+def legacy_target_value(version):
+    value = target_value()
+    value["schema_version"] = version
+    value["destination"].update(encrypted=True, kms_key_arn=KEY)
+    return value
 
 
 class PublishingTargetTests(unittest.TestCase):
@@ -64,8 +70,50 @@ class PublishingTargetTests(unittest.TestCase):
     def test_accepts_the_installation_publishing_contract(self):
         self.assertIsInstance(self.load(target_value()), publish.PublishingTarget)
 
+    def test_github_entries_do_not_change_the_publication_identity(self):
+        value = target_value()
+        value["authentication"]["github"] = {
+            "method": "github-oidc", "audience": "sts.amazonaws.com",
+            "provider_arn": f"arn:aws:iam::{ACCOUNT}:oidc-provider/token.actions.githubusercontent.com",
+            "repositories": [
+                {"repository": "example/images", "environment": "image-publish", "subject": "repo:example/images:environment:image-publish"},
+                {"repository": "other/images", "environment": "release", "subject": "repo:other/images:environment:release"},
+            ],
+        }
+        self.assertEqual(self.load(value), self.load(target_value()))
+
+    def test_retained_version_one_target_preserves_publication_identity_for_cleanup(self):
+        value = legacy_target_value(1)
+        value["authentication"]["github"] = {
+            "method": "github-oidc", "repository": "example/images", "environment": "image-publish",
+            "subject": "repo:example/images:environment:image-publish", "audience": "sts.amazonaws.com",
+            "provider_arn": f"arn:aws:iam::{ACCOUNT}:oidc-provider/token.actions.githubusercontent.com",
+        }
+        self.assertEqual(self.load(value).identity(), {
+            "name": "example", "account_id": ACCOUNT, "region": REGION,
+            "publisher_role_arn": ROLE, "kms_key_arn": KEY, "required_tags": TAGS,
+        })
+
+    def test_retained_version_two_target_preserves_the_same_cleanup_identity(self):
+        self.assertEqual(self.load(legacy_target_value(2)).identity(), self.load(legacy_target_value(1)).identity())
+
+    def test_current_target_explicitly_records_no_encryption_key(self):
+        target = self.load(target_value())
+        self.assertIsNone(target.legacy_kms_key_arn)
+        self.assertEqual(target.identity()["encrypted"], False)
+        self.assertNotIn("kms_key_arn", target.identity())
+
+    def test_current_target_rejects_encryption_and_kms_key_settings(self):
+        for fields in ({"encrypted": True}, {"encrypted": None}, {"encrypted": 0},
+                       {"kms_key_arn": KEY}, {"kms_key_arn": None}):
+            with self.subTest(fields=fields):
+                value = target_value()
+                value["destination"].update(fields)
+                with self.assertRaisesRegex(ValueError, "unencrypted destination"):
+                    self.load(value)
+
     def test_rejects_unrecognized_contract(self):
-        for field, invalid in (("schema_version", 2), ("kind", "runs-on-installation")):
+        for field, invalid in (("schema_version", 4), ("schema_version", True), ("kind", "runs-on-installation")):
             with self.subTest(field=field):
                 value = target_value()
                 value[field] = invalid
@@ -86,7 +134,7 @@ class PublishingTargetTests(unittest.TestCase):
     def test_rejects_an_encryption_key_outside_the_destination(self):
         for key in (KEY.replace(ACCOUNT, "999999999999"), KEY.replace(REGION, "us-west-2")):
             with self.subTest(key=key):
-                value = target_value()
+                value = legacy_target_value(2)
                 value["destination"]["kms_key_arn"] = key
                 with self.assertRaises(ValueError):
                     self.load(value)
@@ -100,7 +148,7 @@ class PublishingTargetTests(unittest.TestCase):
 
 class CredentialTests(unittest.TestCase):
     def setUp(self):
-        self.target = publish.PublishingTarget("example", ACCOUNT, REGION, ROLE, KEY, tuple(TAGS.items()))
+        self.target = publish.PublishingTarget("example", ACCOUNT, REGION, ROLE, None, tuple(TAGS.items()))
         self.publisher = {
             "Account": ACCOUNT,
             "Arn": f"arn:aws:sts::{ACCOUNT}:assumed-role/example-image-publisher/github-job",
@@ -234,9 +282,15 @@ class FakeCloud:
         self.images = {}
         self.failure = None
         self.after_upload = None
+        self.encryption_by_default = False
 
     def authenticate(self):
         self.calls.append(("authenticate",))
+
+    def require_unencrypted_snapshots(self):
+        self.calls.append(("require_unencrypted_snapshots",))
+        if self.encryption_by_default:
+            raise ValueError("EBS encryption by default is enabled")
 
     def upload(self, disk, tags, volume_gib, output, on_snapshot):
         self.calls.append(("upload", disk, deepcopy(tags), volume_gib))
@@ -245,7 +299,7 @@ class FakeCloud:
         if record["publication_id"] != tags["image-publication-id"]:
             raise AssertionError("resource creation has no matching recovery record")
         self.snapshots[SNAPSHOT] = {
-            "SnapshotId": SNAPSHOT, "OwnerId": ACCOUNT, "Encrypted": True, "KmsKeyId": KEY,
+            "SnapshotId": SNAPSHOT, "OwnerId": ACCOUNT, "Encrypted": False,
             "State": "completed", "VolumeSize": volume_gib,
             "Tags": [{"Key": key, "Value": value} for key, value in tags.items()],
         }
@@ -262,7 +316,7 @@ class FakeCloud:
             "ImageId": AMI, "OwnerId": ACCOUNT, "State": "available",
             "Architecture": compatibility["architecture"], "BootMode": compatibility["boot_mode"],
             "EnaSupport": compatibility["ena_support"],
-            "BlockDeviceMappings": [{"DeviceName": "/dev/sda1", "Ebs": {"SnapshotId": snapshot_id}}],
+            "BlockDeviceMappings": [{"DeviceName": "/dev/sda1", "Ebs": {"SnapshotId": snapshot_id, "Encrypted": False}}],
             "Tags": [{"Key": key, "Value": value} for key, value in tags.items()],
         }
         if self.failure == "register":
@@ -308,9 +362,24 @@ class UploadProcessTests(unittest.TestCase):
         self.root = Path(temporary.name)
         self.disk = self.root / "disk.raw"
         self.disk.write_bytes(b"disk")
-        target = publish.PublishingTarget("example", ACCOUNT, REGION, ROLE, KEY, tuple(TAGS.items()))
+        target = publish.PublishingTarget("example", ACCOUNT, REGION, ROLE, None, tuple(TAGS.items()))
         self.cloud = publish.Cloud(target)
         self.tags = {**TAGS, "image-publication-id": "a" * 32}
+
+    def test_encryption_preflight_requires_an_explicit_disabled_setting(self):
+        for response in ({"EbsEncryptionByDefault": True}, {}, {"EbsEncryptionByDefault": 0}):
+            with self.subTest(response=response), patch.object(self.cloud, "aws", return_value=response) as aws:
+                with self.assertRaisesRegex(ValueError, "encryption by default"):
+                    self.cloud.require_unencrypted_snapshots()
+                aws.assert_called_once_with("ec2", "get-ebs-encryption-by-default")
+        with patch.object(self.cloud, "aws", return_value={"EbsEncryptionByDefault": False}) as aws:
+            self.cloud.require_unencrypted_snapshots()
+            aws.assert_called_once_with("ec2", "get-ebs-encryption-by-default")
+
+    def test_encryption_preflight_does_not_ignore_access_denied(self):
+        with patch.object(self.cloud, "aws", side_effect=publish.AwsError("get-ebs-encryption-by-default", "AccessDenied")):
+            with self.assertRaises(publish.AwsError):
+                self.cloud.require_unencrypted_snapshots()
 
     def test_timeout_stops_and_reaps_the_upload_process(self):
         process = Mock()
@@ -334,6 +403,10 @@ class UploadProcessTests(unittest.TestCase):
         seen = []
 
         def start(command, **options):
+            self.assertEqual(command[:4], ["coldsnap", "--region", REGION, "upload"])
+            self.assertNotIn("--kms-key-id", command)
+            self.assertNotIn("--parent-snapshot-id", command)
+            self.assertNotIn(KEY, command)
             options["stdout"].write(SNAPSHOT + "\n")
             options["stdout"].flush()
             return process
@@ -363,7 +436,7 @@ class PublicationTests(unittest.TestCase):
             self.root / "build.yaml", disk, sha256(disk), disk.stat().st_size, "a" * 64,
             manifest, sha256(manifest), {}, Compatibility("x86_64", "uefi", False, 1, True, "0.1.12"),
         )
-        self.target = publish.PublishingTarget("example", ACCOUNT, REGION, ROLE, KEY, tuple(TAGS.items()))
+        self.target = publish.PublishingTarget("example", ACCOUNT, REGION, ROLE, None, tuple(TAGS.items()))
         self.cloud = FakeCloud()
         self.output = self.root / "publication"
         self.state = self.output / "publication-state.yaml"
@@ -380,6 +453,9 @@ class PublicationTests(unittest.TestCase):
         self.assertEqual(result["snapshot_id"], SNAPSHOT)
         self.assertEqual(result["account_id"], ACCOUNT)
         self.assertEqual(result["region"], REGION)
+        self.assertIs(result["target"]["encrypted"], False)
+        self.assertNotIn("kms_key_arn", result["target"])
+        self.assertIs(self.cloud.snapshots[SNAPSHOT]["Encrypted"], False)
         self.assertEqual(result["artifact"], {
             "sha256": self.build.disk_sha256, "size_bytes": self.build.disk_size_bytes,
             "recipe_id": self.build.recipe_id,
@@ -394,6 +470,51 @@ class PublicationTests(unittest.TestCase):
             "image-sha256": self.build.disk_sha256, "image-recipe-id": self.build.recipe_id,
         })
         self.assertEqual(self.cloud.mutations(), [])
+
+    def test_account_encryption_default_blocks_before_upload_or_publication_state(self):
+        self.cloud.encryption_by_default = True
+        with self.assertRaisesRegex(ValueError, "encryption by default"):
+            self.execute()
+        self.assertEqual(self.cloud.calls, [("authenticate",), ("require_unencrypted_snapshots",)])
+        self.assertFalse(self.state.exists())
+        self.assertFalse(self.published.exists())
+
+    def test_legacy_encrypted_target_cannot_create_new_publications(self):
+        self.target = replace(self.target, legacy_kms_key_arn=KEY)
+        with self.assertRaisesRegex(ValueError, "supported only for cleanup"):
+            self.execute()
+        self.assertEqual(self.cloud.calls, [])
+        self.assertFalse(self.state.exists())
+
+    def test_encryption_default_change_during_upload_cleans_up_without_registration(self):
+        def encrypt_uploaded_snapshot(disk):
+            self.cloud.snapshots[SNAPSHOT].update(Encrypted=True, KmsKeyId=KEY)
+        self.cloud.after_upload = encrypt_uploaded_snapshot
+        with self.assertRaisesRegex(RuntimeError, "Published snapshot must be unencrypted"):
+            self.execute()
+        self.assertEqual(self.cloud.mutations(), [("delete_snapshot", SNAPSHOT)])
+        self.assertFalse(any(item[0] == "register" for item in self.cloud.calls))
+        self.assertFalse(self.published.exists())
+        self.assertEqual(read_yaml(self.state)["status"], "deleted")
+
+    def test_missing_snapshot_encryption_evidence_is_not_accepted(self):
+        self.cloud.after_upload = lambda disk: self.cloud.snapshots[SNAPSHOT].pop("Encrypted")
+        with self.assertRaisesRegex(RuntimeError, "Published snapshot must be unencrypted"):
+            self.execute()
+        self.assertFalse(any(item[0] == "register" for item in self.cloud.calls))
+        self.assertFalse(self.published.exists())
+
+    def test_registered_image_must_also_report_an_unencrypted_disk(self):
+        register = self.cloud.register
+        def encrypted_image(*arguments):
+            image_id = register(*arguments)
+            self.cloud.images[image_id]["BlockDeviceMappings"][0]["Ebs"]["Encrypted"] = True
+            return image_id
+        with patch.object(self.cloud, "register", side_effect=encrypted_image):
+            with self.assertRaisesRegex(RuntimeError, "Registered image must use an unencrypted snapshot"):
+                self.execute()
+        self.assertEqual(self.cloud.mutations(), [("deregister", AMI), ("delete_snapshot", SNAPSHOT)])
+        self.assertFalse(self.published.exists())
 
     def test_existing_publication_is_not_overwritten(self):
         self.execute()
@@ -464,8 +585,6 @@ class PublicationTests(unittest.TestCase):
         corruptions = [
             ("snapshot", "OwnerId", "999999999999"),
             ("snapshot", "Tags", []),
-            ("snapshot", "Encrypted", False),
-            ("snapshot", "KmsKeyId", KEY.replace(ACCOUNT, "999999999999")),
             ("image", "OwnerId", "999999999999"),
             ("image", "Tags", []),
             ("image", "BlockDeviceMappings", [{"Ebs": {"SnapshotId": "snap-99999999999999999"}}]),
@@ -481,6 +600,29 @@ class PublicationTests(unittest.TestCase):
                     publish.cleanup_record(self.published, self.target, cloud=self.cloud)
                 self.assertEqual(self.cloud.mutations(), [])
                 self.assertNotEqual(read_yaml(self.published)["status"], "deleted")
+
+    def test_retained_encrypted_publication_cleanup_uses_its_original_key_identity(self):
+        self.execute()
+        legacy_target = replace(self.target, legacy_kms_key_arn=KEY)
+        for path in (self.state, self.published):
+            record = read_yaml(path)
+            record["target"] = legacy_target.identity()
+            write_yaml(path, record)
+        self.cloud.snapshots[SNAPSHOT].update(Encrypted=True, KmsKeyId=KEY)
+        self.cloud.encryption_by_default = True
+        self.cloud.calls.clear()
+        for corruptions in ({"Encrypted": False}, {"KmsKeyId": KEY.replace(ACCOUNT, "999999999999")}):
+            with self.subTest(corruptions=corruptions):
+                self.cloud.snapshots[SNAPSHOT].update(Encrypted=True, KmsKeyId=KEY)
+                self.cloud.snapshots[SNAPSHOT].update(corruptions)
+                with self.assertRaisesRegex(ValueError, "outside the publishing target"):
+                    publish.cleanup_record(self.published, legacy_target, cloud=self.cloud)
+                self.assertEqual(self.cloud.mutations(), [])
+        self.cloud.snapshots[SNAPSHOT].update(Encrypted=True, KmsKeyId=KEY)
+        result = publish.cleanup_record(self.published, legacy_target, cloud=self.cloud)
+        self.assertEqual(result["status"], "deleted")
+        self.assertEqual(self.cloud.mutations(), [("deregister", AMI), ("delete_snapshot", SNAPSHOT)])
+        self.assertNotIn(("require_unencrypted_snapshots",), self.cloud.calls)
 
     def test_failed_cleanup_keeps_a_recovery_record_for_an_explicit_retry(self):
         self.cloud.failure = "delete"

@@ -1,10 +1,3 @@
-.tools/
-.work/
-/.aws-local/
-artifacts/
 __pycache__/
 *.pyc
-/infra/
 *Zone.Identifier
-/.deployment/
-/.execution/

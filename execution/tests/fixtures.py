@@ -27,7 +27,7 @@ def image_value():
         "target": {
             "name": "runs-on-platform", "account_id": "123456789012", "region": "us-east-1",
             "publisher_role_arn": "arn:aws:iam::123456789012:role/runs-on-platform-image-publisher",
-            "kms_key_arn": "arn:aws:kms:us-east-1:123456789012:key/12345678-1234-1234-1234-123456789012",
+            "encrypted": False,
             "required_tags": {"runs-on-installation": "runs-on-platform"},
         },
         "account_id": "123456789012", "region": "us-east-1",

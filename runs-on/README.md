@@ -9,8 +9,8 @@ cd runs-on
 
 The `bootstrap/` Terraform root creates the dedicated deployment role using an
 existing authorized AWS login. The `deployment/` root assumes that role and
-provisions RunsOn, public networking, and the image publisher role and encryption
-key. `./install` connects the two roots and exports their consumer contracts.
+provisions RunsOn, public networking, and the image publisher role. `./install`
+connects the two roots and exports their consumer contracts.
 GitHub App registration and installation, and notification email confirmation,
 remain browser steps.
 
@@ -19,8 +19,7 @@ The blueprint pins the official [RunsOn Flex Terraform module
 It uses a small Fargate control plane, two public subnets, and an S3 gateway
 endpoint. Recurring costs include the
 [Fargate control plane](https://aws.amazon.com/fargate/pricing/), one
-[public IPv4 address](https://aws.amazon.com/vpc/pricing/), one
-[KMS key](https://aws.amazon.com/kms/pricing/), and two
+[public IPv4 address](https://aws.amazon.com/vpc/pricing/), and two
 [Secrets Manager secrets](https://aws.amazon.com/secrets-manager/pricing/).
 Use the linked pricing pages for rates in your region. Runner jobs, stored data,
 logs, and API requests add to that baseline. The default maximum runner lifetime
@@ -29,11 +28,13 @@ not enforce a spending cap.
 
 ## Prerequisites
 
-Install AWS CLI v2, Terraform 1.16.0, and Python 3.12 with `venv` support on
-Linux. Make `aws` and `terraform` available on `PATH`, then install the Python
-dependency:
+Use Python 3.12 with `venv` support on Linux x86-64. Install the checksum-verified
+AWS CLI and Terraform versions from [tools.lock.json](tools.lock.json), then
+install the Python dependency:
 
 ```sh
+python3 install-tools.py
+export PATH="$PWD/.local/tools/bin:$PATH"
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 ```
@@ -41,10 +42,15 @@ python3 -m venv .venv
 `./install` automatically uses `.venv/bin/python`. Terraform initialization
 downloads the pinned module and AWS provider.
 
-If you enable GitHub publishing and leave `publisher_github_subject_prefix`
-empty, also install the GitHub CLI and authenticate it with access to read the
-repository's Actions OIDC subject configuration. The installer uses this to
-discover the correct publishing trust. Supplying the known subject prefix
+Run `.venv/bin/python check.py --tools` for this module's Python tests and
+isolated Terraform checks. These use synthetic inputs and mock providers without
+creating AWS resources. `install-tools.py --terraform-only` installs just the
+tool needed for those checks.
+
+If you enable GitHub publishing and leave an entry's `subject_prefix` empty,
+also install the GitHub CLI and authenticate it with access to read that
+repository's Actions OIDC subject configuration. The installer discovers each
+repository's publishing trust independently. Supplying known subject prefixes
 explicitly makes this discovery unnecessary.
 
 Have a RunsOn license, an email address for AWS notifications, and permission
@@ -82,18 +88,26 @@ Set these configuration fields before deploying:
 | `github_organization` | GitHub organization or personal account where the App will be installed |
 | `trusted_principal_arns` | Existing IAM user or role ARNs in `account_id` permitted to assume the deployment role |
 | `publisher_principal_arns` | Existing local IAM users or roles permitted to publish images |
-| `publisher_github_repository`, `publisher_github_environment` | Optional exact repository and protected GitHub environment permitted to publish through OIDC |
-| `publisher_github_subject_prefix` | Optional known repository OIDC subject prefix; empty discovers the current prefix through GitHub |
+| `publisher_github_repositories` | Optional list of exact `repository` and protected `environment` pairs permitted to publish through OIDC; environment defaults to `image-publish` |
+| `publisher_github_repositories[].subject_prefix` | Optional known repository OIDC subject prefix; omitted or empty discovers that repository's current prefix through GitHub |
 | `existing_github_oidc_provider_arn` | Existing account-wide GitHub OIDC provider, when GitHub publishing is enabled and the provider already exists |
 
 Choose at least one local publishing principal or a GitHub publishing repository.
 For local publishing, its principal's AWS policy must also permit assuming the
-publisher role. For GitHub publishing, configure the named environment's allowed
-branches and approval rules in the repository settings. Trust uses the exact
-repository/environment subject recorded in the publishing contract, including
-immutable identifiers where GitHub uses them. Use IAM role ARNs in the
+publisher role. For GitHub publishing, configure each named environment's allowed
+branches and approval rules in its repository settings. Trust uses the exact
+repository/environment subjects recorded in the publishing contract, including
+immutable identifiers where GitHub uses them. All listed pairs assume the same
+publisher role and share its image lifecycle permissions. Use IAM role ARNs in the
 configuration, including their paths; an STS assumed-role session ARN is not a
 role ARN.
+
+To migrate an existing single-repository configuration, replace
+`publisher_github_repository`, `publisher_github_environment`, and
+`publisher_github_subject_prefix` with one `publisher_github_repositories` entry
+containing `repository`, `environment`, and `subject_prefix`. Use `[]` when GitHub
+publishing is disabled. The installer rejects the old fields with a migration
+message.
 
 ## Bootstrap the deployment role
 
@@ -142,9 +156,14 @@ Successful deployment writes two versioned YAML contracts:
 | File | Consumer and contents |
 | --- | --- |
 | `.local/contracts/installation.yaml` | RunsOn execution: account, region, environment, setup URL, pinned versions, networking, and runtime identities |
-| `.local/contracts/publishing.yaml` | Image publishing: account, region, publisher role, allowed authentication, image encryption key, raw-disk upload method, and required ownership tags |
+| `.local/contracts/publishing.yaml` | Image publishing: account, region, publisher role, allowed authentication, unencrypted raw-disk upload method, and required ownership tags |
 
-Both files use `schema_version: 1`. Their source of truth is
+`installation.yaml` uses `schema_version: 1`; `publishing.yaml` uses
+`schema_version: 3`, with the authorized repository/environment subjects in
+`authentication.github.repositories`. GitHub authentication is `null` when
+disabled. Version 3 requires unencrypted snapshots and contains no image KMS key.
+Existing version 1 and 2 targets remain readable for cleanup of their encrypted
+publications. The contracts' source of truth is
 [deployment/outputs.tf](deployment/outputs.tf); the installer exports Terraform's
 `yamlencode` output after a successful apply. Give consumers an explicit path to
 the appropriate YAML file. They need neither Terraform nor access to its state.
@@ -152,10 +171,14 @@ The contracts contain identifiers and authentication metadata; callers obtain
 temporary credentials when publishing.
 
 The publishing destination is regional EC2 AMIs backed by EBS snapshots. The
-publisher uploads a raw disk through EBS direct APIs using the supplied KMS key,
-then registers the snapshot as an AMI. It must supply the contract's required
-tags when creating snapshots and AMIs. Image creation, validation, publishing,
-and retention belong to the image module; individual AMIs and snapshots are
+publisher uploads a raw disk through EBS direct APIs without encryption,
+then registers the snapshot as an AMI. EBS encryption by default must be disabled
+in the destination account and region; publishing checks this setting before
+uploading. RunsOn omits explicit runner-volume encryption settings; encryption
+depends on the source image and the region's EBS defaults. The installation
+creates no custom EBS encryption key. The publisher must supply the contract's
+required tags when creating snapshots and AMIs. Image creation, validation,
+publishing, and retention belong to the image module; individual AMIs and snapshots are
 outside installation Terraform state.
 
 ## Finish the GitHub setup
@@ -223,6 +246,18 @@ then `./install apply --deployment-only`, using the appropriate `--profile`.
 Use `./install bootstrap --plan` and `./install bootstrap` for bootstrap IAM
 changes. Retain the bootstrap role while deployment resources still require it.
 
+When updating an installation that owns an image encryption key, stop runner
+jobs and prevent new launches until the update finishes. Retain the original
+publishing target with its publication records for cleanup, and migrate or
+retire every snapshot and volume using that key. Existing AMIs and snapshots
+cannot be decrypted in place. The installer blocks bootstrap updates,
+deployment apply, and destruction while these dependencies remain. Run
+`./install bootstrap` to update permissions, then `./install apply
+--deployment-only` to retire the old key, alias, and policy and export the
+version 3 target. Key deletion retains the waiting period recorded in Terraform
+state (30 days for this installation). Publish the built disk again with the
+new target to create an unencrypted image.
+
 ```sh
 ./install status
 ./install export
@@ -241,11 +276,10 @@ jobs, and remove retained data from installation-owned buckets. Then run:
 ./install destroy --profile runs-on-admin
 ```
 
-The installer reads the image encryption key from Terraform state and checks
-that no snapshots or volumes still depend on it before running Terraform
-destroy. This also protects retained images when an interrupted deployment has
-not yet exported its contracts. Key deletion is scheduled with a 30-day waiting
-period. After deployment destruction succeeds, the installer
-removes its exported contracts and retains bootstrap IAM and local state. The
-shared service-linked roles and GitHub OIDC provider remain available to other
+If Terraform state still contains a legacy image encryption key, the installer
+checks that no snapshots or volumes depend on it before running Terraform
+destroy. This also protects older encrypted publications when an interrupted
+deployment has not yet exported its contracts. After deployment destruction
+succeeds, the installer removes its exported contracts and retains bootstrap IAM
+and local state. The shared service-linked roles and GitHub OIDC provider remain available to other
 installations. GitHub App removal is a separate action in GitHub settings.

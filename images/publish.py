@@ -44,14 +44,15 @@ class PublishingTarget:
     account_id: str
     region: str
     publisher_role_arn: str
-    kms_key_arn: str
+    legacy_kms_key_arn: str | None
     required_tags: tuple[tuple[str, str], ...]
 
     @classmethod
     def load(cls, path: Path) -> "PublishingTarget":
         data = load_yaml(path)
-        require(data.get("kind") == "ami-publishing-target" and data.get("schema_version") == 1,
-                "Expected an ami-publishing-target contract with schema_version 1")
+        require(data.get("kind") == "ami-publishing-target" and type(data.get("schema_version")) is int
+                and data["schema_version"] in (1, 2, 3),
+                "Expected an ami-publishing-target contract with schema_version 1, 2 or 3")
         name, account, region = (data.get(key) for key in ("name", "account_id", "region"))
         require(isinstance(name, str) and re.fullmatch(r"[a-z][a-z0-9-]{2,23}", name) is not None,
                 "Invalid installation name in publishing target")
@@ -65,12 +66,17 @@ class PublishingTarget:
         destination = data.get("destination")
         require(isinstance(destination, dict), "Publishing target is missing destination")
         require(destination.get("type") == "ec2-ami" and destination.get("upload_method") == "ebs-direct-api"
-                and destination.get("disk_format") == "raw" and destination.get("encrypted") is True,
-                "Publishing requires an encrypted raw-disk EBS direct API destination")
-        key = destination.get("kms_key_arn")
-        require(isinstance(key, str) and re.fullmatch(
-            rf"arn:aws:kms:{region}:{account}:key/[a-zA-Z0-9-]+", key) is not None,
-            "Image encryption key must belong to the publishing account and region")
+                and destination.get("disk_format") == "raw",
+                "Publishing requires a raw-disk EBS direct API destination")
+        key = None
+        if data["schema_version"] == 3:
+            require(destination.get("encrypted") is False and "kms_key_arn" not in destination,
+                    "Version 3 publishing requires an unencrypted destination without a KMS key")
+        else:
+            key = destination.get("kms_key_arn")
+            require(destination.get("encrypted") is True and isinstance(key, str) and re.fullmatch(
+                rf"arn:aws:kms:{region}:{account}:key/[a-zA-Z0-9-]+", key) is not None,
+                "Legacy encrypted target must name a KMS key in the publishing account and region")
         tags = destination.get("required_tags")
         require(isinstance(tags, dict) and 1 <= len(tags) <= 47,
                 "Publishing target must specify between 1 and 47 ownership tags")
@@ -85,7 +91,8 @@ class PublishingTarget:
     def identity(self) -> dict[str, Any]:
         return {
             "name": self.name, "account_id": self.account_id, "region": self.region,
-            "publisher_role_arn": self.publisher_role_arn, "kms_key_arn": self.kms_key_arn,
+            "publisher_role_arn": self.publisher_role_arn,
+            **({"kms_key_arn": self.legacy_kms_key_arn} if self.legacy_kms_key_arn else {"encrypted": False}),
             "required_tags": dict(self.required_tags),
         }
 
@@ -145,18 +152,22 @@ class Cloud:
         require(identity.get("Account") == self.target.account_id and str(identity.get("Arn", "")).startswith(expected),
                 "AWS session is not the publisher role declared by the installation")
 
+    def require_unencrypted_snapshots(self) -> None:
+        settings = self.aws("ec2", "get-ebs-encryption-by-default")
+        require(settings.get("EbsEncryptionByDefault") is False,
+                f"Unencrypted publication requires EBS encryption by default to be disabled in "
+                f"{self.target.account_id}/{self.target.region}; this command does not change account settings")
+
     def upload(self, disk: Path, tags: dict[str, str], volume_gib: int, output: Path,
                on_snapshot: Callable[[str], None]) -> str:
         command = ["coldsnap", "--region", self.target.region]
         if self.profile:
             command += ["--profile", self.profile]
-        command += ["upload", str(disk), "--kms-key-id", self.target.kms_key_arn,
+        command += ["upload", str(disk),
                     "--volume-size", str(volume_gib), "--description", f"Image publication {tags[PUBLICATION_TAG]}",
                     "--no-progress"]
         for key, value in sorted(tags.items()):
             command += ["--tag", f"Key={key},Value={value}"]
-        # Encrypted disks require uploading zero blocks too. Coldsnap's omit
-        # mode does not preserve their read semantics under encryption.
         stdout_path = output / "upload.stdout"
         with (output / "upload.log").open("w") as log, stdout_path.open("w") as stdout:
             process = subprocess.Popen(command, env=self.environment, stdout=stdout, stderr=log, text=True)
@@ -309,9 +320,11 @@ def cleanup_record(path: Path, target: PublishingTarget, profile: str | None = N
     for resource in [*snapshots.values(), *images.values()]:
         if resource:
             owned(resource, target, record["publication_id"], record["artifact"]["sha256"])
+    # A new upload can unexpectedly become encrypted if the account default
+    # changes after preflight. Ownership and artifact tags still permit its cleanup.
     for snapshot in snapshots.values():
-        if snapshot:
-            require(snapshot.get("Encrypted") is True and snapshot.get("KmsKeyId") == target.kms_key_arn,
+        if snapshot and target.legacy_kms_key_arn:
+            require(snapshot.get("Encrypted") is True and snapshot.get("KmsKeyId") == target.legacy_kms_key_arn,
                     "Refusing to delete a snapshot encrypted outside the publishing target")
     for image in images.values():
         if image:
@@ -344,8 +357,8 @@ def wait_snapshot(cloud: Cloud, snapshot_id: str, target: PublishingTarget,
         snapshot = cloud.snapshot(snapshot_id)
         if snapshot:
             owned(snapshot, target, publication_id, digest)
-            require(snapshot.get("Encrypted") is True and snapshot.get("KmsKeyId") == target.kms_key_arn,
-                    "Published snapshot does not use the target encryption key")
+            require(snapshot.get("Encrypted") is False and not snapshot.get("KmsKeyId"),
+                    "Published snapshot must be unencrypted; EBS encryption by default may have changed during upload")
             if snapshot.get("State") == "completed":
                 return snapshot
             require(snapshot.get("State") != "error", f"Snapshot {snapshot_id} entered an error state")
@@ -356,6 +369,8 @@ def wait_snapshot(cloud: Cloud, snapshot_id: str, target: PublishingTarget,
 
 def publish_image(build: BuiltImage, target: PublishingTarget, output: Path, name: str | None = None,
                   profile: str | None = None, cloud: Cloud | None = None) -> dict[str, Any]:
+    require(target.legacy_kms_key_arn is None,
+            "Legacy encrypted publishing targets are supported only for cleanup; apply the installation update and use its version 3 target for new publications")
     compatibility = asdict(build.compatibility)
     output = output.resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -378,6 +393,7 @@ def publish_image(build: BuiltImage, target: PublishingTarget, output: Path, nam
     }
     cloud = cloud or Cloud(target, profile)
     cloud.authenticate()
+    cloud.require_unencrypted_snapshots()
     write_yaml(state_path, record)
     def remember_snapshot(snapshot_id: str) -> None:
         require(re.fullmatch(r"snap-[0-9a-f]+", snapshot_id) is not None, "Invalid uploaded snapshot identity")
@@ -411,6 +427,8 @@ def publish_image(build: BuiltImage, target: PublishingTarget, output: Path, nam
                 sources = [item["Ebs"]["SnapshotId"] for item in image.get("BlockDeviceMappings", [])
                            if "Ebs" in item and "SnapshotId" in item["Ebs"]]
                 require(sources == [snapshot_id], "Registered image references a different disk")
+                require(all(item["Ebs"].get("Encrypted") is False for item in image["BlockDeviceMappings"] if "Ebs" in item),
+                        "Registered image must use an unencrypted snapshot")
                 if image.get("State") == "available":
                     break
                 require(image.get("State") not in {"failed", "error", "deregistered"}, "Registered image is unavailable")

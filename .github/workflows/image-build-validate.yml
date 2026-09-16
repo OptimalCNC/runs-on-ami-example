@@ -10,8 +10,8 @@ on:
       - images/requirements.txt
       - images/common/**
       - images/xenomai-cobalt/**
-      - tests/cobalt/**
-      - scripts/install-tools.py
+      - execution/cobalt/**
+      - images/install-tools.py
       - .github/workflows/image-build-validate.yml
   workflow_dispatch:
     inputs:
@@ -52,9 +52,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends \
             qemu-system-x86 qemu-utils ovmf cloud-image-utils xorriso python3-yaml
-          python3 scripts/install-tools.py --group image
-          echo "$GITHUB_WORKSPACE/.tools/bin" >> "$GITHUB_PATH"
-          echo "PACKER_PLUGIN_PATH=$GITHUB_WORKSPACE/.tools/plugins" >> "$GITHUB_ENV"
+          python3 images/install-tools.py
+          echo "$GITHUB_WORKSPACE/images/.local/tools/bin" >> "$GITHUB_PATH"
+          echo "PACKER_PLUGIN_PATH=$GITHUB_WORKSPACE/images/.local/tools/plugins" >> "$GITHUB_ENV"
       - name: Verify KVM acceleration
         run: |
           sudo chmod 0666 /dev/kvm

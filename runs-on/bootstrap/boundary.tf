@@ -11,7 +11,7 @@ locals {
       {
         Effect = "Allow"
         Action = [
-          "ec2:Describe*", "pricing:GetProducts", "cloudwatch:GetMetric*", "cloudwatch:DescribeAlarms",
+          "ec2:Describe*", "ec2:GetEbsEncryptionByDefault", "pricing:GetProducts", "cloudwatch:GetMetric*", "cloudwatch:DescribeAlarms",
           "cloudtrail:LookupEvents", "ce:GetCostAndUsage", "ecr-public:Get*", "ecr-public:Describe*",
           "ecr-public:BatchCheckLayerAvailability", "ecr:GetAuthorizationToken",
         ]
@@ -148,12 +148,6 @@ locals {
         Action    = "ec2:CreateTags"
         Resource  = "arn:aws:ec2:${var.region}::image/*"
         Condition = { StringEquals = { "aws:RequestTag/runs-on-installation" = var.name, "ec2:CreateAction" = "RegisterImage" } }
-      },
-      {
-        Effect    = "Allow"
-        Action    = ["kms:Decrypt", "kms:Encrypt", "kms:GenerateDataKey*", "kms:ReEncrypt*", "kms:DescribeKey", "kms:CreateGrant"]
-        Resource  = "arn:aws:kms:${local.regional}:key/*"
-        Condition = { StringEquals = { "aws:ResourceTag/runs-on-installation" = var.name } }
       },
       {
         # The vendor cache uses AWS's managed S3 key. Constrain its use to the

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install exact, checksum-verified tools in an unprivileged local directory."""
+"""Install checksum-verified image build or publishing tools locally."""
 import argparse
 import hashlib
 import json
@@ -11,7 +11,7 @@ import tarfile
 import urllib.request
 import zipfile
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parent
 
 
 def file_sha(path):
@@ -66,15 +66,20 @@ def install(name, spec, destination):
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--directory", default=".tools")
-    parser.add_argument("--group", choices=("image", "cloud", "validation"), default="image")
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--directory", type=Path, default=ROOT / ".local/tools",
+                        help="installation directory (default: images/.local/tools)")
+    parser.add_argument("--group", choices=("build", "publish"), default="build",
+                        help="build installs Packer and QEMU plugin; publish installs AWS CLI (default: build)")
     args = parser.parse_args()
     destination = Path(args.directory).resolve()
-    pins = read_json(ROOT / "images/xenomai-cobalt/inputs.lock.json")["tools"]
-    groups = {"cloud": ["aws_cli"], "image": ["packer", "qemu_plugin"],
-              "validation": ["packer", "qemu_plugin", "terraform", "actionlint"]}
-    for name in groups[args.group]:
+    if args.group == "build":
+        pins = read_json(ROOT / "xenomai-cobalt/inputs.lock.json")["tools"]
+        names = ("packer", "qemu_plugin")
+    else:
+        pins = read_json(ROOT / "tools.lock.json")["tools"]
+        names = ("aws_cli",)
+    for name in names:
         install(name, pins[name], destination)
 
 

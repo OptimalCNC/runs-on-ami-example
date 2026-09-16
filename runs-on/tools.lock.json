@@ -1,0 +1,13 @@
+{
+  "terraform": {
+    "binary": "terraform",
+    "sha256": "41d05b927aa174f15d1228c4eba832a323b716c68b415ef5a00179f46cc602d3",
+    "url": "https://releases.hashicorp.com/terraform/1.16.0/terraform_1.16.0_linux_amd64.zip",
+    "version": "1.16.0"
+  },
+  "aws_cli": {
+    "sha256": "e0a2f495d50f058706954f36b26674fc2d2e37965ee03d47b934981f0d7732a7",
+    "url": "https://awscli.amazonaws.com/awscli-exe-linux-x86_64-2.31.8.zip",
+    "version": "2.31.8"
+  }
+}

@@ -8,17 +8,11 @@ mock_provider "aws" {
   mock_resource "aws_subnet" {
     defaults = { id = "subnet-0123456789abcdef0" }
   }
-  mock_resource "aws_kms_key" {
-    defaults = {
-      arn    = "arn:aws:kms:us-east-1:123456789012:key/12345678-1234-1234-1234-123456789012"
-      key_id = "12345678-1234-1234-1234-123456789012"
-    }
-  }
   mock_resource "aws_iam_role" {
     defaults = { arn = "arn:aws:iam::123456789012:role/test-install-image-publisher" }
   }
   mock_resource "aws_iam_policy" {
-    defaults = { arn = "arn:aws:iam::123456789012:policy/test-install-image-key-use" }
+    defaults = { arn = "arn:aws:iam::123456789012:policy/test-install-image-publisher" }
   }
 }
 
@@ -68,7 +62,7 @@ run "local_publishing_contract_and_permissions" {
       jsonencode(yamldecode(output.publishing_yaml)) == jsonencode(output.publishing) &&
       output.installation.kind == "runs-on-installation" &&
       output.publishing.kind == "ami-publishing-target" &&
-      output.installation.schema_version == 1 && output.publishing.schema_version == 1
+      output.installation.schema_version == 1 && output.publishing.schema_version == 3
     )
     error_message = "Both YAML handoffs must preserve their typed contract and schema discriminator."
   }
@@ -83,14 +77,14 @@ run "local_publishing_contract_and_permissions" {
 
   assert {
     condition = (
-      output.publishing.destination.encrypted &&
+      !output.publishing.destination.encrypted &&
       output.publishing.destination.disk_format == "raw" &&
-      output.publishing.destination.kms_key_arn == aws_kms_key.images.arn &&
+      !contains(keys(output.publishing.destination), "kms_key_arn") &&
       output.publishing.authentication.github == null &&
       toset(jsondecode(aws_iam_role.publisher.assume_role_policy).Statement[0].Principal.AWS) == toset(var.publisher_principal_arns) &&
       aws_iam_role.publisher.permissions_boundary == var.workload_boundary_arn
     )
-    error_message = "Local publication must use the provisioned key and explicitly authorized principals within the workload boundary."
+    error_message = "Local publication must be unencrypted with explicitly authorized principals within the workload boundary."
   }
 
   assert {
@@ -125,38 +119,31 @@ run "local_publishing_contract_and_permissions" {
   assert {
     condition = alltrue(flatten([
       for statement in jsondecode(aws_iam_policy.publisher.policy).Statement : [
-        for action in flatten([statement.Action]) : !startswith(action, "iam:") && action != "ec2:RunInstances" && action != "*"
+        for action in flatten([statement.Action]) : !startswith(action, "iam:") && !startswith(action, "kms:") && action != "ec2:RunInstances" && action != "*"
       ]
     ]))
-    error_message = "Image publication must not grant installation administration or EC2 launch privileges."
+    error_message = "Unencrypted image publication must not grant KMS, installation administration or EC2 launch privileges."
   }
 
   assert {
     condition = (
-      one([for statement in jsondecode(aws_iam_policy.publisher.policy).Statement : statement if statement.Sid == "GeneratePublisherSnapshotKey"]).Action == "kms:GenerateDataKey" &&
-      one([for statement in jsondecode(aws_iam_policy.publisher.policy).Statement : statement if statement.Sid == "GeneratePublisherSnapshotKey"]).Resource == aws_kms_key.images.arn
+      one([for statement in jsondecode(aws_iam_policy.publisher.policy).Statement : statement if statement.Sid == "InspectRegionalEncryptionDefault"]).Action == "ec2:GetEbsEncryptionByDefault" &&
+      one([for statement in jsondecode(aws_iam_policy.publisher.policy).Statement : statement if statement.Sid == "InspectRegionalEncryptionDefault"]).Condition.StringEquals["aws:RequestedRegion"] == "us-east-1"
     )
-    error_message = "Encrypted EBS direct publication must generate data keys only with this installation's image key."
+    error_message = "Publishers must be able to inspect the destination region's EBS encryption default before uploading."
   }
 
-  assert {
-    condition = (
-      one([for statement in jsondecode(aws_kms_key.images.policy).Statement : statement if statement.Sid == "AllowSpotInstancesToUseImages"]).Principal.AWS == "arn:aws:iam::123456789012:role/aws-service-role/spot.amazonaws.com/AWSServiceRoleForEC2Spot" &&
-      contains(one([for statement in jsondecode(aws_kms_key.images.policy).Statement : statement if statement.Sid == "AllowSpotInstancesToUseImages"]).Action, "kms:Decrypt") &&
-      one([for statement in jsondecode(aws_kms_key.images.policy).Statement : statement if statement.Sid == "AllowSpotResourceGrants"]).Principal.AWS == "arn:aws:iam::123456789012:role/aws-service-role/spot.amazonaws.com/AWSServiceRoleForEC2Spot" &&
-      one([for statement in jsondecode(aws_kms_key.images.policy).Statement : statement if statement.Sid == "AllowSpotResourceGrants"]).Condition.Bool["kms:GrantIsForAWSResource"] == "true"
-    )
-    error_message = "Encrypted Spot launches require the account's exact Spot service-linked role to use the key and create AWS resource grants."
-  }
 }
 
 run "github_environment_trust" {
   command = apply
   variables {
-    publisher_principal_arns          = []
-    publisher_github_repository       = "example-org/images"
-    publisher_github_subject_prefix   = "repo:example-org/images"
-    publisher_github_environment      = "image-publish"
+    publisher_principal_arns = []
+    publisher_github_repositories = [{
+      repository     = "example-org/images"
+      subject_prefix = "repo:example-org/images"
+      environment    = "image-publish"
+    }]
     existing_github_oidc_provider_arn = "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com"
   }
 
@@ -164,9 +151,9 @@ run "github_environment_trust" {
     condition = (
       jsondecode(aws_iam_role.publisher.assume_role_policy).Statement[0].Principal.Federated == var.existing_github_oidc_provider_arn &&
       length(jsondecode(aws_iam_role.publisher.assume_role_policy).Statement) == 1 &&
-      jsondecode(aws_iam_role.publisher.assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:sub"] == "repo:example-org/images:environment:image-publish" &&
+      tolist(jsondecode(aws_iam_role.publisher.assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:sub"]) == tolist(["repo:example-org/images:environment:image-publish"]) &&
       jsondecode(aws_iam_role.publisher.assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:aud"] == "sts.amazonaws.com" &&
-      output.publishing.authentication.github.subject == "repo:example-org/images:environment:image-publish"
+      output.publishing.authentication.github.repositories[0].subject == "repo:example-org/images:environment:image-publish"
     )
     error_message = "OIDC must authorize only the selected repository and protected environment, using the existing provider."
   }
@@ -175,19 +162,124 @@ run "github_environment_trust" {
 run "immutable_github_subject" {
   command = apply
   variables {
-    publisher_principal_arns          = []
-    publisher_github_repository       = "example-org/images"
-    publisher_github_subject_prefix   = "repo:example-org@1234/images@5678"
+    publisher_principal_arns = []
+    publisher_github_repositories = [{
+      repository     = "example-org/images"
+      subject_prefix = "repo:example-org@1234/images@5678"
+    }]
     existing_github_oidc_provider_arn = "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com"
   }
 
   assert {
     condition = (
-      jsondecode(aws_iam_role.publisher.assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:sub"] == "repo:example-org@1234/images@5678:environment:image-publish" &&
-      output.publishing.authentication.github.subject == "repo:example-org@1234/images@5678:environment:image-publish"
+      tolist(jsondecode(aws_iam_role.publisher.assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:sub"]) == tolist(["repo:example-org@1234/images@5678:environment:image-publish"]) &&
+      output.publishing.authentication.github.repositories[0].subject == "repo:example-org@1234/images@5678:environment:image-publish"
     )
     error_message = "GitHub's immutable repository identity must be preserved in the role trust and publishing handoff."
   }
+}
+
+run "multiple_github_repositories_with_local_publisher" {
+  command = apply
+  variables {
+    publisher_github_repositories = [
+      {
+        repository     = "example-org/images"
+        environment    = "image-publish"
+        subject_prefix = "repo:example-org@1234/images@5678"
+      },
+      {
+        repository     = "other-org/another-image"
+        environment    = "release"
+        subject_prefix = "repo:other-org/another-image"
+      },
+      {
+        repository     = "example-org/images"
+        environment    = "staging"
+        subject_prefix = "repo:example-org@1234/images@5678"
+      },
+    ]
+    existing_github_oidc_provider_arn = "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com"
+  }
+
+  assert {
+    condition = (
+      length(jsondecode(aws_iam_role.publisher.assume_role_policy).Statement) == 2 &&
+      toset(jsondecode(aws_iam_role.publisher.assume_role_policy).Statement[0].Principal.AWS) == toset(["arn:aws:iam::123456789012:role/image-operator"]) &&
+      jsondecode(aws_iam_role.publisher.assume_role_policy).Statement[0].Action == "sts:AssumeRole" &&
+      jsondecode(aws_iam_role.publisher.assume_role_policy).Statement[1].Action == "sts:AssumeRoleWithWebIdentity" &&
+      jsondecode(aws_iam_role.publisher.assume_role_policy).Statement[1].Principal.Federated == "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com" &&
+      jsondecode(aws_iam_role.publisher.assume_role_policy).Statement[1].Condition.StringEquals["token.actions.githubusercontent.com:aud"] == "sts.amazonaws.com" &&
+      toset(jsondecode(aws_iam_role.publisher.assume_role_policy).Statement[1].Condition.StringEquals["token.actions.githubusercontent.com:sub"]) == toset([
+        "repo:example-org@1234/images@5678:environment:image-publish",
+        "repo:other-org/another-image:environment:release",
+        "repo:example-org@1234/images@5678:environment:staging",
+      ])
+    )
+    error_message = "Trust must retain local publishers and authorize only the exact repository/environment pairs through the shared OIDC provider."
+  }
+
+  assert {
+    condition = jsonencode(output.publishing.authentication.github) == jsonencode({
+      method       = "github-oidc"
+      audience     = "sts.amazonaws.com"
+      provider_arn = "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com"
+      repositories = [
+        { repository = "example-org/images", environment = "image-publish", subject = "repo:example-org@1234/images@5678:environment:image-publish" },
+        { repository = "other-org/another-image", environment = "release", subject = "repo:other-org/another-image:environment:release" },
+        { repository = "example-org/images", environment = "staging", subject = "repo:example-org@1234/images@5678:environment:staging" },
+      ]
+    })
+    error_message = "The publishing contract must let each repository select its own environment and exact trusted subject."
+  }
+}
+
+run "reject_mismatched_github_repository_subject" {
+  command = plan
+  variables {
+    publisher_github_repositories = [{
+      repository     = "example-org/images"
+      subject_prefix = "repo:other-org/images"
+    }]
+    existing_github_oidc_provider_arn = "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com"
+  }
+  expect_failures = [var.publisher_github_repositories]
+}
+
+run "reject_github_wildcard_environment" {
+  command = plan
+  variables {
+    publisher_github_repositories = [{
+      repository     = "example-org/images"
+      environment    = "*"
+      subject_prefix = "repo:example-org/images"
+    }]
+    existing_github_oidc_provider_arn = "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com"
+  }
+  expect_failures = [var.publisher_github_repositories]
+}
+
+run "reject_duplicate_github_repository_environment" {
+  command = plan
+  variables {
+    publisher_github_repositories = [
+      { repository = "example-org/images", subject_prefix = "repo:example-org/images" },
+      { repository = "example-org/images", environment = "image-publish", subject_prefix = "repo:example-org/images" },
+    ]
+    existing_github_oidc_provider_arn = "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com"
+  }
+  expect_failures = [var.publisher_github_repositories]
+}
+
+run "github_requires_account_oidc_provider" {
+  command = plan
+  variables {
+    publisher_github_repositories = [{
+      repository     = "example-org/images"
+      subject_prefix = "repo:example-org/images"
+    }]
+  }
+  expect_failures = [var.existing_github_oidc_provider_arn]
 }
 
 run "missing_publisher_identity" {

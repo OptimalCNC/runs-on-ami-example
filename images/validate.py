@@ -117,7 +117,7 @@ def run_guest(image: BuiltImage, ssh: list[str], temporary: Path, output: Path, 
     archive = temporary / "test.tar"
     with tarfile.open(archive, "w") as stream:
         for name in ("CMakeLists.txt", "main.c"):
-            stream.add(ROOT / "tests/cobalt" / name, arcname=f"cobalt/{name}")
+            stream.add(ROOT / "execution/cobalt" / name, arcname=f"cobalt/{name}")
         stream.add(ROOT / "images/common/validate-guest.sh", arcname="validate-guest.sh")
     with archive.open("rb") as stream:
         subprocess.run([*ssh, f"mkdir -m 0700 {GUEST_DIRECTORY} && tar -xf - -C {GUEST_DIRECTORY}"],

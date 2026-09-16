@@ -181,20 +181,27 @@ Use the account, ARN, and region from the generated contract. The profile belong
 in the publisher's AWS configuration, and its source profile uses the
 publisher's existing authentication method.
 
-GitHub publishing uses OIDC with audience `sts.amazonaws.com` and the exact
-repository/environment subject exported in the contract. The publishing job
-requires `id-token: write` and must name that GitHub environment when requesting
-temporary credentials. Repository environment protection rules control who can
-invoke this access.
+GitHub publishing uses one account-wide OIDC provider with audience
+`sts.amazonaws.com`. Each `publisher_github_repositories` entry authorizes one
+exact repository/environment subject, exported in the contract's
+`authentication.github.repositories` list. A publishing job requires
+`id-token: write` and must name its authorized GitHub environment when requesting
+temporary credentials. Configure environment protection rules in each repository.
+All authorized repositories assume the same publisher role and can manage the
+installation's published images; repository entries do not isolate image ownership.
 
 The publisher policy permits EBS direct snapshot writes and AMI registration
 with the required `runs-on-installation` ownership tag, and retirement of images
 and snapshots carrying that tag. AMI registration also requires that tag on its
 backing snapshots. Image inspection is read-only across the
-selected region. KMS permissions name the installation's image key. The
-publishing operation must use the contract's encryption key and raw-disk format;
-IAM does not enforce every image-format or snapshot-source requirement. RunsOn's
-control plane receives the key access needed to launch those images.
+selected region. The publisher can read that region's EBS encryption default and
+has no KMS grants. Publication requires unencrypted snapshots and raw-disk
+format; it rejects an enabled encryption default before uploading and verifies
+the resulting snapshot and AMI. IAM does not enforce every image-format or
+snapshot-source requirement. RunsOn uses no custom EBS key or associated runtime
+KMS grants. The deployment role retains only the KMS permissions needed to
+inspect and retire an older installation's key and alias. Workload KMS access
+for the S3 cache is scoped separately to that service and its cache objects.
 
 The exact publishing policy and trust are maintained in
 [deployment/publishing.tf](deployment/publishing.tf). Publishing credentials

@@ -27,7 +27,7 @@ sudo apt-get install --yes --no-install-recommends \
 python3 -m venv .venv
 . .venv/bin/activate
 python3 -m pip install -r requirements.txt
-python3 ../scripts/install-tools.py --group image --directory .local/tools
+python3 install-tools.py
 export PATH="$PWD/.local/tools/bin:$PATH"
 export PACKER_PLUGIN_PATH="$PWD/.local/tools/plugins"
 ```
@@ -37,6 +37,9 @@ the versions in [inputs.lock.json](xenomai-cobalt/inputs.lock.json). Build also
 downloads the pinned Ubuntu cloud disk and public kernel, userspace, and package
 inputs. It creates no AWS resources.
 
+Run `python3 check.py --tools` to check this module's Python tests, pinned inputs,
+shell scripts, and Packer configuration without building a disk.
+
 The default build VM uses 4 CPUs and 8 GiB of memory; leave memory for the host as
 well. Its root disk is 16 GiB, with a separate disposable 16 GiB build disk.
 Allow storage for those sparse disks, downloaded inputs, logs, and validation's
@@ -45,12 +48,13 @@ data. The default validation VM uses 2 CPUs and 2 GiB of memory.
 
 Publishing additionally needs AWS CLI v2, an authorized AWS login or GitHub OIDC
 session, and [AWS Labs coldsnap](https://github.com/awslabs/coldsnap). The tool
-installer's `cloud` group installs the pinned AWS CLI. Install Rust 1.94.1 or
-newer with Cargo, then build coldsnap into the same local tool directory.
+installer's `publish` group installs AWS CLI pinned in [tools.lock.json](tools.lock.json).
+Install Rust 1.94.1 or newer with Cargo, then build coldsnap into the same local
+tool directory.
 On Ubuntu, its native dependencies need a C/C++ toolchain and CMake:
 
 ```sh
-python3 ../scripts/install-tools.py --group cloud --directory .local/tools
+python3 install-tools.py --group publish
 sudo apt-get install --yes --no-install-recommends build-essential cmake pkg-config
 cargo install --locked coldsnap --version 0.12.0 --root .local/tools
 ```
@@ -93,7 +97,7 @@ python3 validate.py \
 Validation boots the complete disk through its UEFI firmware and bootloader,
 using a disposable QEMU overlay and temporary SSH access. It checks the running
 kernel and baked image identity, then builds and runs the
-[Cobalt application](../tests/cobalt). The application starts an Alchemy task
+[Cobalt application](../execution/cobalt). The application starts an Alchemy task
 and verifies Cobalt primary-mode execution. Validation also verifies that the
 input disk's digest is unchanged.
 
@@ -132,7 +136,7 @@ needs no AWS credentials. Download and extract the retained bundle to obtain
 ## Publish to the installation's target
 
 Obtain `publishing.yaml` from the RunsOn installation. Its destination account,
-region, publisher role, encryption key, and required tags are the publishing
+region, publisher role, unencrypted destination, and required tags are the publishing
 contract. The [installation permissions guide](../runs-on/PERMISSIONS.md#publishing-access)
 describes local role profiles and GitHub OIDC authentication.
 
@@ -148,13 +152,14 @@ python3 publish.py \
 
 The command assumes the contract's publisher role when needed and verifies the
 resulting account and role. An existing session for that publisher role is also
-accepted. For GitHub Actions, obtain temporary credentials through OIDC in the
-contract's protected environment, then omit `--profile`. Use the exact subject
-from the contract, including immutable repository/account identifiers where
-present; Build and Validate do not need that publishing authority.
+accepted. For GitHub Actions, select the matching repository entry in
+`authentication.github.repositories` from the version 3 target contract. Obtain
+temporary credentials through OIDC in that entry's protected environment, then
+omit `--profile`. Use its exact subject, including immutable repository/account
+identifiers where present. Build and Validate do not need that publishing authority.
 
-Publication uploads the raw disk through EBS direct APIs with the installation's
-encryption key, waits for its snapshot, registers a UEFI x86-64 AMI with ENA
+Publication uploads the raw disk through EBS direct APIs without encryption,
+waits for its snapshot, registers a UEFI x86-64 AMI with ENA
 support, and checks the resulting identity. It does not run Build or Validate;
 choose the artifact whose validation evidence you accept. Successful publication
 writes `published-image.yaml` with `status: available`, the AMI and snapshot IDs,
@@ -164,13 +169,21 @@ checks the guest manifest against that digest before accepting its kernel and
 SDK evidence. Availability is an AWS publication result; execution establishes
 runtime qualification.
 
-The current upload includes zero blocks to preserve encrypted snapshot data, so
-a sparse 16 GiB raw disk still transfers its full logical 16 GiB. Publication
+EBS encryption by default must be disabled in the destination account and region:
+AWS cannot create unencrypted snapshots while it is enabled. Publishing checks
+this setting before uploading and verifies that the snapshot and AMI are
+unencrypted. It does not change the account setting. RunsOn omits explicit
+runner-volume encryption settings, leaving encryption to the source image and
+regional EBS defaults. Unencrypted publication does not make the AMI public or
+grant additional launch access.
+
+The current upload includes zero blocks, so a sparse 16 GiB raw disk still
+transfers its full logical 16 GiB. Publication
 incurs [EBS direct API and snapshot storage charges](https://aws.amazon.com/ebs/pricing/),
-plus applicable KMS requests and source network charges. It creates no EC2 build
+plus applicable source network charges. It creates no EC2 build
 instance or S3 staging bucket. Images remain in the contract's account and region;
-sharing or copying them into another account or region requires separate AMI,
-snapshot, and customer-managed key access and lifecycle management.
+sharing or copying them into another account or region requires separate AMI
+and snapshot access and lifecycle management.
 
 ## Outputs and cleanup
 
@@ -198,8 +211,8 @@ python3 publish.py \
   --profile your-authorized-login
 ```
 
-Cleanup verifies the target, ownership and artifact tags, publication identity,
-and encryption key before deregistering the recorded AMI and deleting its
+Cleanup verifies the target, ownership and artifact tags, and publication
+identity before deregistering the recorded AMI and deleting its
 snapshot. It updates the supplied record to `status: deleted`. Individual image
 retention belongs to this module; removing local files does not remove an AMI.
 
@@ -214,6 +227,13 @@ python3 publish.py \
   --profile your-authorized-login
 ```
 
-Retire image publications before removing their installation-owned encryption
-key. The installer checks for dependent snapshots and volumes during its own
-removal procedure.
+Version 1 and 2 publishing targets remain supported only for cleanup of existing
+encrypted publications, including verification of their original encryption key.
+Retain those targets with their publication records. New publication requires a
+version 3 target exported after updating the installation. Existing AMIs and
+snapshots cannot be decrypted in place; publish the built disk again to create an
+unencrypted replacement. Before updating the installation, stop runner jobs and
+migrate or retire snapshots and volumes that use its legacy key. The installer
+blocks bootstrap updates, deployment apply, and removal while those dependencies
+remain; a successful deployment update retires the key. See the
+[installation update instructions](../runs-on/README.md#updates-exports-and-removal).

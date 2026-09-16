@@ -76,41 +76,46 @@ variable "publisher_principal_arns" {
     error_message = "publisher_principal_arns must contain IAM user or role ARNs."
   }
   validation {
-    condition     = length(var.publisher_principal_arns) > 0 || var.publisher_github_repository != ""
+    condition     = length(var.publisher_principal_arns) > 0 || length(var.publisher_github_repositories) > 0
     error_message = "Configure at least one publisher principal or a GitHub publishing repository."
   }
 }
 
-variable "publisher_github_repository" {
-  description = "Optional exact owner/repository authorized through GitHub OIDC."
-  type        = string
-  default     = ""
+variable "publisher_github_repositories" {
+  description = "Exact GitHub repository/environment pairs and resolved OIDC subject prefixes allowed to publish."
+  type = list(object({
+    repository     = string
+    environment    = optional(string, "image-publish")
+    subject_prefix = string
+  }))
+  default  = []
+  nullable = false
   validation {
-    condition     = var.publisher_github_repository == "" || can(regex("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", var.publisher_github_repository))
-    error_message = "publisher_github_repository must be empty or owner/repository."
+    condition = alltrue([
+      for publisher in var.publisher_github_repositories : can(regex("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", publisher.repository))
+    ])
+    error_message = "Each GitHub publisher repository must have the form owner/repository."
   }
-}
-
-variable "publisher_github_environment" {
-  description = "GitHub environment whose OIDC subject can assume the publisher role."
-  type        = string
-  default     = "image-publish"
   validation {
-    condition     = can(regex("^[A-Za-z0-9_.-]+$", var.publisher_github_environment))
-    error_message = "publisher_github_environment must contain letters, digits, underscores, dots or hyphens."
+    condition = alltrue([
+      for publisher in var.publisher_github_repositories : can(regex("^[A-Za-z0-9_.-]+$", publisher.environment))
+    ])
+    error_message = "Each GitHub publisher environment must contain letters, digits, underscores, dots or hyphens."
   }
-}
-
-variable "publisher_github_subject_prefix" {
-  description = "GitHub repository OIDC subject prefix discovered by the installer, including immutable IDs when GitHub uses them."
-  type        = string
-  default     = ""
   validation {
-    condition = var.publisher_github_repository == "" || (
-      can(regex("^repo:[A-Za-z0-9_.-]+(@[0-9]+)?/[A-Za-z0-9_.-]+(@[0-9]+)?$", var.publisher_github_subject_prefix)) &&
-      replace(var.publisher_github_subject_prefix, "/@[0-9]+/", "") == "repo:${var.publisher_github_repository}"
-    )
-    error_message = "GitHub publishing requires the selected repository's OIDC subject prefix, obtained from GitHub."
+    condition = alltrue([
+      for publisher in var.publisher_github_repositories : (
+        can(regex("^repo:[A-Za-z0-9_.-]+(@[0-9]+)?/[A-Za-z0-9_.-]+(@[0-9]+)?$", publisher.subject_prefix)) &&
+        replace(publisher.subject_prefix, "/@[0-9]+/", "") == "repo:${publisher.repository}"
+      )
+    ])
+    error_message = "Each GitHub publisher requires its repository's OIDC subject prefix, obtained from GitHub."
+  }
+  validation {
+    condition = length(distinct([
+      for publisher in var.publisher_github_repositories : "${publisher.repository}:${publisher.environment}"
+    ])) == length(var.publisher_github_repositories)
+    error_message = "GitHub publisher repository/environment pairs must be unique."
   }
 }
 
@@ -123,7 +128,7 @@ variable "existing_github_oidc_provider_arn" {
     error_message = "existing_github_oidc_provider_arn must identify this account's GitHub Actions OIDC provider."
   }
   validation {
-    condition     = var.publisher_github_repository == "" || var.existing_github_oidc_provider_arn != ""
+    condition     = length(var.publisher_github_repositories) == 0 || var.existing_github_oidc_provider_arn != ""
     error_message = "GitHub publishing requires its account-wide OIDC provider ARN from installation prerequisites."
   }
 }
