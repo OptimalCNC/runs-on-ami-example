@@ -186,8 +186,10 @@ GitHub CLI. Use this installation's `environment` value:
 gh workflow run runs-on-installation-smoke.yml -f environment=production
 ```
 
-The workflow requests an on-demand stock `2cpu-linux-x64` runner and executes a
-small job. A successful run establishes that the App receives jobs, RunsOn
+The workflow requests a lowest-price Spot `t3.nano` runner with the default RunsOn
+image and reports its checks in the job summary. The environment input is optional
+and defaults to `production`. A successful run establishes that the App receives
+jobs, RunsOn
 launches a runner, and the runner registers and executes the job. This check
 requires App access to the repository and no publishing credentials. Custom
 image behavior is verified separately by [RunsOn execution](../execution/README.md).
