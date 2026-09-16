@@ -79,18 +79,3 @@ output "publishing_yaml" {
   description = "Export to .local/contracts/publishing.yaml after successful deployment."
   value       = yamlencode(local.publishing_contract)
 }
-
-output "runtime" {
-  description = "Runtime identifiers used by the installer's status command."
-  value       = module.runs_on.runtime
-}
-
-output "setup_url" {
-  description = "Open this URL to register and install the GitHub App."
-  value       = module.runs_on.ingress.url
-}
-
-output "alerts" {
-  description = "SNS notification subscription identifiers."
-  value       = module.runs_on.alerts
-}

@@ -80,9 +80,4 @@ build {
     source      = "/etc/ami-example.json"
     destination = "${var.output_directory}/image-manifest.json"
   }
-  provisioner "file" {
-    direction   = "download"
-    source      = "/mnt/ami-example-build/inputs.tar"
-    destination = "${var.output_directory}/inputs.tar"
-  }
 }

@@ -1,15 +1,13 @@
 # Ubuntu 24.04 Xenomai Cobalt AMIs with RunsOn Flex
 
-Start with the dedicated [RunsOn installation guide](runs-on/README.md) to
-provision the runner platform and its image-publishing destination and role.
-That module is the current installation path and includes a stock-image smoke
-workflow.
+The repository separates three responsibilities:
 
-The repository separates RunsOn installation, image build and publishing, and
-execution through RunsOn. The independent [image module](images/README.md)
-provides separate Build, Validate, and Publish operations. [RunsOn
-execution](execution/README.md) consumes a published image and proves that it
-registers as a runner and builds and tests an application using Xenomai Cobalt.
+- [RunsOn installation](runs-on/README.md) provisions the runner platform, its
+  image-publishing destination, and the publisher role.
+- [Image build and publishing](images/README.md) provides independent Build,
+  Validate, and Publish operations. Build and Validate need no AWS credentials.
+- [RunsOn execution](execution/README.md) consumes a published image and proves
+  that it registers as a runner and builds and tests a Xenomai Cobalt application.
 
 The image recipe builds Ubuntu 24.04 with a Dovetail-enabled Linux kernel,
 Xenomai 3 Cobalt integration, and matching userspace development tools. The
@@ -64,7 +62,7 @@ the publishing contract through an explicit file path. Build and Validate
 produce and test a local disk without AWS credentials; Publish uploads that
 artifact only when requested.
 
-## Run the approved qualification
+## Run qualification
 
 After GitHub App setup, run [Check RunsOn
 installation](.github/workflows/runs-on-installation-smoke.yml) with the installed
@@ -85,7 +83,5 @@ owns disk artifacts, VM validation, published AMIs, and their cleanup.
 [RunsOn execution](execution/README.md) owns the application workflow and its
 runtime evidence.
 
-When reusing a qualified image recipe or application test, record its reviewed
-Git commit and the associated qualification evidence in the companion project's
-source-copy attribution. Repository code uses the [MIT license](LICENSE); the
-pinned Linux and Xenomai sources retain their upstream licenses.
+Repository code uses the [MIT license](LICENSE); the pinned Linux and Xenomai
+sources retain their upstream licenses.

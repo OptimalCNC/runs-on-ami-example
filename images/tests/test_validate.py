@@ -28,8 +28,8 @@ class Evidence(unittest.TestCase):
             "kernel_release": "6.12.90-cip24-xenomai-cobalt", "recipe_id": "a" * 64,
             "config_sha256": "b" * 64, "xenomai": {"version": "3.3.3", "core": "cobalt", "prefix": "/usr/xenomai"},
             "packages_sha256": "c" * 64, "snap_hashes": {},
-            "runner_inventory": {"runner_version": "2.330.0", "runner_listener_sha256": "d" * 64,
-                                 "bootstrap_files": {"/usr/local/bin/runs-on-bootstrap-v2.12.0": "e" * 64}},
+            "runner_inventory": {"runner_version": "2.337.0", "runner_listener_sha256": "d" * 64,
+                                 "bootstrap_files": {"/usr/local/bin/runs-on-bootstrap-v0.1.12": "e" * 64}},
         }
         self.image = SimpleNamespace(manifest=manifest, compatibility=SimpleNamespace(boot_mode="uefi"))
         self.guest = {**manifest, **manifest["runner_inventory"], "boot_mode": "uefi", "environment_passed": True}
@@ -197,7 +197,7 @@ class MetadataBoundary(unittest.TestCase):
                     return "kernel\n"
                 if arguments[0] == "dpkg-query":
                     return "python3\t3.12\tamd64\tinstalled\n"
-                return "2.330.0\n"
+                return "2.337.0\n"
 
             with patch.object(reporter, "Path", side_effect=lambda value: directory / str(value).lstrip("/")), \
                     patch.object(Path, "stat", root_owned), \

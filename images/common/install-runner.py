@@ -74,10 +74,6 @@ def main():
     if expected not in startup.splitlines():
         raise SystemExit("runner entrypoint did not report its installed version")
     subprocess.run([*run_as_runner, "sudo", "--non-interactive", "true"], check=True)
-    (output / "runner-downloads.json").write_text(json.dumps({
-        "github": {**lock["github"], "file": github_archive.name},
-        "bootstrap": {**lock["bootstrap"], "file": bootstrap_download.name},
-    }, sort_keys=True, indent=2) + "\n")
 
 
 if __name__ == "__main__":

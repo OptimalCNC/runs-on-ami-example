@@ -361,7 +361,7 @@ class PublicationTests(unittest.TestCase):
         manifest.write_text("{}")
         self.build = BuiltImage(
             self.root / "build.yaml", disk, sha256(disk), disk.stat().st_size, "a" * 64,
-            manifest, sha256(manifest), {}, Compatibility("x86_64", "uefi", False, 1, True, "2.13.2"),
+            manifest, sha256(manifest), {}, Compatibility("x86_64", "uefi", False, 1, True, "0.1.12"),
         )
         self.target = publish.PublishingTarget("example", ACCOUNT, REGION, ROLE, KEY, tuple(TAGS.items()))
         self.cloud = FakeCloud()

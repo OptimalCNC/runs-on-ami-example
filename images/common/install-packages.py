@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""Install from the single locked, signed Ubuntu snapshot and retain downloads."""
+"""Install verified packages from the single locked, signed Ubuntu snapshot."""
 import hashlib
 import json
 from pathlib import Path
-import shutil
 import subprocess
 import sys
 
@@ -31,19 +30,15 @@ def main():
             "-o", "APT::Keep-Downloaded-Packages=true", "install", "--reinstall", *selection]
     # No --allow-downgrades: an incompatible newer parent requires an explicit lock refresh.
     subprocess.run([*args, "--download-only"], check=True)
-    downloaded = []
     by_identity = {}
     for deb in sorted(cache.glob("*.deb")):
         name, version = subprocess.check_output(["dpkg-deb", "-f", str(deb), "Package", "Version"], text=True).splitlines()
         name, version = name.removeprefix("Package: "), version.removeprefix("Version: ")
         checksum = hashlib.sha256(deb.read_bytes()).hexdigest()
         by_identity[(name, version)] = checksum
-        downloaded.append({"file": deb.name, "package": name, "version": version, "sha256": checksum})
     for name, spec in lock["packages"].items():
         if by_identity.get((name, spec["version"])) != spec["sha256"]:
             raise SystemExit(f"locked package missing or checksum mismatch: {name}")
-    (output / "package-downloads.json").write_text(json.dumps(downloaded, sort_keys=True, indent=2) + "\n")
-    shutil.copytree("/var/lib/apt/lists", output / "apt-lists", dirs_exist_ok=True)
     subprocess.run([*args, "--no-download"], check=True)
     for name, spec in lock["packages"].items():
         version = subprocess.check_output(["dpkg-query", "-W", "-f=${Version}", name], text=True)

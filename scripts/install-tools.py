@@ -69,7 +69,6 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--directory", default=".tools")
     parser.add_argument("--group", choices=("image", "cloud", "validation"), default="image")
-    parser.add_argument("--output", type=Path, help="write installed tool locations as JSON")
     args = parser.parse_args()
     destination = Path(args.directory).resolve()
     pins = read_json(ROOT / "images/xenomai-cobalt/inputs.lock.json")["tools"]
@@ -77,10 +76,6 @@ def main():
               "validation": ["packer", "qemu_plugin", "terraform", "actionlint"]}
     for name in groups[args.group]:
         install(name, pins[name], destination)
-    if args.output:
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(json.dumps({"bin_directory": str(destination / "bin"),
-                                           "packer_plugin_path": str(destination / "plugins")}, indent=2) + "\n")
 
 
 if __name__ == "__main__":

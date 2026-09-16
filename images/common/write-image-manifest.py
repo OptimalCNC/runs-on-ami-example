@@ -4,7 +4,6 @@ import hashlib
 import json
 from pathlib import Path
 import subprocess
-import tempfile
 from inventory import inventory, packages, sha
 
 recipe = Path("/opt/ami-example-recipe")
@@ -37,15 +36,6 @@ normalized_paths = ["/etc/default/grub.d/99-ami-example.cfg", "/etc/apt/sources.
                     "/usr/local/bin/ami-example-guest-report", "/etc/fstab", "/boot/grub/grub.cfg",
                     "/etc/security/limits.d/99-xenomai.conf", "/etc/systemd/system.conf.d/99-xenomai.conf",
                     "/etc/ld.so.conf.d/xenomai.conf", "/etc/udev/rules.d/99-xenomai.rules"]
-with tempfile.TemporaryDirectory(prefix="ami-example-initramfs-") as temporary:
-    subprocess.run(["unmkinitramfs", f"/boot/initrd.img-{release}", temporary], check=True)
-    initramfs_content = {}
-    for path in sorted(Path(temporary).rglob("*")):
-        name = str(path.relative_to(temporary))
-        if path.is_symlink():
-            initramfs_content[name] = {"symlink": str(path.readlink())}
-        elif path.is_file():
-            initramfs_content[name] = {"sha256": sha(path), "mode": oct(path.stat().st_mode & 0o7777)}
 image = {"schema_version": 1, "recipe_id": identity["recipe_id"], "kernel_release": release,
          "config_sha256": sha(f"/boot/config-{release}"), "payload_hashes": payload,
          "packages_sha256": hashlib.sha256(package_text.encode()).hexdigest(),
@@ -53,13 +43,11 @@ image = {"schema_version": 1, "recipe_id": identity["recipe_id"], "kernel_releas
          "snap_hashes": {p.name: sha(p) for p in sorted(Path("/var/lib/snapd/snaps").glob("*.snap"))},
          "normalized_configuration": {path: sha(path) for path in normalized_paths},
          "initramfs_sha256": sha(f"/boot/initrd.img-{release}"),
-         "initramfs_content": initramfs_content,
          "xenomai": xenomai, "xenomai_files": xenomai_files,
          "toolchain": {"gcc": subprocess.check_output(["/usr/bin/gcc-13", "--version"], text=True).splitlines()[0],
                        "ld": subprocess.check_output(["/usr/bin/ld.bfd", "--version"], text=True).splitlines()[0]},
          "parent_inventory": json.loads(Path("/var/lib/ami-example/parent-inventory.json").read_text()),
          "runner_inventory": {key: value for key, value in inventory().items()
                               if key in ("runner_version", "runner_listener_sha256", "bootstrap_files")}}
-Path("/var/lib/ami-example/packages.tsv").write_text(package_text)
 Path("/etc/ami-example.json").write_text(json.dumps(image, sort_keys=True, indent=2) + "\n")
 Path("/etc/ami-example.json").chmod(0o644)

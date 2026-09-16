@@ -44,11 +44,13 @@ temporary overlay. Actual host disk consumption depends on the build's written
 data. The default validation VM uses 2 CPUs and 2 GiB of memory.
 
 Publishing additionally needs AWS CLI v2, an authorized AWS login or GitHub OIDC
-session, and [AWS Labs coldsnap](https://github.com/awslabs/coldsnap). Install
-Rust 1.94.1 or newer with Cargo, then build coldsnap into the same local tool
-directory. On Ubuntu, its native dependencies need a C/C++ toolchain and CMake:
+session, and [AWS Labs coldsnap](https://github.com/awslabs/coldsnap). The tool
+installer's `cloud` group installs the pinned AWS CLI. Install Rust 1.94.1 or
+newer with Cargo, then build coldsnap into the same local tool directory.
+On Ubuntu, its native dependencies need a C/C++ toolchain and CMake:
 
 ```sh
+python3 ../scripts/install-tools.py --group cloud --directory .local/tools
 sudo apt-get install --yes --no-install-recommends build-essential cmake pkg-config
 cargo install --locked coldsnap --version 0.12.0 --root .local/tools
 ```
@@ -103,21 +105,16 @@ and reports `status: passed` only after the checks succeed.
 
 This establishes boot and functional Cobalt execution on the selected VM.
 EC2 launch, RunsOn bootstrap integration, runner registration, and job scheduling
-belong to the separate [RunsOn execution module](../execution/README.md). Functional validation does not
-measure real-time latency.
+belong to the separate [RunsOn execution module](../execution/README.md).
+Functional validation does not measure real-time latency.
 
 The [Build and validate image workflow](../.github/workflows/image-build-validate.yml)
 runs the same commands on standard GitHub-hosted `ubuntu-24.04` for relevant
-pull requests and manual dispatches. It checks the KVM API and records host
-memory and disk availability. One [successful hosted
-run](https://github.com/OptimalCNC/runs-on-ami-example/actions/runs/35004588489)
-built the disk in 18 minutes 41 seconds with a 4-CPU, 8 GiB guest and completed
-validation in 47 seconds with a 2-CPU, 2 GiB guest. Validation booted through
-UEFI into `6.12.90-cip24-xenomai-cobalt` with Xenomai 3.3.3, passed the Cobalt
-application test as the ordinary runner user, and confirmed an unchanged disk
-digest. The host had 4 CPUs, approximately 15 GiB of memory, and 86 GiB of
-initially available disk space; this single measurement does not establish fit
-on a 14 GiB disk or guarantee those timings. Community projects such as
+pull requests and manual dispatches. It checks the KVM API before starting a
+4-CPU, 8 GiB build VM and a 2-CPU, 2 GiB validation VM. The host also needs room
+for its own processes, both build disks, downloaded inputs, and the validation
+overlay. Review the retained host resource logs, build logs, and validation
+report to assess resource use and results for each run. Community projects such as
 [mkosi](https://github.com/systemd/mkosi/blob/main/.github/workflows/ci.yml) use
 GitHub-hosted Linux for complete-disk VM boot tests.
 

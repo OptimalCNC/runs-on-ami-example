@@ -17,15 +17,15 @@ remain browser steps.
 The blueprint pins the official [RunsOn Flex Terraform module
 3.3.1](https://github.com/runs-on/terraform-aws-runs-on/tree/release/v3.3.1/modules/flex).
 It uses a small Fargate control plane, two public subnets, and an S3 gateway
-endpoint. In `us-east-1`, the idle baseline is approximately **$0.42/day
-($12.51 per 30 days)** at list prices checked on September 15, 2026. This covers
-the [Fargate control plane](https://aws.amazon.com/fargate/pricing/), one
+endpoint. Recurring costs include the
+[Fargate control plane](https://aws.amazon.com/fargate/pricing/), one
 [public IPv4 address](https://aws.amazon.com/vpc/pricing/), one
 [KMS key](https://aws.amazon.com/kms/pricing/), and two
 [Secrets Manager secrets](https://aws.amazon.com/secrets-manager/pricing/).
-Runner jobs, stored data, logs, and API requests add to that baseline. The default
-maximum runner lifetime is 60 minutes. Daily cost reporting uses a $5 notification
-threshold, which does not enforce a spending cap.
+Use the linked pricing pages for rates in your region. Runner jobs, stored data,
+logs, and API requests add to that baseline. The default maximum runner lifetime
+is 60 minutes. Daily cost reporting uses a $5 notification threshold, which does
+not enforce a spending cap.
 
 ## Prerequisites
 
@@ -190,7 +190,7 @@ The workflow requests an on-demand stock `2cpu-linux-x64` runner and executes a
 small job. A successful run establishes that the App receives jobs, RunsOn
 launches a runner, and the runner registers and executes the job. This check
 requires App access to the repository and no publishing credentials. Custom
-image behavior is verified separately by RunsOn execution.
+image behavior is verified separately by [RunsOn execution](../execution/README.md).
 
 ## Updates, exports, and removal
 
