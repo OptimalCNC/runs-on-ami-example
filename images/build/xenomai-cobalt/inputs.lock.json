@@ -1,14 +1,9 @@
 {
   "kernel": {
-    "commit": "dac73761a5daa5992bc866aa1ef8d284c0920aaa",
-    "config_sha256": "abbeede23d9235c9e239c4db94dd4fc9a5358e3a9301c9bd0033069dcc967145",
-    "module_signing": "disabled; Secure Boot must be disabled",
     "release": "6.12.90-cip24-xenomai-cobalt",
     "sha256": "bfd5331fbf4293f23a306b7873acde343ebfdaf44a80a665b3eca6565f5d5cc4",
     "source_date_epoch": 1785954174,
-    "tag": "v6.12.90-cip24-dovetail2",
-    "url": "https://gitlab.com/api/v4/projects/xenomai%2Flinux-dovetail/repository/archive.tar.gz?sha=dac73761a5daa5992bc866aa1ef8d284c0920aaa",
-    "version": "6.12.90"
+    "url": "https://gitlab.com/api/v4/projects/xenomai%2Flinux-dovetail/repository/archive.tar.gz?sha=dac73761a5daa5992bc866aa1ef8d284c0920aaa"
   },
   "os": {
     "build_only_packages": [
@@ -24,232 +19,55 @@
       "libtool-bin",
       "m4"
     ],
-    "distribution": "ubuntu",
     "packages": {
-      "autoconf": {
-        "filename": "pool/main/a/autoconf/autoconf_2.71-3_all.deb",
-        "sha256": "cc3f9f7a1e576173fb59c36652c0a67c6426feae752b352404ba92dfcb1b26c9",
-        "version": "2.71-3"
-      },
-      "automake": {
-        "filename": "pool/main/a/automake-1.16/automake_1.16.5-1.3ubuntu1_all.deb",
-        "sha256": "5ae9a98e73545002cd891f028859941af2a3c760cb6190e635c7ef36953912de",
-        "version": "1:1.16.5-1.3ubuntu1"
-      },
-      "autotools-dev": {
-        "filename": "pool/main/a/autotools-dev/autotools-dev_20220109.1_all.deb",
-        "sha256": "d909f0327b09d9a9136239caca975df89782fa28efd721c4eb4caea422d3fc5a",
-        "version": "20220109.1"
-      },
-      "bc": {
-        "filename": "pool/main/b/bc/bc_1.07.1-3ubuntu4_amd64.deb",
-        "sha256": "cb85d5929476088533b3c5e1db2de5ab4593a69fa54243710f762197dbaea60d",
-        "version": "1.07.1-3ubuntu4"
-      },
-      "binutils": {
-        "filename": "pool/main/b/binutils/binutils_2.42-4ubuntu2.10_amd64.deb",
-        "sha256": "b3b5a84181a38fd191820b2cdcc1a3eeb1cd6333ad472f2092f96e81047e9c74",
-        "version": "2.42-4ubuntu2.10"
-      },
-      "bison": {
-        "filename": "pool/main/b/bison/bison_3.8.2+dfsg-1build2_amd64.deb",
-        "sha256": "18f487c400da3e968a44ecb3783a443641bcd14e2b080ed9ed1167f4aa2c1612",
-        "version": "2:3.8.2+dfsg-1build2"
-      },
-      "build-essential": {
-        "filename": "pool/main/b/build-essential/build-essential_12.10ubuntu1_amd64.deb",
-        "sha256": "9b2159b95a4c01937309783c7c8a6ec8dfbcb7ffd604951c9713ac52ee9c7268",
-        "version": "12.10ubuntu1"
-      },
-      "ca-certificates": {
-        "filename": "pool/main/c/ca-certificates/ca-certificates_20260601~24.04.1_all.deb",
-        "sha256": "6bac2a01979e210d9eac1d4d56747ec709ea60654744d66705dc3c36e7629e50",
-        "version": "20260601~24.04.1"
-      },
-      "cmake": {
-        "filename": "pool/main/c/cmake/cmake_3.28.3-1build7_amd64.deb",
-        "sha256": "4b0a7f8c0daf27b26b46997d994ae5d1ee7a3d11dfcda9f7627bb1462c162295",
-        "version": "3.28.3-1build7"
-      },
-      "cpio": {
-        "filename": "pool/main/c/cpio/cpio_2.15+dfsg-1ubuntu2.1_amd64.deb",
-        "sha256": "fbac731755302d218d785b4c391530e7773527f553e24946f9580636a47641b2",
-        "version": "2.15+dfsg-1ubuntu2.1"
-      },
-      "curl": {
-        "filename": "pool/main/c/curl/curl_8.5.0-2ubuntu10.13_amd64.deb",
-        "sha256": "f34f04c60d8852e5e9c3684051b1247172ce8b10f520f59797c0d2bf8a08da61",
-        "version": "8.5.0-2ubuntu10.13"
-      },
-      "flex": {
-        "filename": "pool/main/f/flex/flex_2.6.4-8.2build1_amd64.deb",
-        "sha256": "c5604f55827b50e3f568b4731b7799f86b147454c867be02bc141d9d8ce561ff",
-        "version": "2.6.4-8.2build1"
-      },
-      "g++-13": {
-        "filename": "pool/main/g/gcc-13/g++-13_13.3.0-6ubuntu2~24.04.1_amd64.deb",
-        "sha256": "0f3ef964b8a91a9cd7bebfd126839a21941c55547cadcf4aa00204bc8cc43985",
-        "version": "13.3.0-6ubuntu2~24.04.1"
-      },
-      "gcc-13": {
-        "filename": "pool/main/g/gcc-13/gcc-13_13.3.0-6ubuntu2~24.04.1_amd64.deb",
-        "sha256": "7438ff160b020a74970672189ecae25d0ca650de6d7f543f12a3134192cffbd9",
-        "version": "13.3.0-6ubuntu2~24.04.1"
-      },
-      "git": {
-        "filename": "pool/main/g/git/git_2.43.0-1ubuntu7.3_amd64.deb",
-        "sha256": "099bb129f543adc4c14203334b0fa0a909f8bf038c4d56bc9cc7c774ebf78f87",
-        "version": "1:2.43.0-1ubuntu7.3"
-      },
-      "grub-common": {
-        "filename": "pool/main/g/grub2/grub-common_2.12-1ubuntu7.3_amd64.deb",
-        "sha256": "464e7c3a9f261b2120a6755fbf753384669c666a5cc7cd571cf836d6da88373f",
-        "version": "2.12-1ubuntu7.3"
-      },
-      "grub2-common": {
-        "filename": "pool/main/g/grub2/grub2-common_2.12-1ubuntu7.3_amd64.deb",
-        "sha256": "0aeaa52ff0cfd55c8b123692b666ba6c5214e19b185013a4ee2e2231f4ccda48",
-        "version": "2.12-1ubuntu7.3"
-      },
-      "initramfs-tools": {
-        "filename": "pool/main/i/initramfs-tools/initramfs-tools_0.142ubuntu25.8_all.deb",
-        "sha256": "3a75c03e5d409f4e266b3d908e3278a439a221d0576db55eab588cac9388cefe",
-        "version": "0.142ubuntu25.8"
-      },
-      "jq": {
-        "filename": "pool/main/j/jq/jq_1.7.1-3ubuntu0.24.04.2_amd64.deb",
-        "sha256": "f59183392f84fe67b407b494d8ba6185e9b0e4a106ffcb369490bd20a83fd40e",
-        "version": "1.7.1-3ubuntu0.24.04.2"
-      },
-      "libelf-dev": {
-        "filename": "pool/main/e/elfutils/libelf-dev_0.190-1.1ubuntu0.1_amd64.deb",
-        "sha256": "81affb95c29f7323f2ae24386aaa1f61d311578e3e27c5f78ef7b7d55cd3cf49",
-        "version": "0.190-1.1ubuntu0.1"
-      },
-      "libicu74": {
-        "filename": "pool/main/i/icu/libicu74_74.2-1ubuntu3.1_amd64.deb",
-        "sha256": "c9a70989678660eed9a1e904c74fa043da8bec8e2036856fc16e31ced79b04f8",
-        "version": "74.2-1ubuntu3.1"
-      },
-      "libkrb5-3": {
-        "filename": "pool/main/k/krb5/libkrb5-3_1.20.1-6ubuntu2.8_amd64.deb",
-        "sha256": "63ab8110daea359f55d8135d395de198257acb1f948500c561745addddfece4c",
-        "version": "1.20.1-6ubuntu2.8"
-      },
-      "libltdl-dev": {
-        "filename": "pool/main/libt/libtool/libltdl-dev_2.4.7-7build1_amd64.deb",
-        "sha256": "3a706efe1d9d8b493bd2335fabaa9ec28549c9134750fad6c0a5aa9868c6ee9c",
-        "version": "2.4.7-7build1"
-      },
-      "liblttng-ust1t64": {
-        "filename": "pool/main/u/ust/liblttng-ust1t64_2.13.7-1.1ubuntu2_amd64.deb",
-        "sha256": "020744e76395d7a5e7134a0a9f5a7fc7bdee4d1b769db9dd1be068f96c778d85",
-        "version": "2.13.7-1.1ubuntu2"
-      },
-      "libssl-dev": {
-        "filename": "pool/main/o/openssl/libssl-dev_3.0.13-0ubuntu3.15_amd64.deb",
-        "sha256": "cefc6371d90d953a4cbb35d72d871f057e4b961a3107186f67fe96a88040cdb8",
-        "version": "3.0.13-0ubuntu3.15"
-      },
-      "libssl3t64": {
-        "filename": "pool/main/o/openssl/libssl3t64_3.0.13-0ubuntu3.15_amd64.deb",
-        "sha256": "3d0955bc049bbcca0f4c3e78a3a8b994593d96db7d84f4320217224433844534",
-        "version": "3.0.13-0ubuntu3.15"
-      },
-      "libtool-bin": {
-        "filename": "pool/main/libt/libtool/libtool-bin_2.4.7-7build1_amd64.deb",
-        "sha256": "23959c8be74b4433d635c76e61a6c4bb62f10d3899362598c53173e8e57c0f8a",
-        "version": "2.4.7-7build1"
-      },
-      "m4": {
-        "filename": "pool/main/m/m4/m4_1.4.19-4build1_amd64.deb",
-        "sha256": "30ea715845a1863abd55d11e47ab91513130bf347852d4cdeae69e9d98fa795c",
-        "version": "1.4.19-4build1"
-      },
-      "make": {
-        "filename": "pool/main/m/make-dfsg/make_4.3-4.1build2_amd64.deb",
-        "sha256": "1fe6a815b56c7b6e9ce4086a363f09444bbd0a0d30e230c453d0b78e44b57a99",
-        "version": "4.3-4.1build2"
-      },
-      "ninja-build": {
-        "filename": "pool/universe/n/ninja-build/ninja-build_1.11.1-2_amd64.deb",
-        "sha256": "6a17f76a0f75586f1292f6c61a9b07fd0dec963baf6a102b17673f601c6b323a",
-        "version": "1.11.1-2"
-      },
-      "openssh-server": {
-        "filename": "pool/main/o/openssh/openssh-server_9.6p1-3ubuntu13.19_amd64.deb",
-        "sha256": "dae4c1ee35cc57555f4e594805845c280350e2d40f0fecf84c6e8bb245848581",
-        "version": "1:9.6p1-3ubuntu13.19"
-      },
-      "pkgconf": {
-        "filename": "pool/main/p/pkgconf/pkgconf_1.8.1-2build1_amd64.deb",
-        "sha256": "834a58031069d97d7cfb8b2f5bfd5effc69cecf7f30cc362071875f1f8dc1828",
-        "version": "1.8.1-2build1"
-      },
-      "python3": {
-        "filename": "pool/main/p/python3-defaults/python3_3.12.3-0ubuntu2.1_amd64.deb",
-        "sha256": "e691b9cc40841c41bbdc50bd794c876cb1b1801306ea27b06e9a1458180df1e9",
-        "version": "3.12.3-0ubuntu2.1"
-      },
-      "python3-pip": {
-        "filename": "pool/universe/p/python-pip/python3-pip_24.0+dfsg-1ubuntu1.3_all.deb",
-        "sha256": "4e1af0b6f0b52c847ffa7b192b9f650845b99ff300138af05ab9a6252eb75682",
-        "version": "24.0+dfsg-1ubuntu1.3"
-      },
-      "python3-venv": {
-        "filename": "pool/universe/p/python3-defaults/python3-venv_3.12.3-0ubuntu2.1_amd64.deb",
-        "sha256": "16d50387b7656796b79e2c059d06774dfe9fe3f42808d8d50b332ceb780f508a",
-        "version": "3.12.3-0ubuntu2.1"
-      },
-      "rsync": {
-        "filename": "pool/main/r/rsync/rsync_3.2.7-1ubuntu1.5_amd64.deb",
-        "sha256": "8f952895697d19a6f1caa71f17c7d4e8c1f1fb485eb824ffe3e4c77dd587b338",
-        "version": "3.2.7-1ubuntu1.5"
-      },
-      "sudo": {
-        "filename": "pool/main/s/sudo/sudo_1.9.15p5-3ubuntu5.24.04.2_amd64.deb",
-        "sha256": "d5361d4021dc7cb60d49b94b186ba908c10e9e38f33a55cba049175411eb1251",
-        "version": "1.9.15p5-3ubuntu5.24.04.2"
-      },
-      "xz-utils": {
-        "filename": "pool/main/x/xz-utils/xz-utils_5.6.1+really5.4.5-1ubuntu0.3_amd64.deb",
-        "sha256": "778edae086bc8f34d80f36f301bc8fb3eff2d906c146dfb533ea6840b6d64e00",
-        "version": "5.6.1+really5.4.5-1ubuntu0.3"
-      },
-      "zlib1g": {
-        "filename": "pool/main/z/zlib/zlib1g_1.3.dfsg-3.1ubuntu2.2_amd64.deb",
-        "sha256": "84b9cf5752b29c9f92c27cd4c4ba9bbcc70b5ccf9b1b515421a28ae23212e273",
-        "version": "1:1.3.dfsg-3.1ubuntu2.2"
-      },
-      "zstd": {
-        "filename": "pool/main/libz/libzstd/zstd_1.5.5+dfsg2-2build1.1_amd64.deb",
-        "sha256": "d7667f83e3a2caeaaecaca464d542ee6ccf537259a479622796c84afc96d6032",
-        "version": "1.5.5+dfsg2-2build1.1"
-      }
+      "autoconf": "2.71-3",
+      "automake": "1:1.16.5-1.3ubuntu1",
+      "autotools-dev": "20220109.1",
+      "bc": "1.07.1-3ubuntu4",
+      "binutils": "2.42-4ubuntu2.10",
+      "bison": "2:3.8.2+dfsg-1build2",
+      "build-essential": "12.10ubuntu1",
+      "ca-certificates": "20260601~24.04.1",
+      "cmake": "3.28.3-1build7",
+      "cpio": "2.15+dfsg-1ubuntu2.1",
+      "curl": "8.5.0-2ubuntu10.13",
+      "flex": "2.6.4-8.2build1",
+      "g++-13": "13.3.0-6ubuntu2~24.04.1",
+      "gcc-13": "13.3.0-6ubuntu2~24.04.1",
+      "git": "1:2.43.0-1ubuntu7.3",
+      "grub-common": "2.12-1ubuntu7.3",
+      "grub2-common": "2.12-1ubuntu7.3",
+      "initramfs-tools": "0.142ubuntu25.8",
+      "jq": "1.7.1-3ubuntu0.24.04.2",
+      "libelf-dev": "0.190-1.1ubuntu0.1",
+      "libicu74": "74.2-1ubuntu3.1",
+      "libkrb5-3": "1.20.1-6ubuntu2.8",
+      "libltdl-dev": "2.4.7-7build1",
+      "liblttng-ust1t64": "2.13.7-1.1ubuntu2",
+      "libssl-dev": "3.0.13-0ubuntu3.15",
+      "libssl3t64": "3.0.13-0ubuntu3.15",
+      "libtool-bin": "2.4.7-7build1",
+      "m4": "1.4.19-4build1",
+      "make": "4.3-4.1build2",
+      "ninja-build": "1.11.1-2",
+      "openssh-server": "1:9.6p1-3ubuntu13.19",
+      "pkgconf": "1.8.1-2build1",
+      "python3": "3.12.3-0ubuntu2.1",
+      "python3-pip": "24.0+dfsg-1ubuntu1.3",
+      "python3-venv": "3.12.3-0ubuntu2.1",
+      "rsync": "3.2.7-1ubuntu1.5",
+      "sudo": "1.9.15p5-3ubuntu5.24.04.2",
+      "xz-utils": "5.6.1+really5.4.5-1ubuntu0.3",
+      "zlib1g": "1:1.3.dfsg-3.1ubuntu2.2",
+      "zstd": "1.5.5+dfsg2-2build1.1"
     },
     "snapshot_url": "https://snapshot.ubuntu.com/ubuntu/20260911T000000Z/",
     "suites": [
       "noble",
       "noble-updates",
       "noble-security"
-    ],
-    "version": "24.04"
+    ]
   },
-  "recipe_files": [
-    "images/build/__init__.py",
-    "images/build/__main__.py",
-    "images/build/image.py",
-    "images/build/common/check-kernel-config.py",
-    "images/build/common/finalize-image.sh",
-    "images/build/common/install-packages.py",
-    "images/build/common/install-runner.py",
-    "images/build/common/inventory.py",
-    "images/build/common/write-image-manifest.py",
-    "images/build/xenomai-cobalt/build-kernel.sh",
-    "images/build/xenomai-cobalt/image.pkr.hcl",
-    "images/build/xenomai-cobalt/kernel.config",
-    "images/build/xenomai-cobalt/provision.sh"
-  ],
   "runner": {
     "bootstrap": {
       "sha256": "a387bf964c573daabaf753d42213bfec5931b9a71d01325442253e6caa3dd115",
@@ -262,10 +80,7 @@
       "version": "2.337.0"
     }
   },
-  "schema_version": 1,
   "source_image": {
-    "architecture": "x86_64",
-    "format": "qcow2",
     "sha256": "d0fe84bb5f80853425fa6be28e2c106f30104c3cfe8611933f2e65c9b63f0e30",
     "url": "https://cloud-images.ubuntu.com/releases/24.04/release-20260826/ubuntu-24.04-server-cloudimg-amd64.img"
   },
@@ -284,11 +99,8 @@
   },
   "xenomai": {
     "allowed_group_gid": 4242,
-    "commit": "654ce0ad60520b766606868d2705159e564774fe",
-    "core": "cobalt",
     "prefix": "/usr/xenomai",
     "sha256": "f8f460f2d973750da1bd3900a9bcc0b50bd2c31aa2d892358fec6eb8148735cd",
-    "tag": "v3.3.3",
     "url": "https://gitlab.com/xenomai/xenomai3/xenomai/-/archive/654ce0ad60520b766606868d2705159e564774fe/xenomai-654ce0ad60520b766606868d2705159e564774fe.tar.gz",
     "version": "3.3.3"
   }

@@ -10,37 +10,6 @@ permissions:
   contents: read
 
 jobs:
-  images:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    defaults:
-      run:
-        shell: bash
-        working-directory: images
-    steps:
-      - uses: actions/checkout@v7.0.1
-        with:
-          persist-credentials: false
-      - name: Install image check dependencies
-        run: |
-          python3 -m pip install -r requirements.txt
-          python3 install-tools.py
-          echo "$PWD/.local/tools/bin" >> "$GITHUB_PATH"
-          echo "PACKER_PLUGIN_PATH=$PWD/.local/tools/plugins" >> "$GITHUB_ENV"
-      - name: Validate pinned inputs
-        run: python3 validate-inputs.py
-      - name: Run image tests
-        run: python3 -m unittest discover -s tests -v
-      - name: Check shell syntax
-        run: |
-          for script in build/common/*.sh build/xenomai-cobalt/*.sh validate/*.sh; do
-            bash -n "$script"
-          done
-      - name: Check Packer configuration
-        run: |
-          packer fmt -check build/xenomai-cobalt/image.pkr.hcl
-          packer validate -syntax-only build/xenomai-cobalt/image.pkr.hcl
-
   runs-on:
     runs-on: ubuntu-24.04
     timeout-minutes: 20

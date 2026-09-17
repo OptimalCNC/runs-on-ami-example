@@ -7,7 +7,6 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
-import tarfile
 import urllib.request
 import zipfile
 
@@ -41,9 +40,6 @@ def install(name, spec, destination):
                 path = unpacked / member.filename
                 if path.is_file():
                     path.chmod((member.external_attr >> 16) & 0o777 or 0o644)
-    elif archive.name.endswith(".tar.gz"):
-        with tarfile.open(archive) as source:
-            source.extractall(unpacked, filter="data")
     else:
         raise ValueError(f"unsupported tool archive: {archive.name}")
     binary_dir = destination / "bin"

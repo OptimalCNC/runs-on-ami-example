@@ -3,13 +3,12 @@ set -euo pipefail
 export LC_ALL=C TZ=UTC
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 recipe=/opt/ami-example-recipe
-[[ "$EUID" -eq 0 && -f "$recipe/recipe.json" ]]
+[[ "$EUID" -eq 0 && -f "$recipe/images/build/xenomai-cobalt/inputs.lock.json" ]]
 source_dir=/mnt/ami-example-build/linux
 xenomai_dir=/mnt/ami-example-build/xenomai
 userspace_build=/mnt/ami-example-build/xenomai-build
-output=/var/lib/ami-example
 lock="$recipe/images/build/xenomai-cobalt/inputs.lock.json"
-mkdir -p "$source_dir" "$xenomai_dir" "$userspace_build" "$output"
+mkdir -p "$source_dir" "$xenomai_dir" "$userspace_build"
 eval "$(python3 - "$lock" <<'PY'
 import json, shlex, sys
 lock = json.load(open(sys.argv[1]))
@@ -49,7 +48,6 @@ cp "$recipe/images/build/xenomai-cobalt/kernel.config" .config
 python3 "$recipe/images/build/common/check-kernel-config.py" "$recipe/images/build/xenomai-cobalt/kernel.config" .config
 release=$("${kernel_make[@]}" -s kernelrelease)
 [[ "$release" == "$KERNEL_RELEASE" ]]
-printf '%s\n' "$release" > "$output/kernel-release"
 "${kernel_make[@]}" -j"$(nproc)" bzImage modules
 "${kernel_make[@]}" INSTALL_MOD_STRIP=1 modules_install
 rm -f "/lib/modules/$release/build" "/lib/modules/$release/source"

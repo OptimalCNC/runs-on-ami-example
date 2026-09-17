@@ -46,7 +46,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends \
             qemu-system-x86 qemu-utils ovmf cloud-image-utils xorriso openssh-client
-          python3 -m pip install -r requirements.txt
           python3 install-tools.py
           echo "$PWD/.local/tools/bin" >> "$GITHUB_PATH"
           echo "PACKER_PLUGIN_PATH=$PWD/.local/tools/plugins" >> "$GITHUB_ENV"
@@ -54,15 +53,12 @@ jobs:
         run: sudo chmod 0666 /dev/kvm
       - name: Build disk
         run: python3 -m build --output .local/build --cpus 4 --memory-mib 8192
-      - name: Upload build logs and manifests
+      - name: Upload build logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: image-build-reports-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
-            images/.local/build/build.yaml
-            images/.local/build/image-manifest.json
-            images/.local/build/parent-inventory.json
             images/.local/build/packer.log
             images/.local/build/serial.log
           include-hidden-files: true
@@ -71,7 +67,7 @@ jobs:
       - name: Bundle the built disk
         run: |
           tar --sparse --gzip --create --file .local/image.tar.gz \
-            --directory .local/build build.yaml disk.raw image-manifest.json
+            --directory .local/build build.json disk.raw
       - name: Upload the built disk for validation and publication
         uses: actions/upload-artifact@v4
         with:
@@ -95,7 +91,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends \
             qemu-system-x86 qemu-utils ovmf cloud-image-utils openssh-client
-          python3 -m pip install -r requirements.txt
       - name: Enable KVM access
         run: sudo chmod 0666 /dev/kvm
       - name: Download the built disk
@@ -110,14 +105,14 @@ jobs:
           rm .local/image.tar.gz
       - name: Validate the image in a fresh VM
         run: |
-          python3 -m validate --build .local/build/build.yaml \
+          python3 -m validate --build .local/build/build.json \
             --output .local/validation --cpus 2 --memory-mib 2048 --timeout-seconds 600
-      - name: Upload VM validation evidence
+      - name: Upload VM validation logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: image-validation-${{ github.run_id }}-${{ github.run_attempt }}
-          path: images/.local/validation/
+          path: images/.local/validation/*.log
           include-hidden-files: true
           if-no-files-found: warn
           retention-days: 7
@@ -137,7 +132,7 @@ jobs:
           persist-credentials: false
       - name: Install publishing tools
         run: |
-          python3 -m pip install -r requirements.txt
+          python3 -m pip install -r publish/requirements.txt
           python3 install-tools.py --group publish
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends build-essential cmake pkg-config
@@ -169,14 +164,16 @@ jobs:
       - name: Publish the validated image
         timeout-minutes: 85
         run: |
-          python3 -m publish --build .local/build/build.yaml \
+          python3 -m publish --build .local/build/build.json \
             --target .local/publishing.yaml --output .local/publication
-      - name: Upload publication records
+      - name: Upload publication record and log
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: image-publication-${{ github.run_id }}-${{ github.run_attempt }}
-          path: images/.local/publication/
+          path: |
+            images/.local/publication/published-image.json
+            images/.local/publication/upload.log
           include-hidden-files: true
           if-no-files-found: warn
           retention-days: 90

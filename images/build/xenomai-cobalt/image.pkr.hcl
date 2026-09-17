@@ -70,14 +70,4 @@ build {
       "sudo bash /opt/ami-example-recipe/images/build/xenomai-cobalt/provision.sh"
     ]
   }
-  provisioner "file" {
-    direction   = "download"
-    source      = "/var/lib/ami-example/parent-inventory.json"
-    destination = "${var.output_directory}/parent-inventory.json"
-  }
-  provisioner "file" {
-    direction   = "download"
-    source      = "/etc/ami-example.json"
-    destination = "${var.output_directory}/image-manifest.json"
-  }
 }

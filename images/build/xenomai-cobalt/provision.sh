@@ -3,9 +3,7 @@ set -euo pipefail
 export LC_ALL=C TZ=UTC DEBIAN_FRONTEND=noninteractive
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 recipe=/opt/ami-example-recipe
-[[ "$EUID" -eq 0 && -f "$recipe/recipe.json" ]]
-mkdir -p /var/lib/ami-example
-python3 "$recipe/images/build/common/inventory.py" > /var/lib/ami-example/parent-inventory.json
+[[ "$EUID" -eq 0 && -f "$recipe/images/build/xenomai-cobalt/inputs.lock.json" ]]
 # The parent can retain its original partition size on a larger Packer root disk.
 [[ "$(findmnt --noheadings --output FSTYPE --target /)" == ext4 ]]
 root_device=$(readlink -f "$(findmnt --noheadings --output SOURCE --target /)")
@@ -27,12 +25,14 @@ resize2fs "$root_device"
 df --block-size=1 --output=source,fstype,size,avail /
 # Only the plain Ubuntu source is used for the small image.
 python3 - <<'PY'
-import json
 from pathlib import Path
-parent = json.loads(Path('/var/lib/ami-example/parent-inventory.json').read_text())
-if parent['os_version'] != '24.04' or parent['runner_version'] is not None or parent['bootstrap_files']:
+os_release = dict(line.split('=', 1) for line in Path('/etc/os-release').read_text().splitlines() if '=' in line)
+if (os_release['VERSION_ID'].strip('"') != '24.04'
+        or Path('/home/runner/bin/Runner.Listener').exists()
+        or any(Path('/usr/local/bin').glob('runs-on-bootstrap-*'))):
     raise SystemExit('the source must be plain Ubuntu 24.04 without an inherited runner tool bundle')
-if parent['secure_boot'] or not Path('/sys/firmware/efi').exists():
+secure_boot = any(p.read_bytes()[4:5] == b'\x01' for p in Path('/sys/firmware/efi/efivars').glob('SecureBoot-*'))
+if secure_boot or not Path('/sys/firmware/efi').exists():
     raise SystemExit('build with UEFI firmware and Secure Boot disabled')
 PY
 # Require exactly one empty disk besides the root, including no partition table,
@@ -62,7 +62,7 @@ export TMPDIR=/mnt/ami-example-build/tmp
 systemctl disable --now apt-daily.timer apt-daily-upgrade.timer || true
 systemctl stop apt-daily.service apt-daily-upgrade.service
 systemctl mask apt-daily.service apt-daily-upgrade.service unattended-upgrades.service
-python3 "$recipe/images/build/common/install-packages.py" "$recipe/images/build/xenomai-cobalt/inputs.lock.json" /mnt/ami-example-build/inputs
+python3 "$recipe/images/build/common/install-packages.py" "$recipe/images/build/xenomai-cobalt/inputs.lock.json"
 python3 "$recipe/images/build/common/install-runner.py" "$recipe/images/build/xenomai-cobalt/inputs.lock.json" /mnt/ami-example-build/inputs
 # Cobalt grants non-root kernel access to this group through the boot command line.
 python3 - "$recipe/images/build/xenomai-cobalt/inputs.lock.json" <<'PY'
@@ -112,4 +112,3 @@ PY
 update-grub
 # EC2 and a fresh QEMU variable store cannot use this build VM's NVRAM entries.
 [[ -f /boot/efi/EFI/BOOT/BOOTX64.EFI ]]
-python3 "$recipe/images/build/common/write-image-manifest.py"

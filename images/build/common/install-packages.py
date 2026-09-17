@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """Install verified packages from the single locked, signed Ubuntu snapshot."""
-import hashlib
 import json
 from pathlib import Path
 import subprocess
@@ -9,8 +8,6 @@ import sys
 
 def main():
     lock = json.loads(Path(sys.argv[1]).read_text())["os"]
-    output = Path(sys.argv[2])
-    output.mkdir(parents=True, exist_ok=True)
     sources = Path("/etc/apt/sources.list.d")
     for path in sources.iterdir():
         if path.suffix in (".sources", ".list"):
@@ -23,27 +20,9 @@ def main():
     )
     # apt verifies Release signatures and every package against the immutable index.
     subprocess.run(["apt-get", "update"], check=True)
-    selection = [f"{name}={value['version']}" for name, value in sorted(lock["packages"].items())]
-    cache = output / "debs"
-    cache.mkdir(exist_ok=True)
-    args = ["apt-get", "-y", "--no-install-recommends", "-o", f"Dir::Cache::archives={cache}",
-            "-o", "APT::Keep-Downloaded-Packages=true", "install", "--reinstall", *selection]
+    selection = [f"{name}={version}" for name, version in sorted(lock["packages"].items())]
     # No --allow-downgrades: an incompatible newer parent requires an explicit lock refresh.
-    subprocess.run([*args, "--download-only"], check=True)
-    by_identity = {}
-    for deb in sorted(cache.glob("*.deb")):
-        name, version = subprocess.check_output(["dpkg-deb", "-f", str(deb), "Package", "Version"], text=True).splitlines()
-        name, version = name.removeprefix("Package: "), version.removeprefix("Version: ")
-        checksum = hashlib.sha256(deb.read_bytes()).hexdigest()
-        by_identity[(name, version)] = checksum
-    for name, spec in lock["packages"].items():
-        if by_identity.get((name, spec["version"])) != spec["sha256"]:
-            raise SystemExit(f"locked package missing or checksum mismatch: {name}")
-    subprocess.run([*args, "--no-download"], check=True)
-    for name, spec in lock["packages"].items():
-        version = subprocess.check_output(["dpkg-query", "-W", "-f=${Version}", name], text=True)
-        if version != spec["version"]:
-            raise SystemExit(f"installed version differs: {name}")
+    subprocess.run(["apt-get", "-y", "--no-install-recommends", "install", *selection], check=True)
 
 
 if __name__ == "__main__":

@@ -2,15 +2,21 @@
 set -euo pipefail
 # Finalize the Ubuntu 24.04 image after installing its runner and Cobalt payload.
 recipe=/opt/ami-example-recipe
-[[ "$EUID" -eq 0 && -f "$recipe/recipe.json" && -f /etc/ami-example.json ]]
-python3 "$recipe/images/build/common/inventory.py" > /tmp/ami-example-final-inventory.json
-python3 - <<'PY'
+[[ "$EUID" -eq 0 && -f "$recipe/images/build/xenomai-cobalt/inputs.lock.json" ]]
+python3 - "$recipe/images/build/xenomai-cobalt/inputs.lock.json" <<'PY'
 import json
+import sys
 from pathlib import Path
-i = json.loads(Path('/tmp/ami-example-final-inventory.json').read_text())
-if i['registered'] or i['workspaces'] or i['secure_boot']:
+registered = any((base / name).exists()
+                 for base in (Path('/home/runner'), Path('/root'), Path('/opt/actions-runner'))
+                 for name in ('.runner', '.credentials', '.credentials_rsaparams'))
+workspaces = any(p.exists() and any(p.iterdir())
+                 for p in (Path('/home/runner/_work'), Path('/opt/actions-runner/_work')))
+secure_boot = any(p.read_bytes()[4:5] == b'\x01' for p in Path('/sys/firmware/efi/efivars').glob('SecureBoot-*'))
+if registered or workspaces or secure_boot:
     raise SystemExit('refusing to snapshot registered runner, workspace, or Secure Boot image')
-if not i['bootstrap_files']:
+version = json.loads(Path(sys.argv[1]).read_text())['runner']['bootstrap']['version']
+if not Path(f'/usr/local/bin/runs-on-bootstrap-v{version}').is_file():
     raise SystemExit('RunsOn bootstrap is missing')
 PY
 apt-get clean
@@ -18,7 +24,6 @@ rm -rf /var/lib/apt/lists/* /opt/ami-example-recipe
 umount /mnt/ami-example-build
 rmdir /mnt/ami-example-build
 rm -rf /home/runner/_diag
-rm -f /tmp/ami-example-final-inventory.json
 for user_home in /root /home/ubuntu /home/runner; do
   rm -rf "$user_home/.aws" "$user_home/.docker" "$user_home/.cache" "$user_home/.git-credentials"
   rm -rf "$user_home/.config/gh" "$user_home/.config/git/credentials"

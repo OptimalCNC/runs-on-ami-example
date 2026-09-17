@@ -18,15 +18,15 @@ Cobalt application test establishes functional execution without a latency targe
 
 Run the validation commands documented by the module you are changing:
 
-- [Images](images/README.md#prerequisites): Python tests, pinned inputs, shell
-  syntax, and Packer configuration.
+- [Images](images/README.md#build-and-validate): Build the disk, then boot it in a
+  fresh VM to build and run the Cobalt application.
 - [RunsOn installation](runs-on/README.md#prerequisites): Python tests and
   isolated Terraform validation and mock tests.
 - [Execution](execution/README.md): CMake build and CTest commands for a
   Cobalt SDK and kernel.
 
-The [validation workflow](.github/workflows/validate.yml) runs the image and
-installation source checks and workflow linting as independent jobs.
+The [validation workflow](.github/workflows/validate.yml) runs installation
+source checks and workflow linting as independent jobs.
 Installed tools and generated files stay in each module's
 ignored `.local/` directory.
 
@@ -50,7 +50,8 @@ root on Linux x86-64. These commands require `curl`, `jq`, `sha256sum`, and `tar
 To build a complete disk on a Linux host, follow the [image guide](images/README.md).
 Pull requests run the [image workflow](.github/workflows/image-build.yml) with
 separate build and VM validation jobs on GitHub-hosted Ubuntu when its
-image-related paths change. Manual dispatch can also publish the validated disk.
+image-related paths change. Weekly scheduled runs publish the validated disk;
+manual dispatch can also request publication.
 
 ## Supply deployment configuration
 
@@ -65,8 +66,7 @@ the Git-ignored `runs-on/.local/` directory. Successful deployment exports:
 
 The [image module](images/README.md#publish-to-the-installations-target) consumes
 the publishing contract through an explicit file path. Build produces a local
-disk, Validate boots it in a fresh VM, and Publish uploads that artifact only
-when requested.
+disk, Validate boots it in a fresh VM, and Publish uploads that artifact.
 
 ## Run on RunsOn
 
@@ -84,7 +84,7 @@ environment, and AWS region.
 
 [RunsOn installation](runs-on/README.md) owns deployment, permissions, exported
 contracts, and installation removal. [Image build, validation, and publishing](images/README.md)
-owns disk artifacts, VM validation evidence, published AMIs, and their cleanup.
+owns disk artifacts, VM validation, published AMIs, and their cleanup.
 [RunsOn execution](execution/README.md) owns the example application and its
 build-and-test workflow.
 

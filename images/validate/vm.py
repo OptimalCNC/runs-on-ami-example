@@ -1,8 +1,7 @@
 """Firmware and temporary login configuration for local image VMs."""
+import json
 from pathlib import Path
 import subprocess
-
-import yaml
 
 
 def firmware_paths() -> tuple[Path, Path]:
@@ -19,14 +18,14 @@ def firmware_paths() -> tuple[Path, Path]:
 def create_seed(destination: Path, user: str, public_key: str, instance_id: str) -> Path:
     """Authorize temporary SSH access without changing image groups or limits."""
     user_data = destination / "user-data"
-    user_data.write_text("#cloud-config\n" + yaml.safe_dump({
+    user_data.write_text("#cloud-config\n" + json.dumps({
         "users": [{"name": user, "ssh_authorized_keys": [public_key.strip()]}],
         "ssh_pwauth": False,
         "package_update": False,
         "package_upgrade": False,
-    }))
+    }, indent=2) + "\n")
     metadata = destination / "meta-data"
-    metadata.write_text(yaml.safe_dump({"instance-id": instance_id, "local-hostname": "cobalt-validation"}))
+    metadata.write_text(json.dumps({"instance-id": instance_id, "local-hostname": "cobalt-validation"}) + "\n")
     seed = destination / "seed.img"
     subprocess.run(["cloud-localds", str(seed), str(user_data), str(metadata)], check=True)
     return seed

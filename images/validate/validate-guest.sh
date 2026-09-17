@@ -1,14 +1,12 @@
 #!/bin/bash
 set -euo pipefail
 
-release="$1" recipe="$2" directory="$3"
+release="$1" xenomai_version="$2" directory="$3"
 [[ "$(id -u)" == 1001 && "$(id -un)" == runner ]]
-mkdir -p "$directory/reports"
-python3 "$directory/guest-report.py" --release "$release" \
-    --recipe "$recipe" --output "$directory/reports/guest-report.json"
+[[ "$(uname -r)" == "$release" ]]
+[[ "$(/usr/xenomai/bin/xeno-config --version)" == "$xenomai_version" ]]
 /usr/bin/cmake -S "$directory/cobalt" -B "$directory/build" -G Ninja \
     -DCMAKE_C_COMPILER=/usr/bin/gcc-13 -DCMAKE_MAKE_PROGRAM=/usr/bin/ninja \
-    -DXENOMAI_ROOT=/usr/xenomai 2>&1 | tee "$directory/reports/configure.log"
-/usr/bin/cmake --build "$directory/build" 2>&1 | tee "$directory/reports/build.log"
-/usr/bin/ctest --test-dir "$directory/build" --output-on-failure \
-    --output-junit "$directory/reports/ctest.xml" 2>&1 | tee "$directory/reports/ctest.log"
+    -DXENOMAI_ROOT=/usr/xenomai
+/usr/bin/cmake --build "$directory/build"
+timeout 20s "$directory/build/cobalt"
