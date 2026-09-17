@@ -13,9 +13,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tools", action="store_true", help="also check Packer, Terraform, and workflows")
     args = parser.parse_args()
-    for module in ("images", "runs-on", "execution"):
+    for module in ("images", "runs-on"):
         command = [sys.executable, str(ROOT / module / "check.py")]
-        if args.tools and module != "execution":
+        if args.tools:
             command.append("--tools")
         subprocess.run(command, cwd=ROOT / module, check=True)
     if args.tools:

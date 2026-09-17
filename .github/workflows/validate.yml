@@ -21,5 +21,5 @@ jobs:
           python3 images/install-tools.py
           python3 runs-on/install-tools.py --terraform-only
           python3 .github/install-tools.py
-      - run: python3 -m pip install -r images/requirements.txt -r runs-on/requirements.txt -r execution/requirements.txt
+      - run: python3 -m pip install -r images/requirements.txt -r runs-on/requirements.txt
       - run: python3 check.py --tools

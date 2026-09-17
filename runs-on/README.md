@@ -148,7 +148,7 @@ Successful deployment writes two versioned YAML contracts:
 
 | File | Consumer and contents |
 | --- | --- |
-| `.local/contracts/installation.yaml` | RunsOn execution: account, region, environment, setup URL, pinned versions, networking, and runtime identities |
+| `.local/contracts/installation.yaml` | Installation setup and runner configuration: account, region, environment, setup URL, pinned versions, networking, and runtime identities |
 | `.local/contracts/publishing.yaml` | Image publishing: account, region, publisher role, allowed authentication, image encryption key, raw-disk upload method, and required ownership tags |
 
 Both files use `schema_version: 1`. Their source of truth is
@@ -198,8 +198,9 @@ image and reports its checks in the job summary. The environment input is option
 and defaults to `production`. A successful run establishes that the App receives
 jobs, RunsOn
 launches a runner, and the runner registers and executes the job. This check
-requires App access to the repository and no publishing credentials. Custom
-image behavior is verified separately by [RunsOn execution](../execution/README.md).
+requires App access to the repository and no publishing credentials. To build
+and test the Cobalt example on a custom image, use
+[RunsOn execution](../execution/README.md).
 
 ## Updates, exports, and removal
 
