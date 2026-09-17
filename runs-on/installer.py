@@ -51,6 +51,31 @@ def principal_arns(value: object, label: str, *, required: bool = False) -> tupl
 
 
 @dataclass(frozen=True)
+class GitHubPublisher:
+    repository: str
+    environment: str
+    subject_prefix: str
+
+    @classmethod
+    def parse(cls, value: object) -> GitHubPublisher:
+        if not isinstance(value, dict):
+            raise InstallError("Each publisher_github_repositories entry must be a mapping")
+        unknown = set(value) - set(cls.__dataclass_fields__)
+        if unknown:
+            raise InstallError(f"Unknown GitHub publisher fields: {', '.join(sorted(map(str, unknown)))}")
+        repository = string(value.get("repository"), "GitHub publisher repository")
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository):
+            raise InstallError("GitHub publisher repository must have the form owner/repository")
+        environment = string(value.get("environment", "image-publish"), "GitHub publisher environment")
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+", environment):
+            raise InstallError("GitHub publisher environment must contain letters, digits, underscores, dots or hyphens")
+        subject_prefix = string(value.get("subject_prefix", ""), "GitHub publisher subject_prefix", empty=True)
+        if subject_prefix:
+            subject_prefix = parse_subject_prefix(subject_prefix, repository)
+        return cls(repository, environment, subject_prefix)
+
+
+@dataclass(frozen=True)
 class Configuration:
     account_id: str
     region: str
@@ -61,9 +86,7 @@ class Configuration:
     notification_email_file: Path
     trusted_principal_arns: tuple[str, ...]
     publisher_principal_arns: tuple[str, ...]
-    publisher_github_repository: str
-    publisher_github_environment: str
-    publisher_github_subject_prefix: str
+    publisher_github_repositories: tuple[GitHubPublisher, ...]
     existing_github_oidc_provider_arn: str
     vpc_cidr: str
 
@@ -78,6 +101,8 @@ class Configuration:
             raise InstallError("Configuration must be a YAML mapping")
         if type(value.get("schema_version")) is not int or value["schema_version"] != 1:
             raise InstallError("schema_version must be 1")
+        if {"publisher_github_repository", "publisher_github_environment", "publisher_github_subject_prefix"}.intersection(value):
+            raise InstallError("Replace publisher_github_repository, publisher_github_environment and publisher_github_subject_prefix with publisher_github_repositories entries containing repository, environment and subject_prefix")
         unknown = set(value) - {"schema_version", *cls.__dataclass_fields__}
         if unknown:
             raise InstallError(f"Unknown configuration fields: {', '.join(sorted(map(str, unknown)))}")
@@ -95,18 +120,15 @@ class Configuration:
         if not re.fullmatch(r"[a-z][a-z0-9-]*", environment):
             raise InstallError("environment must begin with a lowercase letter and contain lowercase letters, digits or hyphens")
         organization = string(value.get("github_organization"), "github_organization")
-        repository = string(value.get("publisher_github_repository", ""), "publisher_github_repository", empty=True)
-        if repository and not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository):
-            raise InstallError("publisher_github_repository must have the form owner/repository")
-        github_environment = string(value.get("publisher_github_environment", "image-publish"), "publisher_github_environment")
-        if not re.fullmatch(r"[A-Za-z0-9_.-]+", github_environment):
-            raise InstallError("publisher_github_environment must contain letters, digits, underscores, dots or hyphens")
-        subject_prefix = string(value.get("publisher_github_subject_prefix", ""), "publisher_github_subject_prefix", empty=True)
-        if subject_prefix:
-            subject_prefix = parse_subject_prefix(subject_prefix, repository)
+        repositories = value.get("publisher_github_repositories", [])
+        if not isinstance(repositories, list):
+            raise InstallError("publisher_github_repositories must be a list")
+        github_publishers = tuple(GitHubPublisher.parse(entry) for entry in repositories)
+        if len({(entry.repository, entry.environment) for entry in github_publishers}) != len(github_publishers):
+            raise InstallError("GitHub publisher repository/environment pairs must be unique")
         publisher_principals = principal_arns(value.get("publisher_principal_arns", []), "publisher_principal_arns")
-        if not publisher_principals and not repository:
-            raise InstallError("Configure at least one publisher_principal_arns entry or publisher_github_repository")
+        if not publisher_principals and not github_publishers:
+            raise InstallError("Configure at least one publisher_principal_arns entry or publisher_github_repositories entry")
         oidc_arn = string(value.get("existing_github_oidc_provider_arn", ""), "existing_github_oidc_provider_arn", empty=True)
         if oidc_arn and oidc_arn != f"arn:aws:iam::{account_id}:oidc-provider/token.actions.githubusercontent.com":
             raise InstallError("existing_github_oidc_provider_arn must identify this account's GitHub Actions OIDC provider")
@@ -127,7 +149,7 @@ class Configuration:
             (path.parent / string(value.get("notification_email_file"), "notification_email_file")).resolve(),
             trusted_principals,
             publisher_principals,
-            repository, github_environment, subject_prefix, oidc_arn, str(network),
+            github_publishers, oidc_arn, str(network),
         )
 
     def bootstrap_variables(self) -> dict[str, object]:
@@ -142,7 +164,7 @@ class Configuration:
         result = {
             key: getattr(self, key)
             for key in self.__dataclass_fields__
-            if key not in {"license_file", "notification_email_file", "trusted_principal_arns"}
+            if key not in {"license_file", "notification_email_file", "trusted_principal_arns", "publisher_github_repositories"}
         }
         for name, path in (("license_key", self.license_file), ("notification_email", self.notification_email_file)):
             try:
@@ -152,21 +174,29 @@ class Configuration:
             if not secret:
                 raise InstallError(f"{name} file is empty: {path}")
             result[name] = secret
-        if self.publisher_github_repository and not self.existing_github_oidc_provider_arn:
+        if self.publisher_github_repositories and not self.existing_github_oidc_provider_arn:
             result["existing_github_oidc_provider_arn"] = f"arn:aws:iam::{self.account_id}:oidc-provider/token.actions.githubusercontent.com"
-        if self.publisher_github_repository and not self.publisher_github_subject_prefix:
-            result["publisher_github_subject_prefix"] = (
-                github_subject_prefix(self.publisher_github_repository)
-                if resolve_github else f"repo:{self.publisher_github_repository}"
-            )
+        publishers = []
+        discovered_prefixes = {}
+        for publisher in self.publisher_github_repositories:
+            prefix = publisher.subject_prefix
+            if not prefix:
+                if publisher.repository not in discovered_prefixes:
+                    discovered_prefixes[publisher.repository] = (
+                        github_subject_prefix(publisher.repository)
+                        if resolve_github else f"repo:{publisher.repository}"
+                    )
+                prefix = discovered_prefixes[publisher.repository]
+            publishers.append({"repository": publisher.repository, "environment": publisher.environment, "subject_prefix": prefix})
+        result["publisher_github_repositories"] = publishers
         return result
 
 
 def parse_subject_prefix(value: object, repository: str) -> str:
     if not isinstance(value, str) or not re.fullmatch(r"repo:[A-Za-z0-9_.-]+(@[0-9]+)?/[A-Za-z0-9_.-]+(@[0-9]+)?", value):
-        raise InstallError("publisher_github_subject_prefix must have the form repo:owner/repository, optionally with immutable numeric IDs")
-    if repository and re.sub(r"@[0-9]+", "", value) != f"repo:{repository}":
-        raise InstallError("publisher_github_subject_prefix must identify publisher_github_repository")
+        raise InstallError("GitHub publisher subject_prefix must have the form repo:owner/repository, optionally with immutable numeric IDs")
+    if re.sub(r"@[0-9]+", "", value) != f"repo:{repository}":
+        raise InstallError(f"GitHub publisher subject_prefix must identify repository {repository}")
     return value
 
 
@@ -177,9 +207,9 @@ def github_subject_prefix(repository: str) -> str:
             text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
         )
     except FileNotFoundError as exc:
-        raise InstallError("GitHub CLI is required to resolve publishing OIDC settings; install gh and authenticate, or configure publisher_github_subject_prefix explicitly") from exc
+        raise InstallError("GitHub CLI is required to resolve publishing OIDC settings; install gh and authenticate, or configure each GitHub publisher's subject_prefix explicitly") from exc
     if result.returncode:
-        raise InstallError(f"Cannot resolve publishing OIDC subject for {repository}: {result.stderr.strip()}. Authenticate gh or configure publisher_github_subject_prefix explicitly")
+        raise InstallError(f"Cannot resolve publishing OIDC subject for {repository}: {result.stderr.strip()}. Authenticate gh or configure its subject_prefix explicitly")
     try:
         settings = json.loads(result.stdout)
         if not isinstance(settings, dict):
@@ -187,7 +217,7 @@ def github_subject_prefix(repository: str) -> str:
     except (json.JSONDecodeError, TypeError) as exc:
         raise InstallError("GitHub returned invalid repository OIDC settings") from exc
     if settings.get("use_default") is not True:
-        raise InstallError("Repository uses a custom OIDC subject; configure publisher_github_subject_prefix explicitly after checking its environment subject format")
+        raise InstallError(f"Repository {repository} uses a custom OIDC subject; configure its subject_prefix explicitly after checking its environment subject format")
     prefix = settings.get("sub_claim_prefix", f"repo:{repository}")
     return parse_subject_prefix(prefix, repository)
 
@@ -340,7 +370,7 @@ def ensure_account_prerequisites(environment: dict[str, str], configuration: Con
             raise InstallError(f"Cannot create {role}: {created.stderr.strip()}")
         print(f"Created account service role {role}")
 
-    if configuration.publisher_github_repository and not configuration.existing_github_oidc_provider_arn:
+    if configuration.publisher_github_repositories and not configuration.existing_github_oidc_provider_arn:
         provider_arn = f"arn:aws:iam::{configuration.account_id}:oidc-provider/token.actions.githubusercontent.com"
         result = aws_command(environment, "iam", "get-open-id-connect-provider", "--open-id-connect-provider-arn", provider_arn)
         if result.returncode == 0:
@@ -363,8 +393,8 @@ def ensure_account_prerequisites(environment: dict[str, str], configuration: Con
             raise InstallError(f"Cannot inspect GitHub OIDC provider: {result.stderr.strip()}")
 
 
-def require_unused_image_key(deployment: Terraform, bindings: BootstrapBindings, configuration: Configuration, state_values: dict[str, object]) -> None:
-    """Retained snapshots or volumes must not lose their installation-owned key."""
+def require_unused_legacy_key(deployment: Terraform, bindings: BootstrapBindings | None, configuration: Configuration, state_values: dict[str, object]) -> None:
+    """An upgrade or removal must not strand disks encrypted by the removed key."""
     module = state_values.get("root_module", {})
     if not isinstance(module, dict):
         raise InstallError("Terraform deployment state has an invalid root module")
@@ -377,10 +407,12 @@ def require_unused_image_key(deployment: Terraform, bindings: BootstrapBindings,
     key_arn = keys[0].get("values", {}).get("arn")
     if not isinstance(key_arn, str) or not key_arn.startswith(f"arn:aws:kms:{configuration.region}:{configuration.account_id}:key/"):
         raise InstallError("Deployment state has no valid image KMS key for this account and region")
+    if bindings is None:
+        raise InstallError("Restore the bootstrap state before retiring the legacy encryption key")
 
     assumed = aws_command(
         deployment.environment, "sts", "assume-role", "--role-arn", bindings.deployment_role_arn,
-        "--role-session-name", "runs-on-destroy-preflight", "--duration-seconds", "900",
+        "--role-session-name", "runs-on-key-retirement", "--duration-seconds", "900",
         "--region", configuration.region,
     )
     if assumed.returncode:
@@ -421,9 +453,9 @@ def require_unused_image_key(deployment: Terraform, bindings: BootstrapBindings,
             raise InstallError(f"AWS returned an invalid {collection} inventory") from exc
     if retained:
         raise InstallError(
-            "Deployment destruction would retire the encryption key used by retained snapshots or volumes: "
+            "The legacy encryption key is still used by snapshots or volumes: "
             + ", ".join(retained)
-            + ". Migrate or explicitly remove those image resources before destroying the installation."
+            + ". Stop runner jobs and migrate or retire those resources before updating or removing the installation."
         )
 
 
@@ -447,8 +479,9 @@ def read_contract(deployment: Terraform, name: str) -> tuple[str, dict[str, obje
         parsed = yaml.safe_load(contents)
     except yaml.YAMLError as exc:
         raise InstallError(f"Terraform {name}_yaml output is not valid YAML") from exc
-    if not isinstance(parsed, dict) or type(parsed.get("schema_version")) is not int or parsed["schema_version"] != 1:
-        raise InstallError(f"Terraform {name}_yaml output must contain schema_version: 1")
+    versions = (1, 2, 3) if name == "publishing" else (1,)
+    if not isinstance(parsed, dict) or type(parsed.get("schema_version")) is not int or parsed["schema_version"] not in versions:
+        raise InstallError(f"Terraform {name}_yaml output must contain schema_version: {' or '.join(map(str, versions))}")
     expected_kind = {"installation": "runs-on-installation", "publishing": "ami-publishing-target"}[name]
     if parsed.get("kind") != expected_kind:
         raise InstallError(f"Terraform {name}_yaml output must have kind: {expected_kind}")
@@ -499,10 +532,11 @@ def execute(arguments: argparse.Namespace, *, root: Path = ROOT) -> None:
 
         if arguments.command == "bootstrap" or arguments.bootstrap_only:
             bootstrap.initialize()
-            bootstrap.bindings(configuration)
+            bindings = bootstrap.bindings(configuration)
             if getattr(arguments, "plan", False):
                 bootstrap.plan()
             else:
+                require_unused_legacy_key(deployment, bindings, configuration, deployment_state)
                 ensure_account_prerequisites(bootstrap.environment, configuration)
                 bootstrap.apply(yes=arguments.yes)
                 bindings = bootstrap.bindings(configuration)
@@ -522,6 +556,7 @@ def execute(arguments: argparse.Namespace, *, root: Path = ROOT) -> None:
                 bootstrap.plan()
                 print("Bootstrap role does not exist yet. This plan covers bootstrap only; apply bootstrap before planning deployment.")
                 return
+            require_unused_legacy_key(deployment, bindings, configuration, deployment_state)
             ensure_account_prerequisites(bootstrap.environment, configuration)
             bootstrap.apply(yes=arguments.yes)
             bindings = bootstrap.bindings(configuration)
@@ -533,12 +568,13 @@ def execute(arguments: argparse.Namespace, *, root: Path = ROOT) -> None:
         if arguments.command == "plan":
             deployment.plan()
         elif arguments.command == "destroy":
-            require_unused_image_key(deployment, bindings, configuration, deployment_state)
+            require_unused_legacy_key(deployment, bindings, configuration, deployment_state)
             deployment.command("destroy", *(["-auto-approve", "-input=false"] if arguments.yes else []))
             for name in ("installation", "publishing"):
                 (root / ".local" / "contracts" / f"{name}.yaml").unlink(missing_ok=True)
             print("Deployment destroyed. Bootstrap IAM resources and local state are retained.")
         else:
+            require_unused_legacy_key(deployment, bindings, configuration, deployment_state)
             deployment.apply(yes=arguments.yes)
             export_contracts(deployment, root / ".local" / "contracts")
 

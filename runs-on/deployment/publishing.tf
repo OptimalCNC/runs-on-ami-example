@@ -1,9 +1,13 @@
 locals {
-  github_publishing        = var.publisher_github_repository != ""
+  github_publishing        = length(var.publisher_github_repositories) > 0
   github_oidc_provider_arn = local.github_publishing ? var.existing_github_oidc_provider_arn : null
-  github_oidc_subject      = local.github_publishing ? "${var.publisher_github_subject_prefix}:environment:${var.publisher_github_environment}" : null
-  snapshot_arn             = "arn:aws:ec2:${var.region}::snapshot/*"
-  image_arn                = "arn:aws:ec2:${var.region}::image/*"
+  github_publishers = [for publisher in var.publisher_github_repositories : {
+    repository  = publisher.repository
+    environment = publisher.environment
+    subject     = "${publisher.subject_prefix}:environment:${publisher.environment}"
+  }]
+  snapshot_arn = "arn:aws:ec2:${var.region}::snapshot/*"
+  image_arn    = "arn:aws:ec2:${var.region}::image/*"
   publication_tags = {
     "runs-on-installation" = var.name
   }
@@ -25,42 +29,29 @@ locals {
         Condition = {
           StringEquals = {
             "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
-            "token.actions.githubusercontent.com:sub" = local.github_oidc_subject
+            "token.actions.githubusercontent.com:sub" = [for publisher in local.github_publishers : publisher.subject]
           }
         }
       }] : []
     )
   }
 
-  image_key_use_policy = {
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Sid    = "UseInstallationImageKey"
-        Effect = "Allow"
-        Action = [
-          "kms:DescribeKey", "kms:Decrypt", "kms:Encrypt", "kms:GenerateDataKeyWithoutPlaintext",
-          "kms:ReEncryptFrom", "kms:ReEncryptTo",
-        ]
-        Resource = aws_kms_key.images.arn
-      },
-      {
-        Sid       = "GrantImageKeyToAWSResources"
-        Effect    = "Allow"
-        Action    = "kms:CreateGrant"
-        Resource  = aws_kms_key.images.arn
-        Condition = { Bool = { "kms:GrantIsForAWSResource" = "true" } }
-      },
-    ]
-  }
-
   publisher_policy = {
     Version = "2012-10-17"
-    Statement = concat([
+    Statement = [
       {
         Sid      = "InspectRegionalImages"
         Effect   = "Allow"
         Action   = ["ec2:DescribeImages", "ec2:DescribeSnapshots"]
+        Resource = "*"
+        Condition = {
+          StringEquals = { "aws:RequestedRegion" = var.region }
+        }
+      },
+      {
+        Sid      = "InspectRegionalEncryptionDefault"
+        Effect   = "Allow"
+        Action   = "ec2:GetEbsEncryptionByDefault"
         Resource = "*"
         Condition = {
           StringEquals = { "aws:RequestedRegion" = var.region }
@@ -144,13 +135,7 @@ locals {
           StringEquals = { "aws:ResourceTag/runs-on-installation" = var.name }
         }
       },
-      {
-        Sid      = "GeneratePublisherSnapshotKey"
-        Effect   = "Allow"
-        Action   = "kms:GenerateDataKey"
-        Resource = aws_kms_key.images.arn
-      },
-    ], local.image_key_use_policy.Statement)
+    ]
   }
 }
 
@@ -170,50 +155,4 @@ resource "aws_iam_policy" "publisher" {
 resource "aws_iam_role_policy_attachment" "publisher" {
   role       = aws_iam_role.publisher.name
   policy_arn = aws_iam_policy.publisher.arn
-}
-
-resource "aws_kms_key" "images" {
-  description             = "Published images and runner volumes for ${var.name}"
-  deletion_window_in_days = 30
-  enable_key_rotation     = false
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Sid       = "EnableAccountIAM"
-        Effect    = "Allow"
-        Principal = { AWS = "arn:aws:iam::${var.account_id}:root" }
-        Action    = "kms:*"
-        Resource  = "*"
-      },
-      {
-        Sid       = "AllowSpotInstancesToUseImages"
-        Effect    = "Allow"
-        Principal = { AWS = "arn:aws:iam::${var.account_id}:role/aws-service-role/spot.amazonaws.com/AWSServiceRoleForEC2Spot" }
-        Action = [
-          "kms:Decrypt", "kms:DescribeKey", "kms:Encrypt", "kms:GenerateDataKey",
-          "kms:GenerateDataKeyWithoutPlaintext", "kms:ReEncryptFrom", "kms:ReEncryptTo",
-        ]
-        Resource = "*"
-      },
-      {
-        Sid       = "AllowSpotResourceGrants"
-        Effect    = "Allow"
-        Principal = { AWS = "arn:aws:iam::${var.account_id}:role/aws-service-role/spot.amazonaws.com/AWSServiceRoleForEC2Spot" }
-        Action    = "kms:CreateGrant"
-        Resource  = "*"
-        Condition = { Bool = { "kms:GrantIsForAWSResource" = "true" } }
-      },
-    ]
-  })
-}
-
-resource "aws_kms_alias" "images" {
-  name          = "alias/${var.name}-images"
-  target_key_id = aws_kms_key.images.key_id
-}
-
-resource "aws_iam_policy" "image_key_use" {
-  name   = "${var.name}-image-key-use"
-  policy = jsonencode(local.image_key_use_policy)
 }

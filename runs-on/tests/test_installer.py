@@ -31,7 +31,7 @@ class ExternalCommands:
         self.fail = None
         self.outputs = {
             "installation_yaml": "schema_version: 1\nkind: runs-on-installation\n",
-            "publishing_yaml": f"schema_version: 1\nkind: ami-publishing-target\ndestination:\n  kms_key_arn: {KEY}\n",
+            "publishing_yaml": "schema_version: 3\nkind: ami-publishing-target\ndestination:\n  encrypted: false\n",
         }
         self.bindings = {
             "deployment_role_arn": {"value": ROLE},
@@ -40,9 +40,11 @@ class ExternalCommands:
         self.account = ACCOUNT
         self.role_error = None
         self.oidc_error = None
+        self.inventory_error = None
         self.snapshots = []
         self.volumes = []
         self.github_settings = {"use_default": True}
+        self.github_repository_settings = {}
         self.state_values = {
             "outputs": {
                 "installation": {"value": {"account_id": ACCOUNT, "region": "us-east-1", "name": "runs-on"}},
@@ -66,7 +68,8 @@ class ExternalCommands:
         stderr = ""
         returncode = 0
         if command[0] == "gh":
-            stdout = json.dumps(self.github_settings)
+            repository = command[2].removeprefix("repos/").removesuffix("/actions/oidc/customization/sub")
+            stdout = json.dumps(self.github_repository_settings.get(repository, self.github_settings))
         elif command[0] == "aws":
             if command[1:3] == ["sts", "get-caller-identity"]:
                 stdout = json.dumps({"Account": self.account})
@@ -85,6 +88,8 @@ class ExternalCommands:
                 stdout = json.dumps({"Volumes": self.volumes})
             else:
                 stdout = "{}"
+            if command[1:3] in (["ec2", "describe-snapshots"], ["ec2", "describe-volumes"]) and self.inventory_error:
+                returncode, stderr = 254, self.inventory_error
         else:
             component = Path(command[1].removeprefix("-chdir=")).name
             operation = command[2]
@@ -160,7 +165,7 @@ class InstallerTests(unittest.TestCase):
 
         for name in ("installation", "publishing"):
             path = self.root / ".local/contracts" / f"{name}.yaml"
-            self.assertEqual(yaml.safe_load(path.read_text())["schema_version"], 1)
+            self.assertEqual(yaml.safe_load(path.read_text())["schema_version"], 3 if name == "publishing" else 1)
             self.assertEqual(path.stat().st_mode & 0o777, 0o600)
         for command, _ in self.external.calls:
             self.assertNotIn("private-license-value", " ".join(command))
@@ -248,6 +253,22 @@ class InstallerTests(unittest.TestCase):
             self.execute("export")
         self.assertFalse((self.root / ".local/contracts").exists())
 
+    def test_export_reads_retained_encrypted_publishing_state(self):
+        for version in (1, 2):
+            with self.subTest(version=version):
+                self.external.outputs["publishing_yaml"] = f"schema_version: {version}\nkind: ami-publishing-target\n"
+                self.execute("export")
+                exported = self.root / ".local/contracts/publishing.yaml"
+                self.assertEqual(yaml.safe_load(exported.read_text())["schema_version"], version)
+
+    def test_export_rejects_unknown_or_boolean_publishing_version(self):
+        for version in ("4", "true"):
+            with self.subTest(version=version):
+                self.external.outputs["publishing_yaml"] = f"schema_version: {version}\nkind: ami-publishing-target\n"
+                with self.assertRaisesRegex(installer.InstallError, "schema_version: 1 or 2 or 3"):
+                    self.execute("export")
+                self.assertFalse((self.root / ".local/contracts").exists())
+
     def test_export_rejects_swapped_contract_kinds(self):
         self.external.outputs["publishing_yaml"] = self.external.outputs["installation_yaml"]
         with self.assertRaisesRegex(installer.InstallError, "kind: ami-publishing-target"):
@@ -290,6 +311,71 @@ class InstallerTests(unittest.TestCase):
             self.assertEqual(options["env"]["AWS_ACCESS_KEY_ID"], "temporary-key")
             self.assertNotIn("AWS_PROFILE", options["env"])
 
+    def test_upgrade_refuses_to_retire_a_key_with_retained_snapshots_or_volumes(self):
+        self.external.bootstrap_exists()
+        self.external.deployment_exists()
+        for collection, retained in (
+            ("snapshots", {"SnapshotId": "snap-retained", "KmsKeyId": KEY}),
+            ("volumes", {"VolumeId": "vol-running", "KmsKeyId": KEY}),
+        ):
+            for arguments in (("apply", "--deployment-only", "--yes"), ("bootstrap", "--yes"), ("apply", "--bootstrap-only", "--yes")):
+                with self.subTest(collection=collection, arguments=arguments):
+                    self.external.snapshots, self.external.volumes = [], []
+                    setattr(self.external, collection, [retained])
+                    self.external.calls.clear()
+                    with self.assertRaisesRegex(installer.InstallError, "legacy encryption key is still used"):
+                        self.execute(*arguments)
+                    self.assertFalse(self.external.terraform_calls("deployment", "apply"))
+                    self.assertFalse(self.external.terraform_calls("bootstrap", "apply"))
+                    self.assertFalse([cmd for cmd, _ in self.external.calls if cmd[:2] == ["aws", "iam"]])
+
+    def test_upgrade_checks_the_old_key_before_applying_and_exporting(self):
+        self.external.bootstrap_exists()
+        self.external.deployment_exists()
+        self.external.snapshots = [{"SnapshotId": "snap-unrelated", "KmsKeyId": KEY + "other"}]
+        self.external.volumes = [{"VolumeId": "vol-unrelated", "KmsKeyId": KEY + "other"}]
+        self.execute("apply", "--deployment-only", "--yes", "--profile", "source-admin")
+        apply = self.external.terraform_calls("deployment", "apply")[0]
+        reads = [entry for entry in self.external.calls if entry[0][:2] == ["aws", "ec2"]]
+        self.assertEqual(len(reads), 2)
+        for read in reads:
+            self.assertLess(self.external.calls.index(read), self.external.calls.index(apply))
+            self.assertEqual(read[1]["env"]["AWS_ACCESS_KEY_ID"], "temporary-key")
+            self.assertNotIn("AWS_PROFILE", read[1]["env"])
+        self.assertTrue((self.root / ".local/contracts/publishing.yaml").is_file())
+
+    def test_upgrade_after_key_retirement_needs_no_aws_inventory(self):
+        self.external.bootstrap_exists()
+        self.external.deployment_exists()
+        self.external.state_values["root_module"] = {"resources": []}
+        self.execute("apply", "--deployment-only", "--yes")
+        self.assertFalse([cmd for cmd, _ in self.external.calls if cmd[0] == "aws"])
+        self.assertTrue(self.external.terraform_calls("deployment", "apply"))
+
+    def test_key_inventory_access_denied_blocks_upgrade(self):
+        self.external.bootstrap_exists()
+        self.external.deployment_exists()
+        self.external.inventory_error = "AccessDenied"
+        with self.assertRaisesRegex(installer.InstallError, "Cannot check retained images"):
+            self.execute("apply", "--yes")
+        self.assertFalse(self.external.terraform_calls("deployment", "apply"))
+
+    def test_partial_deployment_still_blocks_bootstrap_boundary_update(self):
+        self.external.bootstrap_exists()
+        self.external.deployment_exists()
+        self.external.state_values["outputs"] = {}
+        self.external.snapshots = [{"SnapshotId": "snap-retained", "KmsKeyId": KEY}]
+        with self.assertRaisesRegex(installer.InstallError, "snap-retained"):
+            self.execute("bootstrap", "--yes")
+        self.assertFalse(self.external.terraform_calls("bootstrap", "apply"))
+
+    def test_legacy_key_with_missing_bootstrap_state_blocks_automatic_bootstrap(self):
+        self.external.deployment_exists()
+        with self.assertRaisesRegex(installer.InstallError, "Restore the bootstrap state"):
+            self.execute("apply", "--yes")
+        self.assertFalse(self.external.terraform_calls("bootstrap", "apply"))
+        self.assertFalse([cmd for cmd, _ in self.external.calls if cmd[0] == "aws"])
+
     def test_destroy_refuses_key_deletion_when_volume_remains(self):
         self.external.bootstrap_exists()
         self.external.deployment_exists()
@@ -328,7 +414,9 @@ class InstallerTests(unittest.TestCase):
     def test_destroy_does_not_need_access_to_a_retired_github_repository(self):
         self.external.bootstrap_exists()
         self.external.deployment_exists()
-        self.config_value["publisher_github_repository"] = "example/images"
+        self.config_value["publisher_github_repositories"] = [
+            {"repository": "example/images"}, {"repository": "example/another-image"},
+        ]
         self.write_config()
         self.execute("destroy", "--yes")
         self.assertFalse([command for command, _ in self.external.calls if command[0] == "gh"])
@@ -348,7 +436,9 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual({command[command.index("--aws-service-name") + 1] for command in creations}, {"ecs.amazonaws.com", "spot.amazonaws.com"})
 
     def test_github_bootstrap_creates_missing_account_oidc_provider(self):
-        self.config_value["publisher_github_repository"] = "example/images"
+        self.config_value["publisher_github_repositories"] = [
+            {"repository": "example/images"}, {"repository": "example/another-image"},
+        ]
         self.write_config()
         self.external.oidc_error = "An error occurred (NoSuchEntity) when calling GetOpenIDConnectProvider"
         self.execute("apply", "--yes")
@@ -359,7 +449,7 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual(variables["TF_VAR_existing_github_oidc_provider_arn"], f"arn:aws:iam::{ACCOUNT}:oidc-provider/token.actions.githubusercontent.com")
 
     def test_github_oidc_permission_failure_does_not_create_provider(self):
-        self.config_value["publisher_github_repository"] = "example/images"
+        self.config_value["publisher_github_repositories"] = [{"repository": "example/images"}]
         self.write_config()
         self.external.oidc_error = "An error occurred (AccessDenied) when calling GetOpenIDConnectProvider"
         with self.assertRaisesRegex(installer.InstallError, "Cannot inspect GitHub OIDC provider"):
@@ -368,34 +458,112 @@ class InstallerTests(unittest.TestCase):
 
     def test_immutable_github_subject_passes_through_to_publisher_trust(self):
         self.external.bootstrap_exists()
-        self.config_value["publisher_github_repository"] = "example/images"
+        self.config_value["publisher_github_repositories"] = [{"repository": "example/images"}]
         self.write_config()
         self.external.github_settings = {"use_default": True, "use_immutable_subject": True, "sub_claim_prefix": "repo:example@123/images@456"}
         self.execute("apply", "--yes")
         variables = self.external.terraform_calls("deployment", "apply")[0][1]["env"]
-        self.assertEqual(variables["TF_VAR_publisher_github_subject_prefix"], "repo:example@123/images@456")
+        self.assertEqual(json.loads(variables["TF_VAR_publisher_github_repositories"]), [{
+            "repository": "example/images", "environment": "image-publish", "subject_prefix": "repo:example@123/images@456",
+        }])
 
     def test_explicit_github_subject_does_not_require_github_api_access(self):
         self.external.bootstrap_exists()
-        self.config_value.update(publisher_github_repository="example/images", publisher_github_subject_prefix="repo:example@123/images@456")
+        self.config_value["publisher_github_repositories"] = [
+            {"repository": "example/images", "subject_prefix": "repo:example@123/images@456"},
+            {"repository": "example/another-image", "environment": "release", "subject_prefix": "repo:example/another-image"},
+        ]
         self.write_config()
         self.execute("plan")
         self.assertFalse([command for command, _ in self.external.calls if command[0] == "gh"])
 
     def test_subject_for_another_repository_stops_before_bootstrap(self):
-        self.config_value.update(publisher_github_repository="example/images", publisher_github_subject_prefix="repo:other@123/images@456")
+        self.config_value["publisher_github_repositories"] = [
+            {"repository": "example/images", "subject_prefix": "repo:other@123/images@456"},
+        ]
         self.write_config()
-        with self.assertRaisesRegex(installer.InstallError, "must identify publisher_github_repository"):
+        with self.assertRaisesRegex(installer.InstallError, "must identify repository example/images"):
             self.execute("apply", "--yes")
         self.assertFalse(self.external.calls)
 
     def test_unknown_custom_github_subject_stops_before_provisioning(self):
-        self.config_value["publisher_github_repository"] = "example/images"
+        self.config_value["publisher_github_repositories"] = [
+            {"repository": "example/images", "subject_prefix": "repo:example/images"},
+            {"repository": "example/another-image"},
+        ]
         self.write_config()
         self.external.github_settings = {"use_default": False, "include_claim_keys": ["job_workflow_ref"]}
         with self.assertRaisesRegex(installer.InstallError, "custom OIDC subject"):
             self.execute("apply", "--yes")
         self.assertFalse(self.external.terraform_calls("bootstrap", "init"))
+
+    def test_multiple_repositories_discover_their_own_subjects_and_keep_environment_pairs(self):
+        self.config_value["publisher_principal_arns"] = []
+        self.config_value["publisher_github_repositories"] = [
+            {"repository": "example/images"},
+            {"repository": "other/another-image", "environment": "release"},
+            {"repository": "example/images", "environment": "staging"},
+        ]
+        self.external.github_repository_settings = {
+            "example/images": {"use_default": True, "sub_claim_prefix": "repo:example@123/images@456"},
+            "other/another-image": {"use_default": True, "sub_claim_prefix": "repo:other@789/another-image@987"},
+        }
+        self.write_config()
+        self.execute("apply", "--yes")
+        variables = self.external.terraform_calls("deployment", "apply")[0][1]["env"]
+        self.assertEqual(json.loads(variables["TF_VAR_publisher_github_repositories"]), [
+            {"repository": "example/images", "environment": "image-publish", "subject_prefix": "repo:example@123/images@456"},
+            {"repository": "other/another-image", "environment": "release", "subject_prefix": "repo:other@789/another-image@987"},
+            {"repository": "example/images", "environment": "staging", "subject_prefix": "repo:example@123/images@456"},
+        ])
+        github_calls = [command for command, _ in self.external.calls if command[0] == "gh"]
+        self.assertEqual(github_calls, [
+            ["gh", "api", "repos/example/images/actions/oidc/customization/sub"],
+            ["gh", "api", "repos/other/another-image/actions/oidc/customization/sub"],
+        ])
+
+    def test_mixed_explicit_and_discovered_subjects_only_query_the_missing_prefix(self):
+        self.config_value["publisher_github_repositories"] = [
+            {"repository": "example/images", "subject_prefix": "repo:example@123/images@456"},
+            {"repository": "other/another-image", "environment": "release"},
+        ]
+        self.write_config()
+        self.execute("apply", "--yes")
+        github_calls = [command for command, _ in self.external.calls if command[0] == "gh"]
+        self.assertEqual(github_calls, [["gh", "api", "repos/other/another-image/actions/oidc/customization/sub"]])
+        variables = self.external.terraform_calls("deployment", "apply")[0][1]["env"]
+        self.assertEqual(json.loads(variables["TF_VAR_publisher_github_repositories"]), [
+            {"repository": "example/images", "environment": "image-publish", "subject_prefix": "repo:example@123/images@456"},
+            {"repository": "other/another-image", "environment": "release", "subject_prefix": "repo:other/another-image"},
+        ])
+
+    def test_invalid_github_publishers_stop_before_external_commands(self):
+        for entries in (
+            "example/images", None, ["example/images"], [{}],
+            [{"repository": "example/*"}],
+            [{"repository": "example/images", "environment": "*"}],
+            [{"repository": "example/images", "subject_prefix": "repo:example/*"}],
+            [{"repository": "example/images", "subject_prefix": "repo:other/images"}],
+            [{"repository": "example/images", "environmnt": "release"}],
+            [{"repository": "example/images"}, {"repository": "example/images", "environment": "image-publish"}],
+        ):
+            with self.subTest(entries=entries):
+                self.config_value["publisher_github_repositories"] = entries
+                self.write_config()
+                with self.assertRaises(installer.InstallError):
+                    self.execute("apply", "--yes")
+                self.assertFalse(self.external.calls)
+
+    def test_legacy_github_fields_require_migration_even_with_a_new_list(self):
+        for field in ("publisher_github_repository", "publisher_github_environment", "publisher_github_subject_prefix"):
+            with self.subTest(field=field):
+                self.config_value[field] = ""
+                self.config_value["publisher_github_repositories"] = [{"repository": "example/images"}]
+                self.write_config()
+                with self.assertRaisesRegex(installer.InstallError, "Replace .* with publisher_github_repositories"):
+                    self.execute("apply", "--yes")
+                self.assertFalse(self.external.calls)
+                del self.config_value[field]
 
     def test_wrong_source_account_stops_before_iam_mutation(self):
         self.external.account = "999999999999"

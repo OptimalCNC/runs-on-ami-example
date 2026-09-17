@@ -29,7 +29,7 @@ locals {
   }
 
   publishing_contract = {
-    schema_version     = 1
+    schema_version     = 3
     kind               = "ami-publishing-target"
     name               = var.name
     account_id         = var.account_id
@@ -42,19 +42,16 @@ locals {
       }
       github = local.github_publishing ? {
         method       = "github-oidc"
-        repository   = var.publisher_github_repository
-        environment  = var.publisher_github_environment
         provider_arn = local.github_oidc_provider_arn
         audience     = "sts.amazonaws.com"
-        subject      = local.github_oidc_subject
+        repositories = local.github_publishers
       } : null
     }
     destination = {
       type          = "ec2-ami"
       upload_method = "ebs-direct-api"
       disk_format   = "raw"
-      encrypted     = true
-      kms_key_arn   = aws_kms_key.images.arn
+      encrypted     = false
       required_tags = local.publication_tags
     }
   }

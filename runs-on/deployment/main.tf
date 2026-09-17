@@ -27,13 +27,11 @@ module "runs_on" {
   ssm_allowed       = false
 
   permission_boundary_arn = var.workload_boundary_arn
-  # Flex uses these identifiers in count/for_each, before resource ARNs exist.
-  ebs_encryption_key_id  = "alias/${var.name}-images"
-  app_custom_policy_arns = ["arn:aws:iam::${var.account_id}:policy/${var.name}-image-key-use"]
-  app_tag                = local.app_version
-  bootstrap_tag          = local.bootstrap_version
-  app_size               = "small"
-  app_capacity_provider  = "fargate"
+  ebs_encryption_key_id   = ""
+  app_tag                 = local.app_version
+  bootstrap_tag           = local.bootstrap_version
+  app_size                = "small"
+  app_capacity_provider   = "fargate"
 
   log_retention_days              = 7
   runner_max_runtime              = 60
@@ -52,7 +50,5 @@ module "runs_on" {
   depends_on = [
     aws_route.public,
     aws_route_table_association.public,
-    aws_kms_alias.images,
-    aws_iam_policy.image_key_use,
   ]
 }

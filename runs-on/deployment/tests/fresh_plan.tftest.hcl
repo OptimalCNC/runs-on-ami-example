@@ -1,5 +1,5 @@
-# Keep the real Flex module in this plan: its resource counts must work before
-# the image key and managed policies have AWS-generated ARNs.
+# Keep the real Flex module in this plan to check a fresh installation without
+# pre-existing infrastructure or an image encryption key.
 mock_provider "aws" {
   mock_data "aws_availability_zones" {
     defaults = { names = ["us-east-1a", "us-east-1b"] }

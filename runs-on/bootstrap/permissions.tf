@@ -281,24 +281,34 @@ locals {
         }
       },
       {
-        Effect    = "Allow"
-        Action    = "kms:CreateKey"
-        Resource  = "*"
-        Condition = local.new_owned
-      },
-      {
+        # Refresh and retire keys left in deployment state by older versions.
         Effect = "Allow"
         Action = [
-          "kms:DescribeKey", "kms:GetKeyPolicy", "kms:PutKeyPolicy", "kms:GetKeyRotationStatus", "kms:EnableKeyRotation",
-          "kms:DisableKeyRotation", "kms:ListResourceTags", "kms:TagResource", "kms:UntagResource", "kms:ScheduleKeyDeletion",
-          "kms:CancelKeyDeletion", "kms:UpdateKeyDescription", "kms:CreateAlias", "kms:UpdateAlias", "kms:DeleteAlias",
+          "kms:DescribeKey", "kms:GetKeyPolicy", "kms:GetKeyRotationStatus", "kms:ListResourceTags", "kms:ScheduleKeyDeletion", "kms:DeleteAlias",
         ]
         Resource  = "arn:aws:kms:${local.regional}:key/*"
         Condition = local.owned
       },
       {
+        # Retire the removed key's managed policy alongside the key itself.
         Effect   = "Allow"
-        Action   = ["kms:CreateAlias", "kms:UpdateAlias", "kms:DeleteAlias"]
+        Action   = "iam:DetachRolePolicy"
+        Resource = local.workload_role_arns
+        Condition = {
+          ArnEquals = { "iam:PolicyARN" = local.legacy_image_key_policy_arn }
+        }
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "iam:GetPolicy", "iam:GetPolicyVersion", "iam:ListPolicyVersions", "iam:ListPolicyTags",
+          "iam:ListEntitiesForPolicy", "iam:DeletePolicy", "iam:DeletePolicyVersion",
+        ]
+        Resource = local.legacy_image_key_policy_arn
+      },
+      {
+        Effect   = "Allow"
+        Action   = "kms:DeleteAlias"
         Resource = "arn:aws:kms:${local.regional}:alias/${var.name}-images"
       },
       {

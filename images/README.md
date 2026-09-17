@@ -128,7 +128,7 @@ extract the disk bundle to obtain `build.yaml`, `disk.raw`, and
 ## Publish to the installation's target
 
 Obtain `publishing.yaml` from the RunsOn installation. Its destination account,
-region, publisher role, encryption key, and required tags are the publishing
+region, publisher role, unencrypted destination, and required tags are the publishing
 contract. The [installation permissions guide](../runs-on/PERMISSIONS.md#publishing-access)
 describes local role profiles and GitHub OIDC authentication.
 
@@ -144,10 +144,11 @@ python3 -m publish \
 
 The command assumes the contract's publisher role when needed and verifies the
 resulting account and role. An existing session for that publisher role is also
-accepted. For GitHub Actions, obtain temporary credentials through OIDC in the
-contract's protected environment, then omit `--profile`. Use the exact subject
-from the contract, including immutable repository/account identifiers where
-present; Build and Validate do not need that publishing authority.
+accepted. For GitHub Actions, select the matching repository entry in
+`authentication.github.repositories` from the version 3 target contract. Obtain
+temporary credentials through OIDC in that entry's protected environment, then
+omit `--profile`. Use its exact subject, including immutable repository/account
+identifiers where present; Build and Validate do not need that publishing authority.
 
 To publish through `image-build.yml`, set the authorized GitHub environment's
 `PUBLISHING_TARGET` variable to the complete exported contract, then dispatch
@@ -166,8 +167,8 @@ Without `publish_image=true`, manual dispatch runs only build and validation.
 Publication records are retained as workflow artifacts for 90 days; keep a copy
 with the target contract for the lifetime of the AWS resources.
 
-Publication uploads the raw disk through EBS direct APIs with the installation's
-encryption key, waits for its snapshot, registers a UEFI x86-64 AMI with ENA
+Publication uploads the raw disk through EBS direct APIs without encryption,
+waits for its snapshot, registers a UEFI x86-64 AMI with ENA
 support, and checks the resulting identity. Successful publication
 writes `published-image.yaml` with `status: available`, the AMI and snapshot IDs,
 source disk digest, baked-manifest digest (`artifact.manifest_sha256`), target
@@ -175,13 +176,21 @@ identity, and compatibility requirements. Use the AMI ID with the
 [execution workflow](../execution/README.md) to build and test the example
 application on RunsOn.
 
-The current upload includes zero blocks to preserve encrypted snapshot data, so
-a sparse 16 GiB raw disk still transfers its full logical 16 GiB. Publication
+EBS encryption by default must be disabled in the destination account and region:
+AWS cannot create unencrypted snapshots while it is enabled. Publishing checks
+this setting before uploading and verifies that the snapshot and AMI are
+unencrypted. It does not change the account setting. RunsOn omits explicit
+runner-volume encryption settings, leaving encryption to the source image and
+regional EBS defaults. Unencrypted publication does not make the AMI public or
+grant additional launch access.
+
+The current upload includes zero blocks, so a sparse 16 GiB raw disk still
+transfers its full logical 16 GiB. Publication
 incurs [EBS direct API and snapshot storage charges](https://aws.amazon.com/ebs/pricing/),
-plus applicable KMS requests and source network charges. It creates no EC2 build
+plus applicable source network charges. It creates no EC2 build
 instance or S3 staging bucket. Images remain in the contract's account and region;
-sharing or copying them into another account or region requires separate AMI,
-snapshot, and customer-managed key access and lifecycle management.
+sharing or copying them into another account or region requires separate AMI
+and snapshot access and lifecycle management.
 
 ## Outputs and cleanup
 
@@ -209,8 +218,8 @@ python3 -m publish \
   --profile your-authorized-login
 ```
 
-Cleanup verifies the target, ownership and artifact tags, publication identity,
-and encryption key before deregistering the recorded AMI and deleting its
+Cleanup verifies the target, ownership and artifact tags, and publication
+identity before deregistering the recorded AMI and deleting its
 snapshot. It updates the supplied record to `status: deleted`. Individual image
 retention belongs to this module; removing local files does not remove an AMI.
 
@@ -225,6 +234,13 @@ python3 -m publish \
   --profile your-authorized-login
 ```
 
-Retire image publications before removing their installation-owned encryption
-key. The installer checks for dependent snapshots and volumes during its own
-removal procedure.
+Version 1 and 2 publishing targets remain supported only for cleanup of existing
+encrypted publications, including verification of their original encryption key.
+Retain those targets with their publication records. New publication requires a
+version 3 target exported after updating the installation. Existing AMIs and
+snapshots cannot be decrypted in place; publish the built disk again to create an
+unencrypted replacement. Before updating the installation, stop runner jobs and
+migrate or retire snapshots and volumes that use its legacy key. The installer
+blocks bootstrap updates, deployment apply, and removal while those dependencies
+remain; a successful deployment update retires the key. See the
+[installation update instructions](../runs-on/README.md#updates-exports-and-removal).

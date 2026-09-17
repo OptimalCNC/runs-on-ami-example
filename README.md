@@ -61,7 +61,7 @@ the Git-ignored `runs-on/.local/` directory. Successful deployment exports:
 | Contract | Consumer |
 | --- | --- |
 | `runs-on/.local/contracts/installation.yaml` | Installation setup and runner configuration: identity, environment, setup URL, and runtime configuration |
-| `runs-on/.local/contracts/publishing.yaml` | Image publishing: destination, role authentication, encryption key, and required ownership tags |
+| `runs-on/.local/contracts/publishing.yaml` | Image publishing: destination, role authentication, and required ownership tags |
 
 The [image module](images/README.md#publish-to-the-installations-target) consumes
 the publishing contract through an explicit file path. Build produces a local
