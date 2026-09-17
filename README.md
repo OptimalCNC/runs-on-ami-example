@@ -77,8 +77,9 @@ provides the dispatch command and acceptance criteria. The check uses a stock
 image to prove EC2 launch, runner registration, and job execution.
 
 [RunsOn execution](execution/README.md) builds and tests the Cobalt example
-application on a custom image. Dispatch its workflow with the AMI ID, RunsOn
-environment, and AWS region.
+application using the stable `image=ubuntu2404-xenomai-cobalt` selector. Dispatch
+its workflow with the RunsOn environment and AWS region; new publications are
+selected automatically.
 
 ## Operate and reuse
 

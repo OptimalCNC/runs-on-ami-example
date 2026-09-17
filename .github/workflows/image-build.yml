@@ -1,4 +1,4 @@
-name: Build, validate, and publish image
+name: Build, validate, publish, and clean images
 
 on:
   pull_request:
@@ -23,7 +23,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.publish_image)) && 'cobalt-image-publication' || format('{0}-{1}', github.workflow, github.ref) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 defaults:
@@ -177,3 +177,36 @@ jobs:
           include-hidden-files: true
           if-no-files-found: warn
           retention-days: 90
+
+  clean:
+    if: always() && needs.publish.result != 'skipped'
+    needs: publish
+    runs-on: ubuntu-24.04
+    environment: ${{ inputs.environment || 'production' }}
+    permissions:
+      contents: read
+      id-token: write
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install cleanup tools
+        run: |
+          python3 -m pip install -r publish/requirements.txt
+          python3 install-tools.py --group publish
+          echo "$PWD/.local/tools/bin" >> "$GITHUB_PATH"
+      - name: Read the installation publishing target
+        id: target
+        env:
+          PUBLISHING_TARGET: ${{ vars.PUBLISHING_TARGET }}
+          PUBLISHING_ENVIRONMENT: ${{ inputs.environment || 'production' }}
+        run: python3 -m publish.github --target .local/publishing.yaml
+      - name: Authenticate as the installation publisher
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ steps.target.outputs.role_arn }}
+          aws-region: ${{ steps.target.outputs.region }}
+          role-session-name: image-clean-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Clean old publications
+        run: python3 -m publish --prune --target .local/publishing.yaml

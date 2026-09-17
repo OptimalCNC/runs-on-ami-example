@@ -8,12 +8,16 @@ that it executes in Cobalt primary mode at priority 50.
 Use an installed [RunsOn deployment](../runs-on/README.md) with this repository
 authorized for its GitHub App, and a published [custom image](../images/README.md)
 containing the Cobalt kernel, SDK at `/usr/xenomai`, C compiler, and CMake 3.28 or
-newer. Once the workflow is on the default branch, dispatch it from the
-repository checkout with the AMI ID, RunsOn environment, and AWS region:
+newer. The workflow selects `image=ubuntu2404-xenomai-cobalt`, defined in
+[`.github/runs-on.yml`](../.github/runs-on.yml). RunsOn launches the newest
+available image matching `ubuntu2404-xenomai-cobalt-*` in the configured account.
+When using another account, set the selector's `owner` to that account.
+
+Once the workflow is on the default branch, dispatch it from the repository
+checkout with the RunsOn environment and AWS region:
 
 ```sh
 gh workflow run run-cobalt.yml \
-  -f ami_id=ami-YOUR_IMAGE_ID \
   -f environment=production \
   -f region=us-east-1
 ```

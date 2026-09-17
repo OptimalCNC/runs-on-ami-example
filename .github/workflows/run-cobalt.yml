@@ -3,17 +3,13 @@ name: Build and test on Xenomai Cobalt
 on:
   workflow_dispatch:
     inputs:
-      ami_id:
-        description: Custom Xenomai Cobalt AMI ID
-        required: true
-        type: string
       environment:
         description: RunsOn environment
         required: true
         default: production
         type: string
       region:
-        description: AWS region containing the AMI and RunsOn deployment
+        description: AWS region containing the image and RunsOn deployment
         required: true
         default: us-east-1
         type: string
@@ -33,7 +29,7 @@ jobs:
       - private=false
       - env=${{ inputs.environment }}
       - region=${{ inputs.region }}
-      - ami=${{ inputs.ami_id }}
+      - image=ubuntu2404-xenomai-cobalt
     timeout-minutes: 15
     defaults:
       run:

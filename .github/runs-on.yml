@@ -1,0 +1,6 @@
+images:
+  ubuntu2404-xenomai-cobalt:
+    platform: linux
+    arch: x64
+    owner: "395063532779"
+    name: "ubuntu2404-xenomai-cobalt-*"

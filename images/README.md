@@ -102,7 +102,9 @@ and `validate` jobs on GitHub-hosted `ubuntu-24.04` for relevant pull requests,
 manual dispatches, and its weekly schedule. The build job uploads a compressed
 sparse disk bundle; the validation job downloads it and boots the VM on its own
 runner. After validation succeeds, scheduled runs publish automatically; manual
-dispatches publish when requested.
+dispatches publish when requested. A separate `clean` job runs after each
+`publish` job, including failed publish jobs, and skips runs without publication.
+Cleanup installs only the AWS CLI and Python dependencies; it needs no disk bundle.
 
 Every successful build retains its disk bundle for 1 day so later jobs can
 consume it. Build and VM validation logs are retained for 7 days. Download and
@@ -155,9 +157,14 @@ Publication uploads the raw disk through EBS direct APIs without encryption,
 waits for its snapshot, registers a UEFI x86-64 AMI with ENA
 support, and checks the resulting identity. Successful publication
 writes `published-image.json` with `status: available`, the AMI and snapshot IDs,
-source disk digest, and target identity. Use the AMI ID with the
-[execution workflow](../execution/README.md) to build and test the example
-application on RunsOn.
+source disk digest, and target identity for diagnostics and cleanup. Each version
+has a unique `ubuntu2404-xenomai-cobalt-<digest>-<publication>` name, as required
+by AWS. The AMI and its snapshot also carry the exact stable `Name` tag
+`ubuntu2404-xenomai-cobalt` for cleanup. The
+[execution workflow](../execution/README.md) selects `image=ubuntu2404-xenomai-cobalt`
+through the owner and name pattern in [`.github/runs-on.yml`](../.github/runs-on.yml), so new
+publications require no workflow changes. A new version becomes eligible for
+execution as soon as it is available; VM validation must finish before publishing.
 
 EBS encryption by default must be disabled in the destination account and region:
 AWS cannot create unencrypted snapshots while it is enabled. Publishing checks
@@ -177,6 +184,15 @@ and snapshot access and lifecycle management.
 
 ## Outputs and cleanup
 
+The separate `clean` job keeps the newest available publication and its one
+backing snapshot for this installation's exact `Name` tag
+`ubuntu2404-xenomai-cobalt`. It deregisters older matching images and deletes
+their snapshots. Different names, including names with an additional suffix,
+do not match. Installation ownership is identified by resource tags. Cleanup
+also runs after failed publication, retaining the newest existing available image.
+The GitHub workflow serializes publishing runs through cleanup; run local
+publication and cleanup commands serially for the same target as well.
+
 Keep operation results with their corresponding artifacts and publishing target:
 
 | Output | Purpose |
@@ -191,6 +207,22 @@ Keep operation results with their corresponding artifacts and publishing target:
 longer needed, local build outputs, tool downloads, and caches can be
 removed independently of AWS resources. Retain publication records and the
 matching target contract while their AMIs or snapshots exist.
+
+Retirement records deletion intent on each old snapshot before deregistering its
+image, so a later cleanup can retry unfinished snapshot deletion. If retirement
+fails, the `clean` job fails independently and the new image remains available.
+Run cleanup after local publication, or retry it without rebuilding or publishing:
+
+```sh
+python3 -m publish --prune \
+  --target ../runs-on/.local/contracts/publishing.yaml \
+  --profile your-authorized-login
+```
+
+Automatic retention covers only publications with the exact stable `Name` tag,
+Cobalt family tag, and expected versioned AMI name. Use their saved records to
+clean up publications from before this naming scheme. GitHub artifact expiry and
+deletion of local files do not remove AWS resources.
 
 Delete a published image and its backing snapshot using its record:
 
