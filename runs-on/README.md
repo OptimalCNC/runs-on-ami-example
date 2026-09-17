@@ -43,10 +43,36 @@ python3 -m venv .venv
 `./install` automatically uses `.venv/bin/python`. Terraform initialization
 downloads the pinned module and AWS provider.
 
-Run `.venv/bin/python check.py --tools` for this module's Python tests and
-isolated Terraform checks. These use synthetic inputs and mock providers without
-creating AWS resources. `install-tools.py --terraform-only` installs just the
-tool needed for those checks.
+Run this module's Python tests:
+
+```sh
+.venv/bin/python -m unittest discover -s tests -v
+```
+
+Check Terraform using only the reusable source, committed provider locks, and
+mock tests in a temporary directory. The Bash block clears inherited `TF_*`
+settings and leaves local state and variable files outside the checks. Tests use
+synthetic inputs and mock providers without creating AWS resources.
+`install-tools.py --terraform-only` installs just the tool needed for these checks.
+
+```sh
+bash <<'BASH'
+set -euo pipefail
+for variable in "${!TF_@}"; do unset "$variable"; done
+export TF_IN_AUTOMATION=true
+check_dir=$(mktemp -d)
+trap 'rm -rf "$check_dir"' EXIT
+for component in bootstrap deployment; do
+  mkdir "$check_dir/$component"
+  cp "$component/"*.tf "$component/.terraform.lock.hcl" "$check_dir/$component/"
+  cp -R "$component/tests" "$check_dir/$component/tests"
+  terraform -chdir="$check_dir/$component" fmt -check -recursive
+  terraform -chdir="$check_dir/$component" init -backend=false -input=false -lockfile=readonly
+  terraform -chdir="$check_dir/$component" validate
+  terraform -chdir="$check_dir/$component" test -no-color
+done
+BASH
+```
 
 If you enable GitHub publishing and leave `publisher_github_subject_prefix`
 empty, also install the GitHub CLI and authenticate it with access to read the

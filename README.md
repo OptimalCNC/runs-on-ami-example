@@ -15,40 +15,40 @@ Cobalt application test establishes functional execution without a latency targe
 
 ## Validate locally
 
-Python 3.12 and Bash are required. These commands install the Python dependencies
-and pinned validation tools without creating AWS resources:
+Run the validation commands documented by the module you are changing:
+
+- [Images](images/README.md#prerequisites): Python tests, pinned inputs, shell
+  syntax, and Packer configuration.
+- [RunsOn installation](runs-on/README.md#prerequisites): Python tests and
+  isolated Terraform validation and mock tests.
+- [Execution](execution/README.md): CMake build and CTest commands for a
+  Cobalt SDK and kernel.
+
+The [validation workflow](.github/workflows/validate.yml) runs the image and
+installation source checks and workflow linting as independent jobs.
+Installed tools and generated files stay in each module's
+ignored `.local/` directory.
+
+For workflow changes, install and run the pinned actionlint from the repository
+root on Linux x86-64. These commands require `curl`, `jq`, `sha256sum`, and `tar`:
 
 ```sh
-python3 -m venv .github/.local/validation-venv
-. .github/.local/validation-venv/bin/activate
-python3 -m pip install -r images/requirements.txt -r runs-on/requirements.txt
-python3 images/install-tools.py
-python3 runs-on/install-tools.py --terraform-only
-python3 .github/install-tools.py
-python3 check.py --tools
+(
+  set -eu
+  mkdir -p .github/.local/tools/bin
+  curl --fail --location --silent --show-error \
+    "$(jq -r '.actionlint.url' .github/tools.lock.json)" \
+    --output .github/.local/tools/actionlint.tar.gz
+  printf '%s  %s\n' "$(jq -r '.actionlint.sha256' .github/tools.lock.json)" \
+    .github/.local/tools/actionlint.tar.gz | sha256sum --check
+  tar -xzf .github/.local/tools/actionlint.tar.gz -C .github/.local/tools/bin actionlint
+  .github/.local/tools/bin/actionlint -shellcheck= -config-file=.github/actionlint.yaml .github/workflows/*.yml
+)
 ```
 
-The checks run the image and installer tests, validate locked inputs, and check
-shell scripts, workflows, Packer configuration, and the installation's Terraform
-blueprints. Terraform initialization uses the committed provider locks, and
-these checks run without AWS credentials. Building the
-[Cobalt application](execution/cobalt) additionally requires a C compiler, CMake
-3.28+, and the Xenomai development installation; executing it requires the
-Cobalt kernel. Local configuration checks do not establish either guest
-bootability or Cobalt execution. Pull requests also run
-the [image build and VM validation workflow](.github/workflows/image-build-validate.yml)
-when its image-related paths change.
-
-The image and installation modules own their tools and checks; run
-`python3 check.py` from their directories. The root `check.py` delegates to both and
-adds workflow linting with `--tools`. Installed tools and generated files stay
-in the owning module's ignored `.local/` directory; `.github/` owns CI tooling.
-
-See [Execution](execution/README.md) for the CMake build and CTest commands.
-Building requires a Cobalt SDK; running the test requires the Cobalt kernel.
-
-To build a complete disk and test Cobalt in a local QEMU/KVM guest, follow the
-[image guide](images/README.md). Build and Validate require no AWS credentials.
+To build a complete disk on a Linux host, follow the [image guide](images/README.md).
+Pull requests run the [image build workflow](.github/workflows/image-build.yml)
+on GitHub-hosted Ubuntu when its image-related paths change.
 
 ## Supply deployment configuration
 

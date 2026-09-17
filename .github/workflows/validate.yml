@@ -10,16 +10,89 @@ permissions:
   contents: read
 
 jobs:
-  validate:
+  images:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+        working-directory: images
     steps:
       - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
-      - run: |
-          python3 images/install-tools.py
-          python3 runs-on/install-tools.py --terraform-only
-          python3 .github/install-tools.py
-      - run: python3 -m pip install -r images/requirements.txt -r runs-on/requirements.txt
-      - run: python3 check.py --tools
+      - name: Install image check dependencies
+        run: |
+          python3 -m pip install -r requirements.txt
+          python3 install-tools.py
+          echo "$PWD/.local/tools/bin" >> "$GITHUB_PATH"
+          echo "PACKER_PLUGIN_PATH=$PWD/.local/tools/plugins" >> "$GITHUB_ENV"
+      - name: Validate pinned inputs
+        run: python3 validate-inputs.py
+      - name: Run image tests
+        run: python3 -m unittest discover -s tests -v
+      - name: Check shell syntax
+        run: |
+          for script in common/*.sh xenomai-cobalt/*.sh; do
+            bash -n "$script"
+          done
+      - name: Check Packer configuration
+        run: |
+          packer fmt -check xenomai-cobalt/image.pkr.hcl
+          packer validate -syntax-only xenomai-cobalt/image.pkr.hcl
+
+  runs-on:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+        working-directory: runs-on
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install installation check dependencies
+        run: |
+          python3 -m pip install -r requirements.txt
+          python3 install-tools.py --terraform-only
+          echo "$PWD/.local/tools/bin" >> "$GITHUB_PATH"
+      - name: Run installation tests
+        run: python3 -m unittest discover -s tests -v
+      - name: Check Terraform configuration and mock tests
+        run: |
+          for variable in "${!TF_@}"; do unset "$variable"; done
+          export TF_IN_AUTOMATION=true
+          check_dir=$(mktemp -d)
+          trap 'rm -rf "$check_dir"' EXIT
+          for component in bootstrap deployment; do
+            mkdir "$check_dir/$component"
+            cp "$component/"*.tf "$component/.terraform.lock.hcl" "$check_dir/$component/"
+            cp -R "$component/tests" "$check_dir/$component/tests"
+            terraform -chdir="$check_dir/$component" fmt -check -recursive
+            terraform -chdir="$check_dir/$component" init -backend=false -input=false -lockfile=readonly
+            terraform -chdir="$check_dir/$component" validate
+            terraform -chdir="$check_dir/$component" test -no-color
+          done
+
+  workflows:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install pinned actionlint
+        run: |
+          mkdir -p .github/.local/tools/bin
+          curl --fail --location --silent --show-error \
+            "$(jq -r '.actionlint.url' .github/tools.lock.json)" \
+            --output .github/.local/tools/actionlint.tar.gz
+          printf '%s  %s\n' "$(jq -r '.actionlint.sha256' .github/tools.lock.json)" \
+            .github/.local/tools/actionlint.tar.gz | sha256sum --check
+          tar -xzf .github/.local/tools/actionlint.tar.gz -C .github/.local/tools/bin actionlint
+      - name: Lint workflows
+        run: .github/.local/tools/bin/actionlint -shellcheck= -config-file=.github/actionlint.yaml .github/workflows/*.yml

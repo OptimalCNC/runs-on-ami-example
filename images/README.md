@@ -37,8 +37,21 @@ the versions in [inputs.lock.json](xenomai-cobalt/inputs.lock.json). Build also
 downloads the pinned Ubuntu cloud disk and public kernel, userspace, and package
 inputs. It creates no AWS resources.
 
-Run `python3 check.py --tools` to check this module's Python tests, pinned inputs,
-shell scripts, and Packer configuration without building a disk.
+Check this module's pinned inputs, Python tests, shell syntax, and Packer
+configuration without building a disk:
+
+```sh
+(
+  set -e
+  python3 validate-inputs.py
+  python3 -m unittest discover -s tests -v
+  for script in common/*.sh xenomai-cobalt/*.sh; do
+    bash -n "$script"
+  done
+  packer fmt -check xenomai-cobalt/image.pkr.hcl
+  packer validate -syntax-only xenomai-cobalt/image.pkr.hcl
+)
+```
 
 The default build VM uses 4 CPUs and 8 GiB of memory; leave memory for the host as
 well. Its root disk is 16 GiB, with a separate disposable 16 GiB build disk.
