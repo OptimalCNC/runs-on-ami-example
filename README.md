@@ -4,8 +4,9 @@ The repository separates three responsibilities:
 
 - [RunsOn installation](runs-on/README.md) provisions the runner platform, its
   image-publishing destination, and the publisher role.
-- [Image build and publishing](images/README.md) provides independent Build,
-  Validate, and Publish operations. Build and Validate need no AWS credentials.
+- [Image build, validation, and publishing](images/README.md) builds a disk,
+  validates it in a VM, and publishes it as an AMI. Build and validation run on
+  normal Linux hosts without AWS credentials.
 - [RunsOn execution](execution/README.md) provides a Xenomai Cobalt example
   application and a workflow that builds and tests it on a custom image.
 
@@ -47,8 +48,9 @@ root on Linux x86-64. These commands require `curl`, `jq`, `sha256sum`, and `tar
 ```
 
 To build a complete disk on a Linux host, follow the [image guide](images/README.md).
-Pull requests run the [image build workflow](.github/workflows/image-build.yml)
-on GitHub-hosted Ubuntu when its image-related paths change.
+Pull requests run the [image workflow](.github/workflows/image-build.yml) with
+separate build and VM validation jobs on GitHub-hosted Ubuntu when its
+image-related paths change. Manual dispatch can also publish the validated disk.
 
 ## Supply deployment configuration
 
@@ -62,9 +64,9 @@ the Git-ignored `runs-on/.local/` directory. Successful deployment exports:
 | `runs-on/.local/contracts/publishing.yaml` | Image publishing: destination, role authentication, encryption key, and required ownership tags |
 
 The [image module](images/README.md#publish-to-the-installations-target) consumes
-the publishing contract through an explicit file path. Build and Validate
-produce and test a local disk without AWS credentials; Publish uploads that
-artifact only when requested.
+the publishing contract through an explicit file path. Build produces a local
+disk, Validate boots it in a fresh VM, and Publish uploads that artifact only
+when requested.
 
 ## Run on RunsOn
 
@@ -81,8 +83,8 @@ environment, and AWS region.
 ## Operate and reuse
 
 [RunsOn installation](runs-on/README.md) owns deployment, permissions, exported
-contracts, and installation removal. [Image build and publishing](images/README.md)
-owns disk artifacts, VM validation, published AMIs, and their cleanup.
+contracts, and installation removal. [Image build, validation, and publishing](images/README.md)
+owns disk artifacts, VM validation evidence, published AMIs, and their cleanup.
 [RunsOn execution](execution/README.md) owns the example application and its
 build-and-test workflow.
 

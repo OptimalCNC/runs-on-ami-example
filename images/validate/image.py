@@ -19,10 +19,10 @@ import uuid
 import xml.etree.ElementTree as ET
 
 from contracts import BuiltImage, sha256, write_yaml
-from vm import create_seed, firmware_paths
+from .vm import create_seed, firmware_paths
 
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 GUEST_DIRECTORY = "/tmp/ami-example-validation"
 REPORTS = ("guest-report.json", "configure.log", "build.log", "ctest.log", "ctest.xml")
 
@@ -44,7 +44,7 @@ def validate_evidence(image: BuiltImage, directory: Path) -> dict:
     expected = {key: image.manifest[key] for key in (
         "kernel_release", "recipe_id", "config_sha256", "xenomai", "packages_sha256", "snap_hashes")}
     expected.update(image.manifest["runner_inventory"])
-    expected.update({"boot_mode": image.compatibility.boot_mode, "environment_passed": True})
+    expected.update({"boot_mode": image.compatibility.boot_mode, "runner_uid": 1001, "process_limits_passed": True})
     for key, value in expected.items():
         if guest.get(key) != value:
             raise ValueError(f"VM guest {key} differs from the built image")
@@ -118,7 +118,8 @@ def run_guest(image: BuiltImage, ssh: list[str], temporary: Path, output: Path, 
     with tarfile.open(archive, "w") as stream:
         for name in ("CMakeLists.txt", "main.c"):
             stream.add(ROOT / "execution/cobalt" / name, arcname=f"cobalt/{name}")
-        stream.add(ROOT / "images/common/validate-guest.sh", arcname="validate-guest.sh")
+        for name in ("validate-guest.sh", "guest-report.py"):
+            stream.add(Path(__file__).resolve().parent / name, arcname=name)
     with archive.open("rb") as stream:
         subprocess.run([*ssh, f"mkdir -m 0700 {GUEST_DIRECTORY} && tar -xf - -C {GUEST_DIRECTORY}"],
                        stdin=stream, stdout=log, stderr=log, check=True, timeout=remaining(deadline))

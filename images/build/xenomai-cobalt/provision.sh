@@ -5,7 +5,7 @@ export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 recipe=/opt/ami-example-recipe
 [[ "$EUID" -eq 0 && -f "$recipe/recipe.json" ]]
 mkdir -p /var/lib/ami-example
-python3 "$recipe/images/common/inventory.py" > /var/lib/ami-example/parent-inventory.json
+python3 "$recipe/images/build/common/inventory.py" > /var/lib/ami-example/parent-inventory.json
 # The parent can retain its original partition size on a larger Packer root disk.
 [[ "$(findmnt --noheadings --output FSTYPE --target /)" == ext4 ]]
 root_device=$(readlink -f "$(findmnt --noheadings --output SOURCE --target /)")
@@ -62,10 +62,10 @@ export TMPDIR=/mnt/ami-example-build/tmp
 systemctl disable --now apt-daily.timer apt-daily-upgrade.timer || true
 systemctl stop apt-daily.service apt-daily-upgrade.service
 systemctl mask apt-daily.service apt-daily-upgrade.service unattended-upgrades.service
-python3 "$recipe/images/common/install-packages.py" "$recipe/images/xenomai-cobalt/inputs.lock.json" /mnt/ami-example-build/inputs
-python3 "$recipe/images/common/install-runner.py" "$recipe/images/xenomai-cobalt/inputs.lock.json" /mnt/ami-example-build/inputs
+python3 "$recipe/images/build/common/install-packages.py" "$recipe/images/build/xenomai-cobalt/inputs.lock.json" /mnt/ami-example-build/inputs
+python3 "$recipe/images/build/common/install-runner.py" "$recipe/images/build/xenomai-cobalt/inputs.lock.json" /mnt/ami-example-build/inputs
 # Cobalt grants non-root kernel access to this group through the boot command line.
-python3 - "$recipe/images/xenomai-cobalt/inputs.lock.json" <<'PY'
+python3 - "$recipe/images/build/xenomai-cobalt/inputs.lock.json" <<'PY'
 import grp
 import json
 import subprocess
@@ -98,12 +98,10 @@ cat > /etc/systemd/system.conf.d/99-xenomai.conf <<'EOF'
 DefaultLimitMEMLOCK=infinity
 DefaultLimitRTPRIO=99
 EOF
-install -m 0755 "$recipe/images/common/runner-image-env" /usr/local/bin/runner-image-env
-install -m 0755 "$recipe/images/common/guest-report.py" /usr/local/bin/ami-example-guest-report
-bash "$recipe/images/xenomai-cobalt/build-kernel.sh"
+bash "$recipe/images/build/xenomai-cobalt/build-kernel.sh"
 # Keep the application toolchain; remove tools used only to build the image and
 # the distribution kernel, whose replacement is installed directly in /boot.
-python3 - "$recipe/images/xenomai-cobalt/inputs.lock.json" <<'PY'
+python3 - "$recipe/images/build/xenomai-cobalt/inputs.lock.json" <<'PY'
 import json, subprocess, sys
 lock = json.load(open(sys.argv[1]))['os']
 installed = subprocess.check_output(['dpkg-query', '-W', '-f=${binary:Package}\t${db:Status-Status}\n'], text=True)
@@ -114,4 +112,4 @@ PY
 update-grub
 # EC2 and a fresh QEMU variable store cannot use this build VM's NVRAM entries.
 [[ -f /boot/efi/EFI/BOOT/BOOTX64.EFI ]]
-python3 "$recipe/images/common/write-image-manifest.py"
+python3 "$recipe/images/build/common/write-image-manifest.py"

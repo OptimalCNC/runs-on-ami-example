@@ -12,7 +12,8 @@ from unittest.mock import Mock, call, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from contracts import BuiltImage, Compatibility, read_yaml, sha256, write_yaml
-import publish
+from publish import image as publish
+from publish import github
 
 
 ACCOUNT = "123456789012"
@@ -49,6 +50,47 @@ def target_value():
             "required_tags": deepcopy(TAGS),
         },
     }
+
+
+class GitHubPublishingTargetTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.directory = Path(temporary.name)
+        self.path = self.directory / "publishing.yaml"
+        self.value = target_value()
+        self.value["authentication"]["github"] = {
+            "method": "github-oidc", "audience": "sts.amazonaws.com",
+            "repository": "example/images", "environment": "production",
+            "subject": "repo:example@123/images@456:environment:production",
+        }
+
+    def test_workflow_command_materializes_contract_and_emits_its_credential_inputs(self):
+        write_yaml(self.path, self.value)
+        exported = self.path.read_text()
+        self.path.unlink()
+        output = self.directory / "github-output"
+        result = subprocess.run(
+            [sys.executable, "-m", "publish.github", "--target", str(self.path)],
+            cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True,
+            env={**os.environ, "PUBLISHING_TARGET": exported, "GITHUB_OUTPUT": str(output),
+                 "GITHUB_REPOSITORY": "example/images", "PUBLISHING_ENVIRONMENT": "production"},
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(read_yaml(self.path), self.value)
+        self.assertEqual(output.read_text(), f"role_arn={ROLE}\nregion={REGION}\n")
+
+    def test_other_repositories_or_environments_cannot_use_the_target(self):
+        write_yaml(self.path, self.value)
+        for repository, environment in (("other/images", "production"), ("example/images", "preview")):
+            with self.subTest(repository=repository, environment=environment), \
+                    self.assertRaisesRegex(ValueError, "does not authorize"):
+                github.load_github_target(self.path, repository, environment)
+
+    def test_local_only_targets_cannot_enable_github_publication(self):
+        write_yaml(self.path, target_value())
+        with self.assertRaisesRegex(ValueError, "authorize GitHub OIDC"):
+            github.load_github_target(self.path, "example/images", "production")
 
 
 class PublishingTargetTests(unittest.TestCase):

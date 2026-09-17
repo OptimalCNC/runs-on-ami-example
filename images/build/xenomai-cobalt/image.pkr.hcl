@@ -48,7 +48,7 @@ source "qemu" "kernel" {
   ssh_timeout          = "15m"
   shutdown_timeout     = "5m"
   # Finalization removes the build SSH key, so shut down in this same session.
-  shutdown_command = "sudo bash /opt/ami-example-recipe/images/common/finalize-image.sh && sudo /sbin/shutdown -P now"
+  shutdown_command = "sudo bash /opt/ami-example-recipe/images/build/common/finalize-image.sh && sudo /sbin/shutdown -P now"
   qemuargs = [
     ["-cdrom", var.seed_iso],
     ["-serial", "file:${var.output_directory}/serial.log"],
@@ -67,7 +67,7 @@ build {
   provisioner "shell" {
     inline = [
       "sudo mv /tmp/ami-example-recipe /opt/ami-example-recipe",
-      "sudo bash /opt/ami-example-recipe/images/xenomai-cobalt/provision.sh"
+      "sudo bash /opt/ami-example-recipe/images/build/xenomai-cobalt/provision.sh"
     ]
   }
   provisioner "file" {

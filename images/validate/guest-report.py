@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Guest observations with optional EC2 identity for execution reports."""
+"""Observe the finalized image from its non-root Cobalt validation process."""
 import argparse
 import glob
 import gzip
@@ -9,9 +9,9 @@ import json
 import os
 from pathlib import Path
 import re
+import pwd
 import resource
 import subprocess
-import urllib.request
 
 
 def sha(path):
@@ -20,16 +20,6 @@ def sha(path):
         for block in iter(lambda: stream.read(1024 * 1024), b""):
             h.update(block)
     return h.hexdigest()
-
-
-def metadata():
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-    token = opener.open(urllib.request.Request(
-        "http://169.254.169.254/latest/api/token", method="PUT",
-        headers={"X-aws-ec2-metadata-token-ttl-seconds": "60"}), timeout=5).read().decode()
-    request = urllib.request.Request("http://169.254.169.254/latest/dynamic/instance-identity/document",
-                                     headers={"X-aws-ec2-metadata-token": token})
-    return json.loads(opener.open(request, timeout=5).read())
 
 
 def cobalt_identity(image, config):
@@ -59,7 +49,13 @@ def cobalt_identity(image, config):
     return dict(xenomai)
 
 
-def report(expected_release, expected_recipe, platform="ec2"):
+def report(expected_release, expected_recipe):
+    if os.getuid() != 1001 or os.geteuid() != 1001 or pwd.getpwuid(os.getuid()).pw_name != "runner":
+        raise ValueError("VM validation must run as runner with UID 1001")
+    if resource.getrlimit(resource.RLIMIT_MEMLOCK)[0] != resource.RLIM_INFINITY:
+        raise ValueError("runner process must inherit unlimited locked memory")
+    if resource.getrlimit(resource.RLIMIT_RTPRIO)[0] < 99:
+        raise ValueError("runner process must inherit real-time priority limit 99")
     path = Path("/etc/ami-example.json")
     if path.stat().st_uid != 0 or path.stat().st_mode & 0o022:
         raise ValueError("image manifest ownership/permissions differ")
@@ -91,10 +87,7 @@ def report(expected_release, expected_recipe, platform="ec2"):
             "bootstrap_files": {p: sha(p) for p in sorted(glob.glob("/usr/local/bin/runs-on-bootstrap-*"))},
             "runner_listener_sha256": sha("/home/runner/bin/Runner.Listener"),
             "runner_version": subprocess.check_output(["/home/runner/bin/Runner.Listener", "--version"], text=True).strip()}
-    if platform == "ec2":
-        result["identity"] = metadata()
-    elif platform != "vm":
-        raise ValueError("guest platform must be ec2 or vm")
+    result.update(runner_uid=os.getuid(), process_limits_passed=True)
     return result
 
 
@@ -103,23 +96,8 @@ def main():
     parser.add_argument("--release", required=True)
     parser.add_argument("--recipe", required=True)
     parser.add_argument("--output")
-    parser.add_argument("--environment", action="store_true")
-    parser.add_argument("--platform", choices=("ec2", "vm"), default="ec2")
     args = parser.parse_args()
-    result = report(args.release, args.recipe, args.platform)
-    if args.environment:
-        image = json.loads(Path("/etc/ami-example.json").read_text())
-        for key, value in {"AMI_EXAMPLE_RECIPE_ID": args.recipe, "AMI_EXAMPLE_KERNEL_RELEASE": args.release,
-                           "XENOMAI_ROOT": image["xenomai"]["prefix"]}.items():
-            if os.environ.get(key) != value:
-                raise ValueError(f"image activation missing in later step: {key}")
-        if image["xenomai"]["prefix"] + "/bin" not in os.environ["PATH"].split(":"):
-            raise ValueError("image prefix not available in the later step's PATH")
-        if resource.getrlimit(resource.RLIMIT_MEMLOCK)[0] != resource.RLIM_INFINITY:
-            raise ValueError("runner process must inherit unlimited locked memory")
-        if resource.getrlimit(resource.RLIMIT_RTPRIO)[0] < 99:
-            raise ValueError("runner process must inherit real-time priority limit 99")
-        result["environment_passed"] = True
+    result = report(args.release, args.recipe)
     text = json.dumps(result, sort_keys=True, indent=2) + "\n"
     if args.output:
         Path(args.output).parent.mkdir(parents=True, exist_ok=True)

@@ -33,13 +33,13 @@ jobs:
         run: python3 -m unittest discover -s tests -v
       - name: Check shell syntax
         run: |
-          for script in common/*.sh xenomai-cobalt/*.sh; do
+          for script in build/common/*.sh build/xenomai-cobalt/*.sh validate/*.sh; do
             bash -n "$script"
           done
       - name: Check Packer configuration
         run: |
-          packer fmt -check xenomai-cobalt/image.pkr.hcl
-          packer validate -syntax-only xenomai-cobalt/image.pkr.hcl
+          packer fmt -check build/xenomai-cobalt/image.pkr.hcl
+          packer validate -syntax-only build/xenomai-cobalt/image.pkr.hcl
 
   runs-on:
     runs-on: ubuntu-24.04

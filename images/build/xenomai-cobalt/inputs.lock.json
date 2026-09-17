@@ -236,20 +236,19 @@
     "version": "24.04"
   },
   "recipe_files": [
-    "images/build.py",
-    "images/common/check-kernel-config.py",
-    "images/common/finalize-image.sh",
-    "images/common/guest-report.py",
-    "images/common/install-packages.py",
-    "images/common/install-runner.py",
-    "images/common/inventory.py",
-    "images/common/runner-image-env",
-    "images/common/write-image-manifest.py",
-    "images/vm.py",
-    "images/xenomai-cobalt/build-kernel.sh",
-    "images/xenomai-cobalt/image.pkr.hcl",
-    "images/xenomai-cobalt/kernel.config",
-    "images/xenomai-cobalt/provision.sh"
+    "images/build/__init__.py",
+    "images/build/__main__.py",
+    "images/build/image.py",
+    "images/build/common/check-kernel-config.py",
+    "images/build/common/finalize-image.sh",
+    "images/build/common/install-packages.py",
+    "images/build/common/install-runner.py",
+    "images/build/common/inventory.py",
+    "images/build/common/write-image-manifest.py",
+    "images/build/xenomai-cobalt/build-kernel.sh",
+    "images/build/xenomai-cobalt/image.pkr.hcl",
+    "images/build/xenomai-cobalt/kernel.config",
+    "images/build/xenomai-cobalt/provision.sh"
   ],
   "runner": {
     "bootstrap": {

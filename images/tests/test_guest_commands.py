@@ -1,133 +1,110 @@
-import contextlib
+from contextlib import ExitStack
+import gzip
 import hashlib
-import importlib.machinery
 import importlib.util
-import io
 import json
 import os
 from pathlib import Path
-import subprocess
-import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
-import zipfile
-
-ROOT = Path(__file__).resolve().parents[2]
 
 
-def module(name):
-    spec = importlib.util.spec_from_file_location(name.replace("-", "_"), ROOT / "images" / (name + ".py"))
-    result = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(result)
-    return result
+IMAGES = Path(__file__).resolve().parents[1]
+spec = importlib.util.spec_from_file_location("guest_report", IMAGES / "validate/guest-report.py")
+reporter = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(reporter)
 
 
-def image_environment_module():
-    loader = importlib.machinery.SourceFileLoader("runner_image_env", str(ROOT / "images/common/runner-image-env"))
-    spec = importlib.util.spec_from_loader(loader.name, loader)
-    result = importlib.util.module_from_spec(spec)
-    loader.exec_module(result)
-    return result
-
-
-class SourceInventory(unittest.TestCase):
-    def test_plain_ubuntu_inventory_records_absent_runner_without_executing_it(self):
-        spec = importlib.util.spec_from_file_location("source_inventory", ROOT / "images/common/inventory.py")
-        command = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(command)
-        with tempfile.TemporaryDirectory() as temporary:
-            directory = Path(temporary)
-            (directory / "etc").mkdir()
-            (directory / "etc/os-release").write_text('ID=ubuntu\nVERSION_ID="24.04"\n')
-            packages = "python3\t3.12.3\tamd64\tinstalled\n"
-            with patch.object(command, "Path", side_effect=lambda path: directory / str(path).lstrip("/")), \
-                    patch.object(command, "packages", return_value=packages), \
-                    patch.object(command.glob, "glob", return_value=[]), \
-                    patch.object(command.subprocess, "check_output") as execute:
-                captured = command.inventory()
-            execute.assert_not_called()
-            self.assertEqual(captured["os_version"], "24.04")
-            self.assertIsNone(captured["runner_version"])
-            self.assertIsNone(captured["runner_listener_sha256"])
-            self.assertEqual(captured["bootstrap_files"], {})
-            self.assertEqual(captured["packages_sha256"], hashlib.sha256(packages.encode()).hexdigest())
-
-
-class ImageEnvironment(unittest.TestCase):
+class GuestRuntime(unittest.TestCase):
     def setUp(self):
-        self.command = image_environment_module()
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.directory = Path(self.temporary.name)
+        config = b"CONFIG_IKCONFIG_PROC=y\nCONFIG_DOVETAIL=y\nCONFIG_XENOMAI=y\nCONFIG_XENO_OPT_VFILE=y\n"
+        self.xenomai = {"version": "3.3.3", "core": "cobalt", "prefix": "/usr/xenomai"}
+        manifest = {"kernel_release": "cobalt-kernel", "recipe_id": "recipe",
+                    "config_sha256": hashlib.sha256(config).hexdigest(), "xenomai": self.xenomai}
+        for name, data in (("etc/ami-example.json", json.dumps(manifest).encode()),
+                           ("proc/config.gz", gzip.compress(config)),
+                           ("proc/cmdline", b"console=ttyS0 xenomai.allowed_group=4242"),
+                           ("proc/xenomai/version", b"3.3.3"),
+                           ("etc/machine-id", b"fresh-machine"),
+                           ("home/runner/bin/Runner.Listener", b"runner-binary")):
+            path = self.directory / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+            path.chmod(0o644)
+        (self.directory / "sys/firmware/efi").mkdir(parents=True)
+        self.packages = "gcc-13\t13.3.0\tamd64\tinstalled\npython3\t3.12.3\tamd64\tinstalled\n"
+        self.commands = {
+            ("uname", "-r"): "cobalt-kernel\n",
+            ("/usr/xenomai/bin/xeno-config", "--core"): "cobalt\n",
+            ("/usr/xenomai/bin/xeno-config", "--version"): "3.3.3\n",
+            ("/usr/xenomai/sbin/corectl", "--status"): "running\n",
+            ("/home/runner/bin/Runner.Listener", "--version"): "2.337.0\n",
+            ("dpkg-query", "-W", "-f=${binary:Package}\t${Version}\t${Architecture}\t${db:Status-Status}\n"):
+                self.packages,
+        }
+        real_stat = Path.stat
+        real_sha = reporter.sha
 
-    def manifest(self, directory):
-        path = directory / "manifest.json"
-        path.write_text(json.dumps({"recipe_id": "a" * 64, "kernel_release": "6.12.90-cip24-xenomai-cobalt",
-                                    "xenomai": {"core": "cobalt", "prefix": "/usr/xenomai"}}))
-        return path
+        def root_owned(path, **kwargs):
+            parts = list(real_stat(path, **kwargs))
+            parts[4] = 0
+            return os.stat_result(parts)
 
-    def render(self, manifest, format):
-        output = io.StringIO()
-        with patch.object(sys, "argv", ["runner-image-env", "--manifest", str(manifest), "--format", format]), \
-                patch.object(Path, "stat", return_value=SimpleNamespace(st_uid=0, st_mode=0o100644)), \
-                patch.dict(os.environ, {"PATH": "/usr/bin:/bin"}, clear=True), contextlib.redirect_stdout(output):
-            self.command.main()
-        return output.getvalue()
+        stack = self.enterContext(ExitStack())
+        for mocked in (
+            patch.object(reporter, "Path", side_effect=lambda name: self.directory / str(name).lstrip("/")),
+            patch.object(Path, "stat", root_owned),
+            patch.object(reporter, "sha", side_effect=lambda name: real_sha(self.directory / str(name).lstrip("/"))),
+            patch.object(reporter.glob, "glob", return_value=[]),
+            patch.object(reporter.os, "getuid", return_value=1001),
+            patch.object(reporter.os, "geteuid", return_value=1001),
+            patch.object(reporter.os, "getgid", return_value=1001),
+            patch.object(reporter.os, "getgroups", return_value=[1001, 4242]),
+            patch.object(reporter.pwd, "getpwuid", return_value=SimpleNamespace(pw_name="runner")),
+            patch.object(reporter.grp, "getgrnam", return_value=SimpleNamespace(gr_gid=4242)),
+            patch.object(reporter.resource, "getrlimit", side_effect=lambda kind: (
+                reporter.resource.RLIM_INFINITY, reporter.resource.RLIM_INFINITY)
+                if kind == reporter.resource.RLIMIT_MEMLOCK else (99, 99)),
+            patch.object(reporter.subprocess, "check_output", side_effect=lambda args, **kwargs: self.commands[tuple(args)]),
+        ):
+            stack.enter_context(mocked)
 
-    def test_formats_expose_the_same_manifest_values_for_local_activation(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            manifest = self.manifest(Path(temporary))
-            structured = json.loads(self.render(manifest, "json"))
-            values = structured["env"]
-            self.assertEqual(values, {"AMI_EXAMPLE_RECIPE_ID": "a" * 64,
-                                      "AMI_EXAMPLE_KERNEL_RELEASE": "6.12.90-cip24-xenomai-cobalt",
-                                      "XENOMAI_ROOT": "/usr/xenomai"})
-            self.assertEqual(structured["path"], ["/usr/xenomai/bin"])
-            self.assertEqual(dict(line.split("=", 1) for line in self.render(manifest, "env").splitlines()), values)
-            activated = subprocess.check_output(
-                ["/bin/sh", "-c", self.render(manifest, "shell") + '\nexec /usr/bin/python3 -c "import json, os; print(json.dumps(dict(os.environ)))"'],
-                env={"PATH": "/usr/bin:/bin"}, text=True)
-            environment = json.loads(activated)
-            self.assertEqual({key: environment[key] for key in values}, values)
-            self.assertEqual(environment["PATH"], "/usr/xenomai/bin:/usr/bin:/bin")
+    def test_observes_running_cobalt_as_runner_with_inherited_limits(self):
+        result = reporter.report("cobalt-kernel", "recipe")
+        self.assertEqual(result["xenomai"], self.xenomai)
+        self.assertEqual(result["boot_mode"], "uefi")
+        self.assertEqual(result["runner_uid"], 1001)
+        self.assertTrue(result["process_limits_passed"])
+        self.assertEqual(result["runner_listener_sha256"], hashlib.sha256(b"runner-binary").hexdigest())
+        self.assertEqual(result["packages_sha256"], hashlib.sha256(self.packages.encode()).hexdigest())
+        self.assertNotIn("identity", result)
 
-    def test_manifest_ownership_and_permissions_remain_required(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            manifest = self.manifest(Path(temporary))
-            for owner, mode in ((1000, 0o100644), (0, 0o100664), (0, 0o100646)):
-                with self.subTest(owner=owner, mode=mode), \
-                        patch.object(Path, "stat", return_value=SimpleNamespace(st_uid=owner, st_mode=mode)), \
-                        self.assertRaisesRegex(ValueError, "root-owned"):
-                    self.command.environment(manifest)
+    def test_root_or_missing_process_limits_cannot_produce_passing_report(self):
+        with patch.object(reporter.os, "geteuid", return_value=0), self.assertRaisesRegex(ValueError, "UID 1001"):
+            reporter.report("cobalt-kernel", "recipe")
+        for kind, expected in ((reporter.resource.RLIMIT_MEMLOCK, "locked memory"),
+                               (reporter.resource.RLIMIT_RTPRIO, "priority limit")):
+            def limits(resource):
+                return (0, 0) if resource == kind else (reporter.resource.RLIM_INFINITY, reporter.resource.RLIM_INFINITY)
+
+            with self.subTest(kind=kind), patch.object(reporter.resource, "getrlimit", side_effect=limits), \
+                    self.assertRaisesRegex(ValueError, expected):
+                reporter.report("cobalt-kernel", "recipe")
+
+    def test_stopped_core_or_missing_nonroot_access_cannot_produce_passing_report(self):
+        self.commands[("/usr/xenomai/sbin/corectl", "--status")] = "stopped\n"
+        with self.assertRaisesRegex(ValueError, "not running"):
+            reporter.report("cobalt-kernel", "recipe")
+        self.commands[("/usr/xenomai/sbin/corectl", "--status")] = "running\n"
+        with patch.object(reporter.os, "getgroups", return_value=[1001]), \
+                self.assertRaisesRegex(ValueError, "group membership"):
+            reporter.report("cobalt-kernel", "recipe")
 
 
-class StandaloneToolInstaller(unittest.TestCase):
-    def archive(self, directory, name, binary, content):
-        archive = directory / (name + ".zip")
-        member = zipfile.ZipInfo(binary)
-        member.external_attr = 0o755 << 16
-        with zipfile.ZipFile(archive, "w") as output:
-            output.writestr(member, content)
-        return {"url": archive.as_uri(), "sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
-                "version": "1.0", "binary": binary}
-
-    def test_installs_offline_archives_with_directory_owned_plugin_path(self):
-        installer = module("install-tools")
-        with tempfile.TemporaryDirectory() as temporary:
-            directory = Path(temporary)
-            destination = directory / "tools with spaces"
-            pins = {}
-            for name in ("packer", "qemu_plugin"):
-                binary = "packer-plugin-qemu_v1.0" if name == "qemu_plugin" else name
-                script = "#!/bin/sh\nexit 0\n"
-                if name == "packer":
-                    script = '#!/bin/sh\nmkdir -p "$PACKER_PLUGIN_PATH"\nprintf "%s\\n" "$*" > "$PACKER_PLUGIN_PATH/installed"\n'
-                pins[name] = self.archive(directory, name, binary, script)
-            with patch.object(sys, "argv", ["install-tools.py", "--group", "build", "--directory", str(destination)]), \
-                    patch.object(installer, "read_json", return_value={"tools": pins}), \
-                    patch.dict(os.environ, {"PATH": "/usr/bin:/bin", "PACKER_PLUGIN_PATH": str(directory / "unrelated")}, clear=True), \
-                    contextlib.redirect_stdout(io.StringIO()):
-                installer.main()
-                self.assertEqual(os.environ["PACKER_PLUGIN_PATH"], str(directory / "unrelated"))
-            self.assertTrue(os.access(destination / "bin/packer", os.X_OK))
-            self.assertIn("github.com/hashicorp/qemu", (destination / "plugins" / "installed").read_text())
-            self.assertFalse((directory / "unrelated").exists())
+if __name__ == "__main__":
+    unittest.main()

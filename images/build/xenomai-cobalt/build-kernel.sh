@@ -8,7 +8,7 @@ source_dir=/mnt/ami-example-build/linux
 xenomai_dir=/mnt/ami-example-build/xenomai
 userspace_build=/mnt/ami-example-build/xenomai-build
 output=/var/lib/ami-example
-lock="$recipe/images/xenomai-cobalt/inputs.lock.json"
+lock="$recipe/images/build/xenomai-cobalt/inputs.lock.json"
 mkdir -p "$source_dir" "$xenomai_dir" "$userspace_build" "$output"
 eval "$(python3 - "$lock" <<'PY'
 import json, shlex, sys
@@ -43,10 +43,10 @@ kernel_make=(make CC=gcc-13 HOSTCC=gcc-13 LD=ld.bfd HOSTLD=ld.bfd RUSTC=/bin/fal
 unset CCACHE_DIR KBUILD_OUTPUT LOCALVERSION
 export KCFLAGS="-ffile-prefix-map=$source_dir=/usr/src/linux -fdebug-prefix-map=$source_dir=/usr/src/linux -ffile-prefix-map=$xenomai_dir=/usr/src/xenomai -fdebug-prefix-map=$xenomai_dir=/usr/src/xenomai"
 export KCPPFLAGS="$KCFLAGS"
-cp "$recipe/images/xenomai-cobalt/kernel.config" .config
+cp "$recipe/images/build/xenomai-cobalt/kernel.config" .config
 "${kernel_make[@]}" olddefconfig
 "${kernel_make[@]}" syncconfig
-python3 "$recipe/images/common/check-kernel-config.py" "$recipe/images/xenomai-cobalt/kernel.config" .config
+python3 "$recipe/images/build/common/check-kernel-config.py" "$recipe/images/build/xenomai-cobalt/kernel.config" .config
 release=$("${kernel_make[@]}" -s kernelrelease)
 [[ "$release" == "$KERNEL_RELEASE" ]]
 printf '%s\n' "$release" > "$output/kernel-release"

@@ -10,17 +10,26 @@ import re
 import shutil
 import signal
 import subprocess
-import sys
 import tempfile
 from urllib.parse import urlsplit
 
 from contracts import sha256, write_yaml
-from vm import firmware_paths
 
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 IMAGES = ROOT / "images"
-LOCK = IMAGES / "xenomai-cobalt/inputs.lock.json"
+LOCK = IMAGES / "build/xenomai-cobalt/inputs.lock.json"
+
+
+def firmware_paths() -> tuple[Path, Path]:
+    """Use a matching OVMF pair without enforced Secure Boot."""
+    directory = Path("/usr/share/OVMF")
+    for suffix in ("_4M", ""):
+        code = directory / f"OVMF_CODE{suffix}.fd"
+        variables = directory / f"OVMF_VARS{suffix}.fd"
+        if code.is_file() and variables.is_file():
+            return code, variables
+    raise ValueError("install ovmf: matching OVMF_CODE_4M.fd and OVMF_VARS_4M.fd are required")
 
 
 @dataclass(frozen=True)
@@ -64,7 +73,7 @@ def stage_recipe(lock: dict, destination: Path, root: Path = ROOT) -> tuple[str,
     recipe_id = hashlib.sha256(json.dumps(
         {"lock": lock, "files": hashes}, sort_keys=True, separators=(",", ":"),
     ).encode()).hexdigest()
-    lock_path = destination / "images/xenomai-cobalt/inputs.lock.json"
+    lock_path = destination / "images/build/xenomai-cobalt/inputs.lock.json"
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     lock_path.write_text(json.dumps(lock, sort_keys=True, indent=2) + "\n")
     (destination / "recipe.json").write_text(json.dumps({"recipe_id": recipe_id}) + "\n")
@@ -191,22 +200,10 @@ def main(argv=None):
         }
         variables_path = work / "packer-vars.json"
         variables_path.write_text(json.dumps(variables, indent=2) + "\n")
-        template = recipe / "images/xenomai-cobalt/image.pkr.hcl"
+        template = recipe / "images/build/xenomai-cobalt/image.pkr.hcl"
         subprocess.run(["packer", "validate", f"-var-file={variables_path}", str(template)], env=environment, check=True)
         print(f"Building Cobalt disk; progress: {output / 'packer.log'}", flush=True)
         run_packer(["packer", "build", "-color=false", "-on-error=cleanup", f"-var-file={variables_path}", str(template)],
                    environment, output / "packer.log")
         export_build(output, packer_output, lock, recipe_id, hashes, environment)
     print(output / "build.yaml")
-
-
-if __name__ == "__main__":
-    def interrupt(signum, frame):
-        raise KeyboardInterrupt
-
-    signal.signal(signal.SIGTERM, interrupt)
-    try:
-        main()
-    except KeyboardInterrupt:
-        print("Build interrupted; temporary VM and build files were cleaned up.", file=sys.stderr)
-        raise SystemExit(130)

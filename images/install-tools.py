@@ -74,10 +74,10 @@ def main():
     args = parser.parse_args()
     destination = Path(args.directory).resolve()
     if args.group == "build":
-        pins = read_json(ROOT / "xenomai-cobalt/inputs.lock.json")["tools"]
+        pins = read_json(ROOT / "build/xenomai-cobalt/inputs.lock.json")["tools"]
         names = ("packer", "qemu_plugin")
     else:
-        pins = read_json(ROOT / "tools.lock.json")["tools"]
+        pins = read_json(ROOT / "publish/tools.lock.json")["tools"]
         names = ("aws_cli",)
     for name in names:
         install(name, pins[name], destination)

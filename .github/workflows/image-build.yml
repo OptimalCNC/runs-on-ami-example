@@ -1,0 +1,182 @@
+name: Build, validate, and publish image
+
+on:
+  pull_request:
+    paths:
+      - images/**
+      - execution/cobalt/**
+      - .github/workflows/image-build.yml
+  schedule:
+    - cron: '0 0 * * 1'
+  workflow_dispatch:
+    inputs:
+      publish_image:
+        description: Publish the validated disk as an AMI
+        type: boolean
+        default: false
+      environment:
+        description: GitHub environment authorized by the publishing target
+        type: string
+        default: production
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    shell: bash
+    working-directory: images
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    outputs:
+      artifact_name: image-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            qemu-system-x86 qemu-utils ovmf cloud-image-utils xorriso openssh-client
+          python3 -m pip install -r requirements.txt
+          python3 install-tools.py
+          echo "$PWD/.local/tools/bin" >> "$GITHUB_PATH"
+          echo "PACKER_PLUGIN_PATH=$PWD/.local/tools/plugins" >> "$GITHUB_ENV"
+      - name: Enable KVM access
+        run: sudo chmod 0666 /dev/kvm
+      - name: Build disk
+        run: python3 -m build --output .local/build --cpus 4 --memory-mib 8192
+      - name: Upload build logs and manifests
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-build-reports-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            images/.local/build/build.yaml
+            images/.local/build/image-manifest.json
+            images/.local/build/parent-inventory.json
+            images/.local/build/packer.log
+            images/.local/build/serial.log
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Bundle the built disk
+        run: |
+          tar --sparse --gzip --create --file .local/image.tar.gz \
+            --directory .local/build build.yaml disk.raw image-manifest.json
+      - name: Upload the built disk for validation and publication
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-${{ github.run_id }}-${{ github.run_attempt }}
+          path: images/.local/image.tar.gz
+          include-hidden-files: true
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 1
+
+  validate:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install VM validation tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            qemu-system-x86 qemu-utils ovmf cloud-image-utils openssh-client
+          python3 -m pip install -r requirements.txt
+      - name: Enable KVM access
+        run: sudo chmod 0666 /dev/kvm
+      - name: Download the built disk
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.build.outputs.artifact_name }}
+          path: images/.local
+      - name: Extract the built disk
+        run: |
+          mkdir -p .local/build
+          tar --extract --gzip --sparse --file .local/image.tar.gz --directory .local/build
+          rm .local/image.tar.gz
+      - name: Validate the image in a fresh VM
+        run: |
+          python3 -m validate --build .local/build/build.yaml \
+            --output .local/validation --cpus 2 --memory-mib 2048 --timeout-seconds 600
+      - name: Upload VM validation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-validation-${{ github.run_id }}-${{ github.run_attempt }}
+          path: images/.local/validation/
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 7
+
+  publish:
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.publish_image)
+    needs: [build, validate]
+    runs-on: ubuntu-24.04
+    environment: ${{ inputs.environment || 'production' }}
+    permissions:
+      contents: read
+      id-token: write
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install publishing tools
+        run: |
+          python3 -m pip install -r requirements.txt
+          python3 install-tools.py --group publish
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends build-essential cmake pkg-config
+          rustup toolchain install 1.94.1 --profile minimal
+          cargo +1.94.1 install --locked coldsnap --version 0.12.0 --root .local/tools
+          echo "$PWD/.local/tools/bin" >> "$GITHUB_PATH"
+      - name: Download the validated disk
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.build.outputs.artifact_name }}
+          path: images/.local
+      - name: Extract the validated disk
+        run: |
+          mkdir -p .local/build
+          tar --extract --gzip --sparse --file .local/image.tar.gz --directory .local/build
+          rm .local/image.tar.gz
+      - name: Read the installation publishing target
+        id: target
+        env:
+          PUBLISHING_TARGET: ${{ vars.PUBLISHING_TARGET }}
+          PUBLISHING_ENVIRONMENT: ${{ inputs.environment || 'production' }}
+        run: python3 -m publish.github --target .local/publishing.yaml
+      - name: Authenticate as the installation publisher
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ steps.target.outputs.role_arn }}
+          aws-region: ${{ steps.target.outputs.region }}
+          role-session-name: image-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Publish the validated image
+        timeout-minutes: 85
+        run: |
+          python3 -m publish --build .local/build/build.yaml \
+            --target .local/publishing.yaml --output .local/publication
+      - name: Upload publication records
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-publication-${{ github.run_id }}-${{ github.run_attempt }}
+          path: images/.local/publication/
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 90

@@ -1,4 +1,4 @@
-import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -7,7 +7,9 @@ import shutil
 import signal
 import subprocess
 import sys
+import tarfile
 import tempfile
+import time
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -15,7 +17,7 @@ from unittest.mock import patch
 
 IMAGES = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(IMAGES))
-import validate
+from validate import image as validate
 from contracts import sha256
 
 
@@ -32,7 +34,7 @@ class Evidence(unittest.TestCase):
                                  "bootstrap_files": {"/usr/local/bin/runs-on-bootstrap-v0.1.12": "e" * 64}},
         }
         self.image = SimpleNamespace(manifest=manifest, compatibility=SimpleNamespace(boot_mode="uefi"))
-        self.guest = {**manifest, **manifest["runner_inventory"], "boot_mode": "uefi", "environment_passed": True}
+        self.guest = {**manifest, **manifest["runner_inventory"], "boot_mode": "uefi", "runner_uid": 1001, "process_limits_passed": True}
         self.write_guest()
         (self.output / "ctest.xml").write_text('<testsuite><testcase name="cobalt" status="run"/></testsuite>')
 
@@ -46,7 +48,7 @@ class Evidence(unittest.TestCase):
         for key, wrong in (("kernel_release", "stock-kernel"), ("recipe_id", "f" * 64),
                            ("config_sha256", "f" * 64), ("packages_sha256", "f" * 64),
                            ("runner_listener_sha256", "f" * 64), ("boot_mode", "legacy-bios"),
-                           ("environment_passed", False)):
+                           ("runner_uid", 0), ("process_limits_passed", False)):
             with self.subTest(key=key):
                 correct = self.guest[key]
                 self.guest[key] = wrong
@@ -76,7 +78,7 @@ class Cleanup(unittest.TestCase):
         script = '''
 import json, signal, sys, tempfile
 from pathlib import Path
-import validate
+from validate import image as validate
 
 def work():
     with tempfile.TemporaryDirectory(prefix="cobalt-signal-test-") as directory:
@@ -166,53 +168,24 @@ raise SystemExit(validate.cli())
             self.assertFalse(result["disk_unchanged"])
 
 
-class MetadataBoundary(unittest.TestCase):
-    def test_report_platform_controls_metadata_without_changing_common_observations(self):
-        import gzip
-        import hashlib
-        import os
-        spec = importlib.util.spec_from_file_location("guest_report", IMAGES / "common/guest-report.py")
-        reporter = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(reporter)
+class GuestTransfer(unittest.TestCase):
+    def test_upload_contains_the_application_and_validation_owned_commands(self):
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
-            config = b"CONFIG_IKCONFIG_PROC=y\n"
-            manifest = {"kernel_release": "kernel", "recipe_id": "recipe", "config_sha256": hashlib.sha256(config).hexdigest()}
-            for name, data in (("etc/ami-example.json", json.dumps(manifest).encode()),
-                               ("proc/config.gz", gzip.compress(config)), ("proc/cmdline", b"console=ttyS0"),
-                               ("etc/machine-id", b"fresh-machine")):
-                path = directory / name
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_bytes(data)
-                path.chmod(0o644)
-            real_stat = Path.stat
+            image = SimpleNamespace(manifest={"kernel_release": "cobalt"}, recipe_id="a" * 64)
+            with patch.object(validate.subprocess, "run", return_value=SimpleNamespace(
+                    returncode=0, stdout=b"", stderr=b"")):
+                validate.run_guest(image, ["ssh"], directory, directory,
+                                   time.monotonic() + 10, io.BytesIO())
+            with tarfile.open(directory / "test.tar") as archive:
+                self.assertEqual(set(archive.getnames()), {
+                    "cobalt/CMakeLists.txt", "cobalt/main.c", "validate-guest.sh", "guest-report.py",
+                })
+                command = archive.extractfile("validate-guest.sh").read().decode()
+                self.assertIn('python3 "$directory/guest-report.py"', command)
+                self.assertNotIn("/usr/local/bin/ami-example-guest-report", command)
+                self.assertNotIn("runner-image-env", command)
 
-            def root_owned(path, **kwargs):
-                parts = list(real_stat(path, **kwargs))
-                parts[4] = 0
-                return os.stat_result(parts)
-
-            def command(arguments, **_):
-                if arguments == ["uname", "-r"]:
-                    return "kernel\n"
-                if arguments[0] == "dpkg-query":
-                    return "python3\t3.12\tamd64\tinstalled\n"
-                return "2.337.0\n"
-
-            with patch.object(reporter, "Path", side_effect=lambda value: directory / str(value).lstrip("/")), \
-                    patch.object(Path, "stat", root_owned), \
-                    patch.object(reporter, "cobalt_identity", return_value={"core": "cobalt"}), \
-                    patch.object(reporter, "sha", return_value="a" * 64), \
-                    patch.object(reporter.glob, "glob", return_value=[]), \
-                    patch.object(reporter.subprocess, "check_output", side_effect=command), \
-                    patch.object(reporter, "metadata", return_value={"instanceId": "i-test"}) as metadata:
-                vm = reporter.report("kernel", "recipe", "vm")
-                metadata.assert_not_called()
-                ec2 = reporter.report("kernel", "recipe")
-                metadata.assert_called_once_with()
-            self.assertNotIn("identity", vm)
-            self.assertEqual(ec2.pop("identity"), {"instanceId": "i-test"})
-            self.assertEqual(vm, ec2)
 
 
 if __name__ == "__main__":

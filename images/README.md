@@ -1,13 +1,16 @@
 # Build, validate, and publish a Cobalt image
 
 This module builds a bootable Ubuntu 24.04 disk containing the pinned Linux,
-Dovetail, and Xenomai 3 Cobalt payload. Build and Validate run locally without
-AWS credentials. Publish uploads the completed artifact to the destination
-exported by [RunsOn installation](../runs-on/README.md), producing an AMI for
-later execution through RunsOn.
+Dovetail, and Xenomai 3 Cobalt payload, validates it in a fresh VM, then publishes
+it as an EC2 AMI. All three commands run on a normal Linux host. Building and VM
+validation need no AWS credentials; publishing uploads the completed disk.
 
-Each operation has its own command and YAML result. Validation uses the built
-disk without changing it; publication uploads that same disk without rebuilding.
+- `build/` owns the Packer recipe, provisioning scripts, and disk construction.
+- `validate/` owns the QEMU boot, guest checks, and Cobalt runtime evidence.
+- `publish/` owns the AWS upload, AMI registration, and publication cleanup.
+
+The commands share the disk contract in `contracts.py` and the tool installer.
+
 Start from the repository checkout:
 
 ```sh
@@ -16,8 +19,11 @@ cd images
 
 ## Prerequisites
 
-Use an x86-64 Linux host with Python 3.12, hardware virtualization, and read/write
-access to `/dev/kvm`. On Ubuntu 24.04, install the VM tools and Python environment:
+Use an x86-64 Linux host with Python 3.12. The host needs neither a Cobalt kernel
+nor a RunsOn installation. Building uses KVM by default and requires read/write
+access to `/dev/kvm`; `--accelerator tcg` selects slower software emulation when
+hardware virtualization is unavailable. On Ubuntu 24.04, install the build tools
+and Python environment:
 
 ```sh
 sudo apt-get update
@@ -33,7 +39,7 @@ export PACKER_PLUGIN_PATH="$PWD/.local/tools/plugins"
 ```
 
 The tool installer downloads checksum-verified Packer and its QEMU plugin using
-the versions in [inputs.lock.json](xenomai-cobalt/inputs.lock.json). Build also
+the versions in [inputs.lock.json](build/xenomai-cobalt/inputs.lock.json). Build also
 downloads the pinned Ubuntu cloud disk and public kernel, userspace, and package
 inputs. It creates no AWS resources.
 
@@ -45,23 +51,22 @@ configuration without building a disk:
   set -e
   python3 validate-inputs.py
   python3 -m unittest discover -s tests -v
-  for script in common/*.sh xenomai-cobalt/*.sh; do
+  for script in build/common/*.sh build/xenomai-cobalt/*.sh validate/*.sh; do
     bash -n "$script"
   done
-  packer fmt -check xenomai-cobalt/image.pkr.hcl
-  packer validate -syntax-only xenomai-cobalt/image.pkr.hcl
+  packer fmt -check build/xenomai-cobalt/image.pkr.hcl
+  packer validate -syntax-only build/xenomai-cobalt/image.pkr.hcl
 )
 ```
 
 The default build VM uses 4 CPUs and 8 GiB of memory; leave memory for the host as
 well. Its root disk is 16 GiB, with a separate disposable 16 GiB build disk.
-Allow storage for those sparse disks, downloaded inputs, logs, and validation's
-temporary overlay. Actual host disk consumption depends on the build's written
-data. The default validation VM uses 2 CPUs and 2 GiB of memory.
+Allow storage for those sparse disks, downloaded inputs, and build logs. Actual
+host disk consumption depends on the build's written data.
 
 Publishing additionally needs AWS CLI v2, an authorized AWS login or GitHub OIDC
 session, and [AWS Labs coldsnap](https://github.com/awslabs/coldsnap). The tool
-installer's `publish` group installs AWS CLI pinned in [tools.lock.json](tools.lock.json).
+installer's `publish` group installs AWS CLI pinned in [tools.lock.json](publish/tools.lock.json).
 Install Rust 1.94.1 or newer with Cargo, then build coldsnap into the same local
 tool directory.
 On Ubuntu, its native dependencies need a C/C++ toolchain and CMake:
@@ -74,12 +79,12 @@ cargo install --locked coldsnap --version 0.12.0 --root .local/tools
 
 Make `aws` and `coldsnap` available on `PATH` before publishing.
 
-## Build
+## Build and validate
 
 Create a finalized raw disk and its manifest in a new output directory:
 
 ```sh
-python3 build.py --output .local/build --cpus 4 --memory-mib 8192
+python3 -m build --output .local/build --cpus 4 --memory-mib 8192
 ```
 
 The [Packer QEMU builder](https://developer.hashicorp.com/packer/integrations/hashicorp/qemu/latest/components/builder/qemu)
@@ -93,58 +98,32 @@ manifest records the disk digest, recipe identity, pinned source, and boot/runti
 requirements. Keep it with `image-manifest.json` and the disk; paths in the YAML
 resolve relative to the manifest. Use a new output directory for another build.
 
-Both Build and Validate default to KVM and require access to `/dev/kvm`.
-`--accelerator tcg` explicitly selects slow software emulation when hardware
-virtualization is unavailable. There is no silent fallback from KVM to TCG.
-
-## Validate with QEMU/KVM
-
-Boot the completed image and run the functional Cobalt application test:
+Boot the completed image in a fresh VM and run the Cobalt application as the
+image's `runner` user:
 
 ```sh
-python3 validate.py \
-  --build .local/build/build.yaml \
-  --output .local/validation
+python3 -m validate --build .local/build/build.yaml \
+  --output .local/validation --timeout-seconds 600
 ```
 
-Validation boots the complete disk through its UEFI firmware and bootloader,
-using a disposable QEMU overlay and temporary SSH access. It checks the running
-kernel and baked image identity, then builds and runs the
-[Cobalt application](../execution/cobalt). The application starts an Alchemy task
-and verifies Cobalt primary-mode execution. Validation also verifies that the
-input disk's digest is unchanged.
+Validation uses a disposable QCOW2 overlay and verifies that the source disk is
+unchanged. It checks the booted kernel, baked payload, runner permissions, and
+one executed, passing Cobalt application test. Guest scripts and the example
+application are supplied for this VM run. Logs and `validation.yaml` are written
+to `.local/validation`; validation needs the same QEMU, OVMF, cloud-init seed,
+and SSH host tools used by the build.
 
-The default deadline is 300 seconds. Use `--timeout-seconds`, `--cpus`, or
-`--memory-mib` to select appropriate guest limits; software emulation may need
-more time. Results and serial, QEMU, SSH, and guest evidence are written to the
-selected empty output directory. `validation.yaml` identifies the exact disk
-and reports `status: passed` only after the checks succeed.
+The [image workflow](../.github/workflows/image-build.yml) runs separate `build`
+and `validate` jobs on GitHub-hosted `ubuntu-24.04` for relevant pull requests and
+manual dispatches. The build job uploads a compressed sparse disk bundle; the
+validation job downloads it and boots the VM on its own runner. The `publish`
+job runs only after validation succeeds and manual dispatch requests it.
 
-This establishes boot and functional Cobalt execution on the selected VM.
-To build and test the application on a RunsOn runner, use the
-[execution workflow](../execution/README.md).
-Functional validation does not measure real-time latency.
-
-The [Build and validate image workflow](../.github/workflows/image-build-validate.yml)
-runs the same commands on standard GitHub-hosted `ubuntu-24.04` for relevant
-pull requests and manual dispatches. It checks the KVM API before starting a
-4-CPU, 8 GiB build VM and a 2-CPU, 2 GiB validation VM. The host also needs room
-for its own processes, both build disks, downloaded inputs, and the validation
-overlay. Review the retained host resource logs, build logs, and validation
-report to assess resource use and results for each run. Community projects such as
-[mkosi](https://github.com/systemd/mkosi/blob/main/.github/workflows/ci.yml) use
-GitHub-hosted Linux for complete-disk VM boot tests.
-
-For a manual run that retains a compressed disk artifact:
-
-```sh
-gh workflow run image-build-validate.yml -f retain_image=true
-```
-
-The workflow retains reports for 7 days and, when requested on a successful
-manual run, the compressed disk bundle for 1 day. It has no publishing step and
-needs no AWS credentials. Download and extract the retained bundle to obtain
-`build.yaml`, `disk.raw`, and `image-manifest.json` for later publication.
+Every successful build retains its disk bundle for 1 day so later jobs can
+consume it. This replaces the previous `retain_image` option. Build logs,
+manifests, and VM validation evidence are retained for 7 days. Download and
+extract the disk bundle to obtain `build.yaml`, `disk.raw`, and
+`image-manifest.json`. Build and validation jobs need no AWS credentials.
 
 ## Publish to the installation's target
 
@@ -156,7 +135,7 @@ describes local role profiles and GitHub OIDC authentication.
 Publish the selected built artifact using an existing authorized AWS profile:
 
 ```sh
-python3 publish.py \
+python3 -m publish \
   --build .local/build/build.yaml \
   --target ../runs-on/.local/contracts/publishing.yaml \
   --output .local/publication \
@@ -170,10 +149,26 @@ contract's protected environment, then omit `--profile`. Use the exact subject
 from the contract, including immutable repository/account identifiers where
 present; Build and Validate do not need that publishing authority.
 
+To publish through `image-build.yml`, set the authorized GitHub environment's
+`PUBLISHING_TARGET` variable to the complete exported contract, then dispatch
+with publication enabled. For an environment named `production`:
+
+```sh
+gh variable set PUBLISHING_TARGET --env production \
+  < ../runs-on/.local/contracts/publishing.yaml
+gh workflow run image-build.yml -f publish_image=true -f environment=production
+```
+
+The publication job reads its role, account, and region from that contract,
+checks that it authorizes the repository and environment, and authenticates
+through GitHub OIDC. It downloads the same disk bundle used by validation.
+Without `publish_image=true`, manual dispatch runs only build and validation.
+Publication records are retained as workflow artifacts for 90 days; keep a copy
+with the target contract for the lifetime of the AWS resources.
+
 Publication uploads the raw disk through EBS direct APIs with the installation's
 encryption key, waits for its snapshot, registers a UEFI x86-64 AMI with ENA
-support, and checks the resulting identity. It does not run Build or Validate;
-choose the artifact whose validation evidence you accept. Successful publication
+support, and checks the resulting identity. Successful publication
 writes `published-image.yaml` with `status: available`, the AMI and snapshot IDs,
 source disk digest, baked-manifest digest (`artifact.manifest_sha256`), target
 identity, and compatibility requirements. Use the AMI ID with the
@@ -196,19 +191,19 @@ Keep operation results with their corresponding artifacts and publishing target:
 | --- | --- |
 | `build/disk.raw`, `build/build.yaml` | Final disk and its digest, recipe, and compatibility contract |
 | `build/image-manifest.json`, `build/parent-inventory.json`, `build/packer.log` | Payload identity, source inventory, and build evidence |
-| `validation/validation.yaml` and neighboring logs | VM result tied to the disk digest, with boot and Cobalt evidence |
+| `validation/validation.yaml`, `validation/guest-report.json`, `validation/ctest.xml`, `validation/*.log` | VM acceptance result, runtime identity, and test evidence tied to the built disk |
 | `publication/published-image.yaml` | Available AMI and backing snapshot tied to the built artifact |
 | `publication/publication-state.yaml`, `publication/upload.log` | Publication progress and recovery information |
 
 `.local/` and `.venv/` are Git-ignored. Once their evidence or artifacts are no
-longer needed, local build/validation outputs, tool downloads, and caches can be
+longer needed, local build outputs, tool downloads, and caches can be
 removed independently of AWS resources. Retain publication records and the
 matching target contract while their AMIs or snapshots exist.
 
 Delete a published image and its backing snapshot using its record:
 
 ```sh
-python3 publish.py \
+python3 -m publish \
   --cleanup .local/publication/published-image.yaml \
   --target ../runs-on/.local/contracts/publishing.yaml \
   --profile your-authorized-login
@@ -224,7 +219,7 @@ clean up its created resources. If the record reports `cleanup-needed`, recover
 with the same cleanup command using that state file instead:
 
 ```sh
-python3 publish.py \
+python3 -m publish \
   --cleanup .local/publication/publication-state.yaml \
   --target ../runs-on/.local/contracts/publishing.yaml \
   --profile your-authorized-login

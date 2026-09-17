@@ -3,7 +3,7 @@ set -euo pipefail
 # Finalize the Ubuntu 24.04 image after installing its runner and Cobalt payload.
 recipe=/opt/ami-example-recipe
 [[ "$EUID" -eq 0 && -f "$recipe/recipe.json" && -f /etc/ami-example.json ]]
-python3 "$recipe/images/common/inventory.py" > /tmp/ami-example-final-inventory.json
+python3 "$recipe/images/build/common/inventory.py" > /tmp/ami-example-final-inventory.json
 python3 - <<'PY'
 import json
 from pathlib import Path

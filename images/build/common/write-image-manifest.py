@@ -8,7 +8,7 @@ from inventory import inventory, packages, sha
 
 recipe = Path("/opt/ami-example-recipe")
 identity = json.loads((recipe / "recipe.json").read_text())
-locked_xenomai = json.loads((recipe / "images/xenomai-cobalt/inputs.lock.json").read_text())["xenomai"]
+locked_xenomai = json.loads((recipe / "images/build/xenomai-cobalt/inputs.lock.json").read_text())["xenomai"]
 xenomai = {key: locked_xenomai[key] for key in ("version", "core", "prefix")}
 if xenomai["core"] != "cobalt" or xenomai["prefix"] != "/usr/xenomai":
     raise ValueError("image recipe must install Xenomai Cobalt at /usr/xenomai")
@@ -32,8 +32,7 @@ payload = {str(path): sha(path) for path in sorted(Path(f"/lib/modules/{release}
 payload[f"/boot/vmlinuz-{release}"] = sha(f"/boot/vmlinuz-{release}")
 payload[f"/boot/System.map-{release}"] = sha(f"/boot/System.map-{release}")
 normalized_paths = ["/etc/default/grub.d/99-ami-example.cfg", "/etc/apt/sources.list.d/ami-example.sources",
-                    "/usr/local/bin/runner-image-env",
-                    "/usr/local/bin/ami-example-guest-report", "/etc/fstab", "/boot/grub/grub.cfg",
+                    "/etc/fstab", "/boot/grub/grub.cfg",
                     "/etc/security/limits.d/99-xenomai.conf", "/etc/systemd/system.conf.d/99-xenomai.conf",
                     "/etc/ld.so.conf.d/xenomai.conf", "/etc/udev/rules.d/99-xenomai.rules"]
 image = {"schema_version": 1, "recipe_id": identity["recipe_id"], "kernel_release": release,

@@ -26,9 +26,9 @@ def file_sha(path):
 
 
 def static_checks(root=ROOT):
-    lock = json.loads((root / "images/xenomai-cobalt/inputs.lock.json").read_text())
+    lock = json.loads((root / "images/build/xenomai-cobalt/inputs.lock.json").read_text())
     require(lock["schema_version"] == 1, "unsupported input-lock version")
-    publishing_tools = json.loads((root / "images/tools.lock.json").read_text())
+    publishing_tools = json.loads((root / "images/publish/tools.lock.json").read_text())
     require(publishing_tools["schema_version"] == 1, "unsupported publishing-tool lock version")
     match(lock["kernel"]["sha256"], SHA256, "Linux archive hash")
     match(lock["kernel"]["version"], r"\d+\.\d+\.\d+", "Linux version")
@@ -47,7 +47,7 @@ def static_checks(root=ROOT):
     require(lock["xenomai"]["core"] == "cobalt", "image requires the Cobalt core")
     require(lock["xenomai"]["prefix"] == "/usr/xenomai", "Xenomai installation prefix differs")
     require(lock["xenomai"]["allowed_group_gid"] == 4242, "Cobalt access group differs")
-    require(file_sha(root / "images/xenomai-cobalt/kernel.config") == lock["kernel"]["config_sha256"], "kernel config hash differs")
+    require(file_sha(root / "images/build/xenomai-cobalt/kernel.config") == lock["kernel"]["config_sha256"], "kernel config hash differs")
     require(re.fullmatch(r"https://snapshot\.ubuntu\.com/ubuntu/\d{8}T\d{6}Z/", lock["os"]["snapshot_url"]) is not None,
             "package snapshot must be date-addressed")
     for name, tool in {**lock["tools"], **publishing_tools["tools"]}.items():
@@ -65,7 +65,7 @@ def static_checks(root=ROOT):
                 f"runner download must select its locked release: {name}")
     for name in lock["recipe_files"]:
         require((root / name).is_file(), f"recipe file missing: {name}")
-    config = (root / "images/xenomai-cobalt/kernel.config").read_text()
+    config = (root / "images/build/xenomai-cobalt/kernel.config").read_text()
     for value in ("CONFIG_XENOMAI=y", "CONFIG_DOVETAIL=y", "CONFIG_IRQ_PIPELINE=y", "CONFIG_XENO_OPT_VFILE=y",
                   f'CONFIG_XENO_VERSION_STRING="{lock["xenomai"]["version"]}"', "CONFIG_RUSTC_VERSION=0",
                   "CONFIG_IKCONFIG=y", "CONFIG_IKCONFIG_PROC=y", "CONFIG_ENA_ETHERNET=y", "CONFIG_BLK_DEV_NVME=y",
