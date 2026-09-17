@@ -1,6 +1,6 @@
 locals {
   github_publishing        = length(var.publisher_github_repositories) > 0
-  github_oidc_provider_arn = local.github_publishing ? var.existing_github_oidc_provider_arn : null
+  github_oidc_provider_arn = local.github_publishing ? "arn:aws:iam::${var.account_id}:oidc-provider/token.actions.githubusercontent.com" : null
   github_publishers = [for publisher in var.publisher_github_repositories : {
     repository  = publisher.repository
     environment = publisher.environment

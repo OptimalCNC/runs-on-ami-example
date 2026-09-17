@@ -27,52 +27,14 @@ locals {
       runner_max_runtime_minutes = 60
     }
   }
-
-  publishing_contract = {
-    schema_version     = 3
-    kind               = "ami-publishing-target"
-    name               = var.name
-    account_id         = var.account_id
-    region             = var.region
-    publisher_role_arn = aws_iam_role.publisher.arn
-    authentication = {
-      local = {
-        method         = "sts-assume-role"
-        principal_arns = var.publisher_principal_arns
-      }
-      github = local.github_publishing ? {
-        method       = "github-oidc"
-        provider_arn = local.github_oidc_provider_arn
-        audience     = "sts.amazonaws.com"
-        repositories = local.github_publishers
-      } : null
-    }
-    destination = {
-      type          = "ec2-ami"
-      upload_method = "ebs-direct-api"
-      disk_format   = "raw"
-      encrypted     = false
-      required_tags = local.publication_tags
-    }
-  }
 }
 
 output "installation" {
-  description = "Nonsecret installation contract for RunsOn execution."
+  description = "Nonsecret RunsOn setup and operator information."
   value       = local.installation_contract
-}
-
-output "publishing" {
-  description = "Nonsecret destination and authentication contract for image publishing."
-  value       = local.publishing_contract
 }
 
 output "installation_yaml" {
   description = "Export to .local/contracts/installation.yaml after successful deployment."
   value       = yamlencode(local.installation_contract)
-}
-
-output "publishing_yaml" {
-  description = "Export to .local/contracts/publishing.yaml after successful deployment."
-  value       = yamlencode(local.publishing_contract)
 }

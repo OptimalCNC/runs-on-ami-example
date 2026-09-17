@@ -55,8 +55,8 @@ class PublishingTarget:
     def load(cls, path: Path) -> "PublishingTarget":
         data = load_yaml(path)
         require(data.get("kind") == "ami-publishing-target" and type(data.get("schema_version")) is int
-                and data["schema_version"] in (1, 2, 3),
-                "Expected an ami-publishing-target contract with schema_version 1, 2 or 3")
+                and data["schema_version"] in (1, 2, 3, 4),
+                "Expected an ami-publishing-target contract with schema_version 1, 2, 3 or 4")
         name, account, region = (data.get(key) for key in ("name", "account_id", "region"))
         require(isinstance(name, str) and re.fullmatch(r"[a-z][a-z0-9-]{2,23}", name) is not None,
                 "Invalid installation name in publishing target")
@@ -67,21 +67,24 @@ class PublishingTarget:
         role = data.get("publisher_role_arn")
         require(isinstance(role, str) and re.fullmatch(rf"arn:aws:iam::{account}:role/(?:[A-Za-z0-9+=,.@_-]+/)*[A-Za-z0-9+=,.@_-]+", role) is not None,
                 "Publishing role must be an IAM role in the target AWS account")
-        destination = data.get("destination")
-        require(isinstance(destination, dict), "Publishing target is missing destination")
-        require(destination.get("type") == "ec2-ami" and destination.get("upload_method") == "ebs-direct-api"
-                and destination.get("disk_format") == "raw",
-                "Publishing requires a raw-disk EBS direct API destination")
         key = None
-        if data["schema_version"] == 3:
-            require(destination.get("encrypted") is False and "kms_key_arn" not in destination,
-                    "Version 3 publishing requires an unencrypted destination without a KMS key")
+        if data["schema_version"] == 4:
+            tags = data.get("required_tags")
         else:
-            key = destination.get("kms_key_arn")
-            require(destination.get("encrypted") is True and isinstance(key, str) and re.fullmatch(
-                rf"arn:aws:kms:{region}:{account}:key/[a-zA-Z0-9-]+", key) is not None,
-                "Legacy encrypted target must name a KMS key in the publishing account and region")
-        tags = destination.get("required_tags")
+            destination = data.get("destination")
+            require(isinstance(destination, dict), "Publishing target is missing destination")
+            require(destination.get("type") == "ec2-ami" and destination.get("upload_method") == "ebs-direct-api"
+                    and destination.get("disk_format") == "raw",
+                    "Publishing requires a raw-disk EBS direct API destination")
+            if data["schema_version"] == 3:
+                require(destination.get("encrypted") is False and "kms_key_arn" not in destination,
+                        "Version 3 publishing requires an unencrypted destination without a KMS key")
+            else:
+                key = destination.get("kms_key_arn")
+                require(destination.get("encrypted") is True and isinstance(key, str) and re.fullmatch(
+                    rf"arn:aws:kms:{region}:{account}:key/[a-zA-Z0-9-]+", key) is not None,
+                    "Legacy encrypted target must name a KMS key in the publishing account and region")
+            tags = destination.get("required_tags")
         require(isinstance(tags, dict) and 1 <= len(tags) <= 48,
                 "Publishing target must specify between 1 and 48 ownership tags")
         require(all(isinstance(k, str) and 1 <= len(k) <= 128 and not k.lower().startswith("aws:")
@@ -474,7 +477,7 @@ def wait_snapshot(cloud: Cloud, snapshot_id: str, target: PublishingTarget,
 def publish_image(build: BuiltImage, target: PublishingTarget, output: Path,
                   profile: str | None = None, cloud: Cloud | None = None) -> dict[str, Any]:
     require(target.legacy_kms_key_arn is None,
-            "Legacy encrypted publishing targets are supported only for cleanup; apply the installation update and use its version 3 target for new publications")
+            "Legacy encrypted publishing targets are supported only for cleanup; apply the installation update and use its current target for new publications")
     require(len(target.required_tags) <= 45,
             "Publication requires room for five identity and retention tags within AWS's 50-tag limit")
     volume_gib = build.disk_size_bytes // 1024**3

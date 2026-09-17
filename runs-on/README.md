@@ -1,6 +1,6 @@
 # RunsOn installation
 
-This module provisions a RunsOn Flex installation and an AMI publishing target
+This module provisions RunsOn Flex and image-publishing IAM access together
 in one AWS account and region. Start here from a fresh checkout:
 
 ```sh
@@ -13,6 +13,12 @@ provisions RunsOn, public networking, and the image publisher role. `./install`
 connects the two roots and exports their consumer contracts.
 GitHub App registration and installation, and notification email confirmation,
 remain browser steps.
+
+Installation and publishing share one configuration and deployment state.
+Within `deployment/`, `installation.*.tf` and `publishing.*.tf` keep their inputs
+and exports separate; `installation.tf` and `publishing.tf` define their resources.
+Their Terraform tests are separated the same way. Bootstrap publisher permissions
+live in `bootstrap/publishing.tf` and feed the shared workload boundary.
 
 The blueprint pins the official [RunsOn Flex Terraform module
 3.3.1](https://github.com/runs-on/terraform-aws-runs-on/tree/release/v3.3.1/modules/flex).
@@ -116,7 +122,6 @@ Set these configuration fields before deploying:
 | `publisher_principal_arns` | Existing local IAM users or roles permitted to publish images |
 | `publisher_github_repositories` | Optional list of exact `repository` and protected `environment` pairs permitted to publish through OIDC; environment defaults to `image-publish` |
 | `publisher_github_repositories[].subject_prefix` | Optional known repository OIDC subject prefix; omitted or empty discovers that repository's current prefix through GitHub |
-| `existing_github_oidc_provider_arn` | Existing account-wide GitHub OIDC provider, when GitHub publishing is enabled and the provider already exists |
 
 Choose at least one local publishing principal or a GitHub publishing repository.
 For local publishing, its principal's AWS policy must also permit assuming the
@@ -128,12 +133,9 @@ publisher role and share its image lifecycle permissions. Use IAM role ARNs in t
 configuration, including their paths; an STS assumed-role session ARN is not a
 role ARN.
 
-To migrate an existing single-repository configuration, replace
-`publisher_github_repository`, `publisher_github_environment`, and
-`publisher_github_subject_prefix` with one `publisher_github_repositories` entry
-containing `repository`, `environment`, and `subject_prefix`. Use `[]` when GitHub
-publishing is disabled. The installer rejects the old fields with a migration
-message.
+Use `[]` for `publisher_github_repositories` when GitHub publishing is disabled.
+When enabled, bootstrap reuses or creates the account's GitHub OIDC provider;
+its ARN is derived from `account_id` and needs no configuration field.
 
 ## Bootstrap the deployment role
 
@@ -182,30 +184,25 @@ Successful deployment writes two versioned YAML contracts:
 | File | Consumer and contents |
 | --- | --- |
 | `.local/contracts/installation.yaml` | Installation setup and runner configuration: account, region, environment, setup URL, pinned versions, networking, and runtime identities |
-| `.local/contracts/publishing.yaml` | Image publishing: account, region, publisher role, allowed authentication, unencrypted raw-disk upload method, and required ownership tags |
+| `.local/contracts/publishing.yaml` | Image-publishing access: account, region, publisher role, allowed authentication, and required ownership tags |
 
 `installation.yaml` uses `schema_version: 1`; `publishing.yaml` uses
-`schema_version: 3`, with the authorized repository/environment subjects in
+`schema_version: 4`, with the authorized repository/environment subjects in
 `authentication.github.repositories`. GitHub authentication is `null` when
-disabled. Version 3 requires unencrypted snapshots and contains no image KMS key.
-Existing version 1 and 2 targets remain readable for cleanup of their encrypted
-publications. The contracts' source of truth is
-[deployment/outputs.tf](deployment/outputs.tf); the installer exports Terraform's
+disabled. Publishing ownership tags are in the top-level `required_tags` field.
+The contracts' source of truth is
+[deployment/installation.outputs.tf](deployment/installation.outputs.tf) and
+[deployment/publishing.outputs.tf](deployment/publishing.outputs.tf); the installer exports Terraform's
 `yamlencode` output after a successful apply. Give consumers an explicit path to
 the appropriate YAML file. They need neither Terraform nor access to its state.
 The contracts contain identifiers and authentication metadata; callers obtain
 temporary credentials when publishing.
 
-The publishing destination is regional EC2 AMIs backed by EBS snapshots. The
-publisher uploads a raw disk through EBS direct APIs without encryption,
-then registers the snapshot as an AMI. EBS encryption by default must be disabled
-in the destination account and region; publishing checks this setting before
-uploading. RunsOn omits explicit runner-volume encryption settings; encryption
-depends on the source image and the region's EBS defaults. The installation
-creates no custom EBS encryption key. The publisher must supply the contract's
-required tags when creating snapshots and AMIs. Image creation, validation, publishing,
-and retention belong to the image module; individual AMIs and snapshots are
-outside installation Terraform state.
+The publisher role requires the exported ownership tags on snapshots and AMIs.
+[Image building, publishing, and retention](../images/README.md) belong to the
+image module; individual AMIs and snapshots are outside installation Terraform
+state. RunsOn uses the source image and the region's EBS defaults for runner-volume
+encryption. The installation creates no custom EBS encryption key.
 
 ## Finish the GitHub setup
 
@@ -281,9 +278,8 @@ cannot be decrypted in place. The installer blocks bootstrap updates,
 deployment apply, and destruction while these dependencies remain. Run
 `./install bootstrap` to update permissions, then `./install apply
 --deployment-only` to retire the old key, alias, and policy and export the
-version 3 target. Key deletion retains the waiting period recorded in Terraform
-state (30 days for this installation). Publish the built disk again with the
-new target to create an unencrypted image.
+current publishing target. Key deletion retains the waiting period recorded in
+Terraform state (30 days for this installation).
 
 ```sh
 ./install status
@@ -296,8 +292,10 @@ configuration and secret files. Neither command performs a live runner health
 check. Generated contracts should be regenerated from Terraform rather than
 edited by hand.
 
-Before decommissioning, retire published images and their snapshots, stop runner
-jobs, and remove retained data from installation-owned buckets. Then run:
+Before decommissioning, stop runner jobs and remove retained data from
+installation-owned buckets. Published images and snapshots remain independent
+of the installation, but removal deletes their publisher role. Retain publication
+records and arrange access to any images you keep. Then run:
 
 ```sh
 ./install destroy --profile runs-on-admin

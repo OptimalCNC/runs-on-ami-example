@@ -11,7 +11,7 @@ bootstrap permissions below.
 | Identity | Responsibility |
 | --- | --- |
 | Existing AWS login | Create and maintain bootstrap IAM, prepare shared account prerequisites, and assume the deployment role |
-| Deployment role, `<name>-deployer` | Provision this installation's networking, RunsOn resources, workload roles, and publishing infrastructure |
+| Deployment role, `<name>-deployer` | Provision this installation's networking, RunsOn resources, workload roles, and publisher IAM |
 | RunsOn workload roles | Receive jobs, launch and register runners, and operate the control plane |
 | Publisher role, `<name>-image-publisher` | Upload image snapshots and register or retire the installation's AMIs |
 
@@ -195,15 +195,15 @@ with the required `runs-on-installation` ownership tag, and retirement of images
 and snapshots carrying that tag. AMI registration also requires that tag on its
 backing snapshots. Image inspection is read-only across the
 selected region. The publisher can read that region's EBS encryption default and
-has no KMS grants. Publication requires unencrypted snapshots and raw-disk
-format; it rejects an enabled encryption default before uploading and verifies
-the resulting snapshot and AMI. IAM does not enforce every image-format or
-snapshot-source requirement. RunsOn uses no custom EBS key or associated runtime
-KMS grants. The deployment role retains only the KMS permissions needed to
+has no KMS grants. IAM enforces ownership; the
+[image publisher](../images/README.md#publish-to-the-installations-target) checks
+disk and snapshot requirements. RunsOn uses no custom EBS key or associated
+runtime KMS grants. The deployment role retains only the KMS permissions needed to
 inspect and retire an older installation's key and alias. Workload KMS access
 for the S3 cache is scoped separately to that service and its cache objects.
 
 The exact publishing policy and trust are maintained in
-[deployment/publishing.tf](deployment/publishing.tf). Publishing credentials
+[deployment/publishing.tf](deployment/publishing.tf), with its permissions boundary
+in [bootstrap/publishing.tf](bootstrap/publishing.tf). Publishing credentials
 provide image lifecycle access; deployment credentials provide infrastructure
 management access.

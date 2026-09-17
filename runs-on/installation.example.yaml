@@ -4,6 +4,7 @@ region: us-east-1
 name: runs-on
 environment: production
 github_organization: your-github-organization
+vpc_cidr: 10.80.0.0/16
 
 # Paths are relative to this configuration file, normally .local/config.yaml.
 license_file: license.txt
@@ -30,6 +31,4 @@ publisher_github_repositories: []
 # resolves that repository's current OIDC prefix through authenticated gh,
 # including GitHub's immutable repository subjects with numeric IDs.
 
-# If this account already has the GitHub Actions OIDC provider, use its ARN.
-existing_github_oidc_provider_arn: ""
-vpc_cidr: 10.80.0.0/16
+# The installer reuses or creates the account's GitHub Actions OIDC provider.

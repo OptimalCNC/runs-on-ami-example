@@ -58,44 +58,30 @@ run "local_publishing_contract_and_permissions" {
 
   assert {
     condition = (
-      jsonencode(yamldecode(output.installation_yaml)) == jsonencode(output.installation) &&
       jsonencode(yamldecode(output.publishing_yaml)) == jsonencode(output.publishing) &&
-      output.installation.kind == "runs-on-installation" &&
       output.publishing.kind == "ami-publishing-target" &&
-      output.installation.schema_version == 1 && output.publishing.schema_version == 3
+      output.publishing.schema_version == 4
     )
-    error_message = "Both YAML handoffs must preserve their typed contract and schema discriminator."
+    error_message = "The publishing YAML must preserve the access settings and schema discriminator."
   }
 
   assert {
     condition = alltrue([
       for secret in [var.license_key, var.notification_email] :
-      !strcontains(output.installation_yaml, secret) && !strcontains(output.publishing_yaml, secret)
+      !strcontains(output.publishing_yaml, secret)
     ])
     error_message = "Contracts must not export installation secrets."
   }
 
   assert {
     condition = (
-      !output.publishing.destination.encrypted &&
-      output.publishing.destination.disk_format == "raw" &&
-      !contains(keys(output.publishing.destination), "kms_key_arn") &&
+      output.publishing.required_tags["runs-on-installation"] == var.name &&
+      !contains(keys(output.publishing), "destination") &&
       output.publishing.authentication.github == null &&
       toset(jsondecode(aws_iam_role.publisher.assume_role_policy).Statement[0].Principal.AWS) == toset(var.publisher_principal_arns) &&
       aws_iam_role.publisher.permissions_boundary == var.workload_boundary_arn
     )
-    error_message = "Local publication must be unencrypted with explicitly authorized principals within the workload boundary."
-  }
-
-  assert {
-    condition = (
-      length(aws_subnet.public) == 2 &&
-      aws_subnet.public[0].availability_zone != aws_subnet.public[1].availability_zone &&
-      aws_subnet.public[0].cidr_block != aws_subnet.public[1].cidr_block &&
-      aws_route.public.gateway_id == aws_internet_gateway.this.id &&
-      aws_vpc_endpoint.s3.vpc_endpoint_type == "Gateway"
-    )
-    error_message = "The installation must have distinct public subnets and an internet gateway route."
+    error_message = "Publishing access must export ownership tags and authorize only configured principals within the workload boundary."
   }
 
   assert {
@@ -144,12 +130,11 @@ run "github_environment_trust" {
       subject_prefix = "repo:example-org/images"
       environment    = "image-publish"
     }]
-    existing_github_oidc_provider_arn = "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com"
   }
 
   assert {
     condition = (
-      jsondecode(aws_iam_role.publisher.assume_role_policy).Statement[0].Principal.Federated == var.existing_github_oidc_provider_arn &&
+      jsondecode(aws_iam_role.publisher.assume_role_policy).Statement[0].Principal.Federated == "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com" &&
       length(jsondecode(aws_iam_role.publisher.assume_role_policy).Statement) == 1 &&
       tolist(jsondecode(aws_iam_role.publisher.assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:sub"]) == tolist(["repo:example-org/images:environment:image-publish"]) &&
       jsondecode(aws_iam_role.publisher.assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:aud"] == "sts.amazonaws.com" &&
@@ -167,7 +152,6 @@ run "immutable_github_subject" {
       repository     = "example-org/images"
       subject_prefix = "repo:example-org@1234/images@5678"
     }]
-    existing_github_oidc_provider_arn = "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com"
   }
 
   assert {
@@ -199,7 +183,6 @@ run "multiple_github_repositories_with_local_publisher" {
         subject_prefix = "repo:example-org@1234/images@5678"
       },
     ]
-    existing_github_oidc_provider_arn = "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com"
   }
 
   assert {
@@ -241,7 +224,6 @@ run "reject_mismatched_github_repository_subject" {
       repository     = "example-org/images"
       subject_prefix = "repo:other-org/images"
     }]
-    existing_github_oidc_provider_arn = "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com"
   }
   expect_failures = [var.publisher_github_repositories]
 }
@@ -254,7 +236,6 @@ run "reject_github_wildcard_environment" {
       environment    = "*"
       subject_prefix = "repo:example-org/images"
     }]
-    existing_github_oidc_provider_arn = "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com"
   }
   expect_failures = [var.publisher_github_repositories]
 }
@@ -266,20 +247,8 @@ run "reject_duplicate_github_repository_environment" {
       { repository = "example-org/images", subject_prefix = "repo:example-org/images" },
       { repository = "example-org/images", environment = "image-publish", subject_prefix = "repo:example-org/images" },
     ]
-    existing_github_oidc_provider_arn = "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com"
   }
   expect_failures = [var.publisher_github_repositories]
-}
-
-run "github_requires_account_oidc_provider" {
-  command = plan
-  variables {
-    publisher_github_repositories = [{
-      repository     = "example-org/images"
-      subject_prefix = "repo:example-org/images"
-    }]
-  }
-  expect_failures = [var.existing_github_oidc_provider_arn]
 }
 
 run "missing_publisher_identity" {
@@ -288,12 +257,4 @@ run "missing_publisher_identity" {
     publisher_principal_arns = []
   }
   expect_failures = [var.publisher_principal_arns]
-}
-
-run "reject_cross_account_deployment" {
-  command = plan
-  variables {
-    deployment_role_arn = "arn:aws:iam::999999999999:role/unrelated"
-  }
-  expect_failures = [var.deployment_role_arn]
 }

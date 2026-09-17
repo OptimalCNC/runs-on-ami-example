@@ -10,13 +10,10 @@ locals {
       "github-apps-setup", "cache-broker", "github-runner-cache-refresh",
       "stack-config-materializer", "job-diagnostics-resolver", "scheduler",
     ] : "${var.name}-${suffix}-role"
-  ], ["${var.name}-image-publisher"])
-  workload_role_arns = [for name in local.workload_role_names : "${local.iam_prefix}:role/${name}"]
-  workload_policy_arns = [
-    "${local.iam_prefix}:policy/${var.name}-image-publisher",
-  ]
-  legacy_image_key_policy_arn = "${local.iam_prefix}:policy/${var.name}-image-key-use"
-  instance_profile_arn        = "${local.iam_prefix}:instance-profile/${var.name}-ec2-instance-profile"
+  ], [local.publisher_role_name])
+  workload_role_arns   = [for name in local.workload_role_names : "${local.iam_prefix}:role/${name}"]
+  workload_policy_arns = [local.publisher_policy_arn]
+  instance_profile_arn = "${local.iam_prefix}:instance-profile/${var.name}-ec2-instance-profile"
   service_linked_role_arns = [
     "${local.iam_prefix}:role/aws-service-role/ecs.amazonaws.com/AWSServiceRoleForECS",
     "${local.iam_prefix}:role/aws-service-role/spot.amazonaws.com/AWSServiceRoleForEC2Spot",

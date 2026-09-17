@@ -114,7 +114,7 @@ validation jobs need no AWS credentials.
 ## Publish to the installation's target
 
 Obtain `publishing.yaml` from the RunsOn installation. Its destination account,
-region, publisher role, unencrypted destination, and required tags are the publishing
+region, publisher role, authentication settings, and required tags are the publishing
 contract. The [installation permissions guide](../runs-on/PERMISSIONS.md#publishing-access)
 describes local role profiles and GitHub OIDC authentication.
 
@@ -131,7 +131,7 @@ python3 -m publish \
 The command assumes the contract's publisher role when needed and verifies the
 resulting account and role. An existing session for that publisher role is also
 accepted. For GitHub Actions, select the matching repository entry in
-`authentication.github.repositories` from the version 3 target contract. Obtain
+`authentication.github.repositories` from the target contract. Obtain
 temporary credentials through OIDC in that entry's protected environment, then
 omit `--profile`. Use its exact subject, including immutable repository/account
 identifiers where present; Build and Validate do not need that publishing authority.
@@ -248,7 +248,7 @@ earlier publications.
 Version 1 and 2 publishing targets remain supported only for cleanup of existing
 encrypted publications, including verification of their original encryption key.
 Retain those targets with their publication records. New publication requires a
-version 3 target exported after updating the installation. Existing AMIs and
+version 3 or 4 target exported after updating the installation. Existing AMIs and
 snapshots cannot be decrypted in place; publish the built disk again to create an
 unencrypted replacement. Before updating the installation, stop runner jobs and
 migrate or retire snapshots and volumes that use its legacy key. The installer

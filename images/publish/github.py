@@ -9,7 +9,7 @@ from .image import PublishingTarget, load_yaml
 def load_github_target(path: Path, repository: str, environment: str) -> PublishingTarget:
     target = PublishingTarget.load(path)
     if target.legacy_kms_key_arn is not None:
-        raise ValueError("GitHub publication requires a version 3 publishing target")
+        raise ValueError("GitHub publication requires a version 3 or 4 publishing target")
     authentication = load_yaml(path).get("authentication")
     github = authentication.get("github") if isinstance(authentication, dict) else None
     if (not isinstance(github, dict) or github.get("method") != "github-oidc"

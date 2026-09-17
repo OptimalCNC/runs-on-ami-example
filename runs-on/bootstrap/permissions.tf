@@ -203,7 +203,7 @@ locals {
   ]
   deployment_network = {
     Version = "2012-10-17"
-    Statement = [
+    Statement = concat([
       {
         Effect   = "Allow"
         Action   = "ec2:Describe*"
@@ -280,42 +280,6 @@ locals {
           }
         }
       },
-      {
-        # Refresh and retire keys left in deployment state by older versions.
-        Effect = "Allow"
-        Action = [
-          "kms:DescribeKey", "kms:GetKeyPolicy", "kms:GetKeyRotationStatus", "kms:ListResourceTags", "kms:ScheduleKeyDeletion", "kms:DeleteAlias",
-        ]
-        Resource  = "arn:aws:kms:${local.regional}:key/*"
-        Condition = local.owned
-      },
-      {
-        # Retire the removed key's managed policy alongside the key itself.
-        Effect   = "Allow"
-        Action   = "iam:DetachRolePolicy"
-        Resource = local.workload_role_arns
-        Condition = {
-          ArnEquals = { "iam:PolicyARN" = local.legacy_image_key_policy_arn }
-        }
-      },
-      {
-        Effect = "Allow"
-        Action = [
-          "iam:GetPolicy", "iam:GetPolicyVersion", "iam:ListPolicyVersions", "iam:ListPolicyTags",
-          "iam:ListEntitiesForPolicy", "iam:DeletePolicy", "iam:DeletePolicyVersion",
-        ]
-        Resource = local.legacy_image_key_policy_arn
-      },
-      {
-        Effect   = "Allow"
-        Action   = "kms:DeleteAlias"
-        Resource = "arn:aws:kms:${local.regional}:alias/${var.name}-images"
-      },
-      {
-        Effect   = "Allow"
-        Action   = "kms:ListAliases"
-        Resource = "*"
-      },
-    ]
+    ], local.legacy_key_retirement_statements)
   }
 }
