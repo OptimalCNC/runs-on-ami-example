@@ -2,4 +2,5 @@ images:
   ubuntu2404-xenomai-cobalt:
     platform: linux
     arch: x64
+    owner: self
     name: "ubuntu2404-xenomai-cobalt-*"
