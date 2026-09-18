@@ -20,8 +20,6 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
-      - name: Install publication dependencies
-        run: python3 -m pip install -r publish/requirements.txt
       - name: Check image retention and recovery
         run: python3 -m unittest discover -s publish/tests -v
 
@@ -36,11 +34,9 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
-      - name: Install installation check dependencies
-        run: |
-          python3 -m pip install -r requirements.txt
-          python3 install-tools.py --terraform-only
-          echo "$PWD/.local/tools/bin" >> "$GITHUB_PATH"
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
       - name: Run installation tests
         run: python3 -m unittest discover -s tests -v
       - name: Check Terraform configuration and mock tests
@@ -69,14 +65,8 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
-      - name: Install pinned actionlint
-        run: |
-          mkdir -p .github/.local/tools/bin
-          curl --fail --location --silent --show-error \
-            "$(jq -r '.actionlint.url' .github/tools.lock.json)" \
-            --output .github/.local/tools/actionlint.tar.gz
-          printf '%s  %s\n' "$(jq -r '.actionlint.sha256' .github/tools.lock.json)" \
-            .github/.local/tools/actionlint.tar.gz | sha256sum --check
-          tar -xzf .github/.local/tools/actionlint.tar.gz -C .github/.local/tools/bin actionlint
       - name: Lint workflows
-        run: .github/.local/tools/bin/actionlint -shellcheck= -config-file=.github/actionlint.yaml .github/workflows/*.yml
+        uses: raven-actions/actionlint@v2
+        with:
+          shellcheck: false
+          flags: -config-file=.github/actionlint.yaml

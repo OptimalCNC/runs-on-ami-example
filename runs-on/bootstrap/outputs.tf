@@ -1,7 +1,8 @@
-locals {
+output "existing_identity_policy_json" {
+  description = "Policy an administrator grants the existing identity before bootstrap; identifiers are installation-specific."
   # An administrator grants this policy to the existing bootstrap identity.
-  # It authorizes this root module and the shared prerequisite checks in install.
-  existing_identity_policy = {
+  # Shared account preparation has separate administrator permissions.
+  value = jsonencode({
     Version = "2012-10-17"
     Statement = [
       {
@@ -28,24 +29,8 @@ locals {
           "${local.iam_prefix}:policy/${var.name}-deployment-network",
         ]
       },
-      {
-        Effect   = "Allow"
-        Action   = "iam:GetRole"
-        Resource = local.service_linked_role_arns
-      },
-      {
-        Effect    = "Allow"
-        Action    = "iam:CreateServiceLinkedRole"
-        Resource  = local.service_linked_role_arns
-        Condition = { StringEquals = { "iam:AWSServiceName" = ["ecs.amazonaws.com", "spot.amazonaws.com"] } }
-      },
-      {
-        Effect   = "Allow"
-        Action   = ["iam:GetOpenIDConnectProvider", "iam:CreateOpenIDConnectProvider", "iam:TagOpenIDConnectProvider"]
-        Resource = "${local.iam_prefix}:oidc-provider/token.actions.githubusercontent.com"
-      },
     ]
-  }
+  })
 }
 
 output "deployment_role_arn" {
@@ -54,9 +39,4 @@ output "deployment_role_arn" {
 
 output "workload_boundary_arn" {
   value = aws_iam_policy.workload_boundary.arn
-}
-
-output "existing_identity_policy_json" {
-  description = "Policy an administrator grants the existing identity before bootstrap; identifiers are installation-specific."
-  value       = jsonencode(local.existing_identity_policy)
 }

@@ -2,7 +2,6 @@
   "kernel": {
     "release": "6.12.90-cip24-xenomai-cobalt",
     "sha256": "bfd5331fbf4293f23a306b7873acde343ebfdaf44a80a665b3eca6565f5d5cc4",
-    "source_date_epoch": 1785954174,
     "url": "https://gitlab.com/api/v4/projects/xenomai%2Flinux-dovetail/repository/archive.tar.gz?sha=dac73761a5daa5992bc866aa1ef8d284c0920aaa"
   },
   "os": {
@@ -17,50 +16,48 @@
       "libltdl-dev",
       "libssl-dev",
       "libtool-bin",
-      "m4"
+      "m4",
+      "pkgconf"
     ],
-    "packages": {
-      "autoconf": "2.71-3",
-      "automake": "1:1.16.5-1.3ubuntu1",
-      "autotools-dev": "20220109.1",
-      "bc": "1.07.1-3ubuntu4",
-      "binutils": "2.42-4ubuntu2.10",
-      "bison": "2:3.8.2+dfsg-1build2",
-      "build-essential": "12.10ubuntu1",
-      "ca-certificates": "20260601~24.04.1",
-      "cmake": "3.28.3-1build7",
-      "cpio": "2.15+dfsg-1ubuntu2.1",
-      "curl": "8.5.0-2ubuntu10.13",
-      "flex": "2.6.4-8.2build1",
-      "g++-13": "13.3.0-6ubuntu2~24.04.1",
-      "gcc-13": "13.3.0-6ubuntu2~24.04.1",
-      "git": "1:2.43.0-1ubuntu7.3",
-      "grub-common": "2.12-1ubuntu7.3",
-      "grub2-common": "2.12-1ubuntu7.3",
-      "initramfs-tools": "0.142ubuntu25.8",
-      "jq": "1.7.1-3ubuntu0.24.04.2",
-      "libelf-dev": "0.190-1.1ubuntu0.1",
-      "libicu74": "74.2-1ubuntu3.1",
-      "libkrb5-3": "1.20.1-6ubuntu2.8",
-      "libltdl-dev": "2.4.7-7build1",
-      "liblttng-ust1t64": "2.13.7-1.1ubuntu2",
-      "libssl-dev": "3.0.13-0ubuntu3.15",
-      "libssl3t64": "3.0.13-0ubuntu3.15",
-      "libtool-bin": "2.4.7-7build1",
-      "m4": "1.4.19-4build1",
-      "make": "4.3-4.1build2",
-      "ninja-build": "1.11.1-2",
-      "openssh-server": "1:9.6p1-3ubuntu13.19",
-      "pkgconf": "1.8.1-2build1",
-      "python3": "3.12.3-0ubuntu2.1",
-      "python3-pip": "24.0+dfsg-1ubuntu1.3",
-      "python3-venv": "3.12.3-0ubuntu2.1",
-      "rsync": "3.2.7-1ubuntu1.5",
-      "sudo": "1.9.15p5-3ubuntu5.24.04.2",
-      "xz-utils": "5.6.1+really5.4.5-1ubuntu0.3",
-      "zlib1g": "1:1.3.dfsg-3.1ubuntu2.2",
-      "zstd": "1.5.5+dfsg2-2build1.1"
-    },
+    "packages": [
+      "autoconf",
+      "automake",
+      "autotools-dev",
+      "bc",
+      "binutils",
+      "bison",
+      "build-essential",
+      "ca-certificates",
+      "cmake",
+      "cpio",
+      "curl",
+      "flex",
+      "g++-13",
+      "gcc-13",
+      "git",
+      "grub-common",
+      "grub2-common",
+      "initramfs-tools",
+      "jq",
+      "libelf-dev",
+      "libicu74",
+      "libkrb5-3",
+      "libltdl-dev",
+      "liblttng-ust1t64",
+      "libssl-dev",
+      "libssl3t64",
+      "libtool-bin",
+      "m4",
+      "make",
+      "ninja-build",
+      "openssh-server",
+      "pkgconf",
+      "python3",
+      "sudo",
+      "xz-utils",
+      "zlib1g",
+      "zstd"
+    ],
     "snapshot_url": "https://snapshot.ubuntu.com/ubuntu/20260911T000000Z/",
     "suites": [
       "noble",
@@ -76,26 +73,12 @@
     },
     "github": {
       "sha256": "70920811a4f8ad4328818682bca5c6469c1c942fab52448868071d0063816613",
-      "url": "https://github.com/actions/runner/releases/download/v2.337.0/actions-runner-linux-x64-2.337.0.tar.gz",
-      "version": "2.337.0"
+      "url": "https://github.com/actions/runner/releases/download/v2.337.0/actions-runner-linux-x64-2.337.0.tar.gz"
     }
   },
   "source_image": {
     "sha256": "d0fe84bb5f80853425fa6be28e2c106f30104c3cfe8611933f2e65c9b63f0e30",
     "url": "https://cloud-images.ubuntu.com/releases/24.04/release-20260826/ubuntu-24.04-server-cloudimg-amd64.img"
-  },
-  "tools": {
-    "packer": {
-      "binary": "packer",
-      "sha256": "5edcd14ab59b535040c512dbecd6ec9ef976a000b073c19d93e4c431c948581e",
-      "url": "https://releases.hashicorp.com/packer/1.16.0/packer_1.16.0_linux_amd64.zip",
-      "version": "1.16.0"
-    },
-    "qemu_plugin": {
-      "sha256": "3f735539fbdd0368785babda272b85738866f736415dce59d04b4cb550c4db87",
-      "url": "https://releases.hashicorp.com/packer-plugin-qemu/1.1.6/packer-plugin-qemu_1.1.6_linux_amd64.zip",
-      "version": "1.1.6"
-    }
   },
   "xenomai": {
     "allowed_group_gid": 4242,

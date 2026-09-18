@@ -25,26 +25,15 @@ Run the validation commands documented by the module you are changing:
 - [Execution](execution/README.md): CMake build and CTest commands for a
   Cobalt SDK and kernel.
 
-The [validation workflow](.github/workflows/validate.yml) runs installation
-source checks and workflow linting as independent jobs.
-Installed tools and generated files stay in each module's
-ignored `.local/` directory.
+The [validation workflow](.github/workflows/validate.yml) runs publication and
+installation tests and workflow linting as independent jobs.
+Generated files stay in each module's ignored `.local/` directory.
 
-For workflow changes, install and run the pinned actionlint from the repository
-root on Linux x86-64. These commands require `curl`, `jq`, `sha256sum`, and `tar`:
+For workflow changes, have [actionlint](https://github.com/rhysd/actionlint)
+available on `PATH` and run it from the repository root:
 
 ```sh
-(
-  set -eu
-  mkdir -p .github/.local/tools/bin
-  curl --fail --location --silent --show-error \
-    "$(jq -r '.actionlint.url' .github/tools.lock.json)" \
-    --output .github/.local/tools/actionlint.tar.gz
-  printf '%s  %s\n' "$(jq -r '.actionlint.sha256' .github/tools.lock.json)" \
-    .github/.local/tools/actionlint.tar.gz | sha256sum --check
-  tar -xzf .github/.local/tools/actionlint.tar.gz -C .github/.local/tools/bin actionlint
-  .github/.local/tools/bin/actionlint -shellcheck= -config-file=.github/actionlint.yaml .github/workflows/*.yml
-)
+actionlint -shellcheck= -config-file=.github/actionlint.yaml
 ```
 
 To build a complete disk on a Linux host, follow the [image guide](images/README.md).
@@ -61,8 +50,8 @@ the Git-ignored `runs-on/.local/` directory. Successful deployment exports:
 
 | Contract | Consumer |
 | --- | --- |
-| `runs-on/.local/contracts/installation.yaml` | Installation setup and runner configuration: identity, environment, setup URL, and runtime configuration |
-| `runs-on/.local/contracts/publishing.yaml` | Image publishing: account, region, role authentication, and required ownership tags |
+| `runs-on/.local/contracts/installation.json` | Installation setup: account, region, environment, organization, and setup URL |
+| `runs-on/.local/contracts/publishing.json` | Image publishing: account, region, publisher role, and required ownership tags |
 
 The [image module](images/README.md#publish-to-the-installations-target) consumes
 the publishing contract through an explicit file path. Build produces a local

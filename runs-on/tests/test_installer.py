@@ -1,17 +1,17 @@
 import json
 import os
+from pathlib import Path
 import unittest
 from unittest.mock import patch
 
-import yaml
-
-from support import ACCOUNT, KEY, ROLE, BOUNDARY, InstallerTestCase, installer
+from support import ACCOUNT, ROLE, BOUNDARY, InstallerTestCase, installer
 
 
 class InstallerTests(InstallerTestCase):
     def test_fresh_apply_passes_generated_role_to_deployment_and_exports_contracts(self):
         self.execute("apply", "--yes", "--profile", "source-admin")
 
+        self.assertFalse([command for command, _ in self.external.calls if command[0] == "aws"])
         bootstrap_apply = self.external.terraform_calls("bootstrap", "apply")[0]
         deployment_apply = self.external.terraform_calls("deployment", "apply")[0]
         self.assertLess(self.external.calls.index(bootstrap_apply), self.external.calls.index(deployment_apply))
@@ -21,18 +21,22 @@ class InstallerTests(InstallerTestCase):
         self.assertEqual(environment["AWS_PROFILE"], "source-admin")
         self.assertEqual(environment["TF_VAR_license_key"], "private-license-value")
         self.assertNotIn("TF_VAR_license_key", bootstrap_apply[1]["env"])
-        self.assertEqual(json.loads(environment["TF_VAR_publisher_principal_arns"]), self.config_value["publisher_principal_arns"])
+        self.assertEqual(json.loads(environment["TF_VAR_publisher_principal_arns"]), self.config_value["publishing"]["principal_arns"])
 
         for name in ("installation", "publishing"):
-            path = self.root / ".local/contracts" / f"{name}.yaml"
-            self.assertEqual(yaml.safe_load(path.read_text())["schema_version"], 4 if name == "publishing" else 1)
-            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            path = self.root / ".local/contracts" / f"{name}.json"
+            self.assertEqual(path.read_text(), self.external.outputs[name])
         for command, _ in self.external.calls:
             self.assertNotIn("private-license-value", " ".join(command))
         self.assertNotIn("private-license-value", self.output.getvalue())
         for path in (self.root / ".local").rglob("*"):
             if path.is_file():
                 self.assertNotIn("private-license-value", path.read_text())
+
+    def test_explicit_bootstrap_does_not_prepare_shared_account_resources(self):
+        self.execute("bootstrap", "--yes")
+        self.assertTrue(self.external.terraform_calls("bootstrap", "apply"))
+        self.assertFalse([command for command, _ in self.external.calls if command[0] == "aws"])
 
     def test_bootstrap_failure_stops_before_deployment(self):
         self.external.fail = ("bootstrap", "apply")
@@ -84,7 +88,7 @@ class InstallerTests(InstallerTestCase):
 
     def test_changed_installation_name_never_replaces_existing_bootstrap_roles(self):
         self.external.bootstrap_exists()
-        self.config_value["name"] = "another-installation"
+        self.config_value["installation"]["name"] = "another-installation"
         self.write_config()
         with self.assertRaisesRegex(installer.InstallError, "original state"):
             self.execute("bootstrap", "--yes")
@@ -94,7 +98,7 @@ class InstallerTests(InstallerTestCase):
     def test_changed_region_does_not_reuse_existing_deployment_state(self):
         self.external.bootstrap_exists()
         self.external.deployment_exists()
-        self.config_value["region"] = "us-west-2"
+        self.config_value["aws"]["region"] = "us-west-2"
         self.write_config()
         with self.assertRaisesRegex(installer.InstallError, "region differs"):
             self.execute("apply", "--yes")
@@ -107,41 +111,12 @@ class InstallerTests(InstallerTestCase):
         destination = self.root / ".local/contracts"
         destination.mkdir(parents=True)
         for name in ("installation", "publishing"):
-            (destination / f"{name}.yaml").write_text("previous contract")
+            (destination / f"{name}.json").write_text("previous contract")
         self.execute("destroy", "--yes")
         self.assertTrue(self.external.terraform_calls("deployment", "destroy"))
         self.assertFalse(self.external.terraform_calls("bootstrap", "destroy"))
         self.assertTrue((self.root / ".local/state/bootstrap.tfstate").exists())
-        self.assertFalse(list(destination.glob("*.yaml")))
-
-    def test_partial_deployment_still_blocks_bootstrap_boundary_update(self):
-        self.external.bootstrap_exists()
-        self.external.deployment_exists()
-        self.external.state_values["outputs"] = {}
-        self.external.snapshots = [{"SnapshotId": "snap-retained", "KmsKeyId": KEY}]
-        with self.assertRaisesRegex(installer.InstallError, "snap-retained"):
-            self.execute("bootstrap", "--yes")
-        self.assertFalse(self.external.terraform_calls("bootstrap", "apply"))
-
-    def test_access_denied_is_not_treated_as_a_missing_service_role(self):
-        self.external.role_error = "An error occurred (AccessDenied) when calling GetRole"
-        with self.assertRaisesRegex(installer.InstallError, "Cannot inspect AWSServiceRoleForECS"):
-            self.execute("bootstrap", "--yes")
-        self.assertFalse([command for command, _ in self.external.calls if "create-service-linked-role" in command])
-        self.assertFalse(self.external.terraform_calls("bootstrap", "apply"))
-
-    def test_missing_account_roles_are_created_only_for_required_services(self):
-        self.external.role_error = "An error occurred (NoSuchEntity) when calling GetRole"
-        self.execute("bootstrap", "--yes")
-        creations = [command for command, _ in self.external.calls if "create-service-linked-role" in command]
-        self.assertEqual({command[command.index("--aws-service-name") + 1] for command in creations}, {"ecs.amazonaws.com", "spot.amazonaws.com"})
-
-    def test_wrong_source_account_stops_before_iam_mutation(self):
-        self.external.account = "999999999999"
-        with self.assertRaisesRegex(installer.InstallError, "expected 123456789012"):
-            self.execute("bootstrap", "--yes")
-        self.assertFalse([command for command, _ in self.external.calls if command[0:2] == ["aws", "iam"]])
-        self.assertFalse(self.external.terraform_calls("bootstrap", "apply"))
+        self.assertFalse(list(destination.glob("*.json")))
 
     def test_explicit_profile_does_not_use_inherited_static_credentials(self):
         with patch.dict(os.environ, {
@@ -161,17 +136,67 @@ class InstallerTests(InstallerTestCase):
         deployment_env = self.external.terraform_calls("deployment", "apply")[0][1]["env"]
         self.assertEqual(deployment_env["TF_VAR_account_id"], ACCOUNT)
 
-    def test_configuration_rejects_executable_yaml_before_external_commands(self):
-        self.config.write_text("!!python/object/apply:os.system ['false']")
+    def test_configuration_rejects_invalid_toml_before_external_commands(self):
+        self.config.write_text('[aws\n')
         with self.assertRaisesRegex(installer.InstallError, "Cannot read configuration"):
             self.execute("apply", "--yes")
         self.assertFalse(self.external.calls)
 
+    def test_example_groups_settings_and_github_repository_tables(self):
+        example = Path(installer.__file__).with_name("installation.example.toml").read_text()
+        self.config.write_text(example + '''
+[[publishing.github_repositories]]
+repository = "example/images"
+
+[[publishing.github_repositories]]
+repository = "example/another-image"
+environment = "release"
+subject_prefix = "repo:example/another-image"
+''')
+        configuration = installer.Configuration.load(self.config)
+        self.assertEqual(configuration.account_id, ACCOUNT)
+        self.assertEqual(configuration.region, "us-east-1")
+        self.assertEqual(configuration.name, "runs-on")
+        self.assertEqual(configuration.vpc_cidr, "10.80.0.0/16")
+        self.assertEqual(configuration.license_file, self.config_dir / "license.txt")
+        self.assertEqual(configuration.notification_email_file, self.config_dir / "notification-email.txt")
+        self.assertEqual(configuration.trusted_principal_arns, (f"arn:aws:iam::{ACCOUNT}:role/YourAdministratorRole",))
+        self.assertEqual(configuration.publisher_principal_arns, (f"arn:aws:iam::{ACCOUNT}:role/YourImagePublisherLoginRole",))
+        self.assertEqual(
+            [(entry.repository, entry.environment, entry.subject_prefix) for entry in configuration.publisher_github_repositories],
+            [("example/images", "image-publish", ""), ("example/another-image", "release", "repo:example/another-image")],
+        )
+
+    def test_configuration_rejects_unknown_fields_in_each_table(self):
+        for name in ("aws", "installation", "deployment", "publishing"):
+            with self.subTest(table=name):
+                self.config_value[name]["typo"] = "ignored setting"
+                self.write_config()
+                with self.assertRaisesRegex(installer.InstallError, f"Unknown {name} fields: typo"):
+                    self.execute("apply", "--yes")
+                del self.config_value[name]["typo"]
+        self.assertFalse(self.external.calls)
+
+    def test_configuration_requires_tables(self):
+        for name in ("aws", "installation", "deployment", "publishing"):
+            original = self.config_value.pop(name)
+            with self.subTest(table=name, value="missing"):
+                self.write_config()
+                with self.assertRaisesRegex(installer.InstallError, f"{name} must be a TOML table"):
+                    self.execute("apply", "--yes")
+            with self.subTest(table=name, value="string"):
+                self.config_value[name] = "invalid table"
+                self.write_config()
+                with self.assertRaisesRegex(installer.InstallError, f"{name} must be a TOML table"):
+                    self.execute("apply", "--yes")
+            self.config_value[name] = original
+        self.assertFalse(self.external.calls)
+
     def test_installation_name_limit_keeps_generated_iam_policy_within_aws_limit(self):
-        self.config_value["name"] = "a" * 24
+        self.config_value["installation"]["name"] = "a" * 24
         self.write_config()
         self.assertEqual(installer.Configuration.load(self.config).name, "a" * 24)
-        self.config_value["name"] = "a" * 25
+        self.config_value["installation"]["name"] = "a" * 25
         self.write_config()
         with self.assertRaisesRegex(installer.InstallError, "3-24"):
             self.execute("apply", "--yes")

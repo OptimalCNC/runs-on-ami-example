@@ -1,0 +1,38 @@
+[aws]
+account_id = "123456789012"
+region = "us-east-1"
+
+[installation]
+name = "runs-on"
+environment = "production"
+github_organization = "your-github-organization"
+vpc_cidr = "10.80.0.0/16"
+
+# Paths are relative to this configuration file, normally .local/config.toml.
+license_file = "license.txt"
+notification_email_file = "notification-email.txt"
+
+[deployment]
+# The existing AWS identity running this installer must be allowed to assume
+# the deployment role. Use the IAM role ARN, not an STS assumed-role session ARN.
+trusted_principal_arns = ["arn:aws:iam::123456789012:role/YourAdministratorRole"]
+
+[publishing]
+# Optional local publisher identities allowed to assume the publishing role.
+principal_arns = ["arn:aws:iam::123456789012:role/YourImagePublisherLoginRole"]
+
+# Optional GitHub Actions OIDC access, restricted to each repository/environment.
+# Uncomment one table per repository/environment pair to enable it.
+# [[publishing.github_repositories]]
+# repository = "your-github-organization/images"
+# environment = "image-publish"
+# subject_prefix = ""
+#
+# [[publishing.github_repositories]]
+# repository = "your-github-organization/another-image"
+# environment = "release"
+# subject_prefix = ""
+# environment defaults to image-publish. An omitted or empty subject_prefix
+# resolves that repository's current OIDC prefix through authenticated gh,
+# including GitHub's immutable repository subjects with numeric IDs.
+# Account preparation reuses or creates the GitHub Actions OIDC provider.

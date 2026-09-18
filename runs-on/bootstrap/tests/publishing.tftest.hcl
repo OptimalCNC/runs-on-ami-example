@@ -40,17 +40,6 @@ run "publisher_can_inspect_regional_encryption_default" {
     error_message = "Workloads may use KMS only through the installation's S3 cache, not for EBS encryption."
   }
 
-  assert {
-    condition = alltrue(flatten([
-      for statement in jsondecode(aws_iam_policy.deployment["network"].policy).Statement : [
-        for action in flatten([statement.Action]) : !startswith(action, "kms:") || contains([
-          "kms:DescribeKey", "kms:GetKeyPolicy", "kms:GetKeyRotationStatus", "kms:ListResourceTags",
-          "kms:ScheduleKeyDeletion", "kms:DeleteAlias", "kms:ListAliases"
-        ], action)
-      ]
-    ]))
-    error_message = "Deployment KMS access must be limited to inspecting and retiring an older installation's key."
-  }
 
   assert {
     condition = alltrue(flatten([

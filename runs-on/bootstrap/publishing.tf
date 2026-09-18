@@ -1,5 +1,4 @@
 locals {
-  publisher_role_name  = "${var.name}-image-publisher"
   publisher_policy_arn = "${local.iam_prefix}:policy/${var.name}-image-publisher"
 
   publisher_boundary_statements = [

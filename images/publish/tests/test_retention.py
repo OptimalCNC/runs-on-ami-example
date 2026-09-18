@@ -10,7 +10,7 @@ from publish.image import AwsError, Cloud, PublishingTarget, prune_images, publi
 
 
 TARGET = PublishingTarget("test-install", "123456789012", "us-east-1",
-                          "arn:aws:iam::123456789012:role/publisher", None,
+                          "arn:aws:iam::123456789012:role/publisher",
                           (("runs-on-installation", "test-install"),))
 
 
@@ -104,13 +104,14 @@ class MemoryCloud(Cloud):
             raise AssertionError(f"Unexpected AWS operation: {operation}")
         return {}
 
-    def upload(self, disk, identity, volume_gib, output, on_snapshot):
+    def upload(self, disk, identity, volume_gib, output):
         self.snapshots["snap-ff"] = {
             "SnapshotId": "snap-ff", "OwnerId": TARGET.account_id,
             "State": "completed", "Encrypted": False, "VolumeSize": volume_gib,
             "Tags": [{"Key": key, "Value": value} for key, value in identity.items()],
         }
-        on_snapshot("snap-ff")
+        if "upload" in self.fail:
+            raise RuntimeError("Upload interrupted before returning its snapshot ID")
         return "snap-ff"
 
 
@@ -198,20 +199,21 @@ class RetentionTests(unittest.TestCase):
     def test_retained_snapshot_cannot_be_deleted_through_a_stale_marker(self):
         cloud = MemoryCloud([version(1), version(2)])
         cloud.snapshots["snap-2"]["Tags"].append({"Key": "image-retired", "Value": "true"})
-        with self.assertRaisesRegex(ValueError, "retained or invalid snapshot"):
+        with self.assertRaisesRegex(ValueError, "retained snapshot"):
             prune_images(TARGET, cloud=cloud)
         self.assertEqual(cloud.mutations, [])
 
     def test_publication_failure_only_cleans_up_its_own_resources(self):
-        cloud = MemoryCloud([version(n) for n in range(1, 4)])
-        cloud.fail.add("register-image")
-        with tempfile.TemporaryDirectory() as directory:
-            build, output = self.build_fixture(directory)
-            with self.assertRaisesRegex(RuntimeError, "resources were cleaned up"):
-                publish_image(build, TARGET, output, cloud=cloud)
-            self.assertEqual(read_json(output / "published-image.json")["status"], "deleted")
-        self.assertEqual(set(cloud.images), {"ami-1", "ami-2", "ami-3"})
-        self.assertEqual(set(cloud.snapshots), {"snap-1", "snap-2", "snap-3"})
+        for operation in ("upload", "register-image"):
+            with self.subTest(operation=operation), tempfile.TemporaryDirectory() as directory:
+                cloud = MemoryCloud([version(n) for n in range(1, 4)])
+                cloud.fail.add(operation)
+                build, output = self.build_fixture(directory)
+                with self.assertRaisesRegex(RuntimeError, "resources were cleaned up"):
+                    publish_image(build, TARGET, output, cloud=cloud)
+                self.assertEqual(read_json(output / "published-image.json")["status"], "deleted")
+                self.assertEqual(set(cloud.images), {"ami-1", "ami-2", "ami-3"})
+                self.assertEqual(set(cloud.snapshots), {"snap-1", "snap-2", "snap-3"})
 
     def test_successful_publication_leaves_retention_to_separate_cleanup(self):
         cloud = MemoryCloud([version(1), version(2)])

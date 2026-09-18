@@ -1,16 +1,6 @@
 locals {
-  github_publishing        = length(var.publisher_github_repositories) > 0
-  github_oidc_provider_arn = local.github_publishing ? "arn:aws:iam::${var.account_id}:oidc-provider/token.actions.githubusercontent.com" : null
-  github_publishers = [for publisher in var.publisher_github_repositories : {
-    repository  = publisher.repository
-    environment = publisher.environment
-    subject     = "${publisher.subject_prefix}:environment:${publisher.environment}"
-  }]
   snapshot_arn = "arn:aws:ec2:${var.region}::snapshot/*"
   image_arn    = "arn:aws:ec2:${var.region}::image/*"
-  publication_tags = {
-    "runs-on-installation" = var.name
-  }
 
   publisher_trust = {
     Version = "2012-10-17"
@@ -21,15 +11,15 @@ locals {
         Action    = "sts:AssumeRole"
         Principal = { AWS = var.publisher_principal_arns }
       }] : [],
-      local.github_publishing ? [{
+      length(var.publisher_github_repositories) > 0 ? [{
         Sid       = "AuthorizedGitHubEnvironment"
         Effect    = "Allow"
         Action    = "sts:AssumeRoleWithWebIdentity"
-        Principal = { Federated = local.github_oidc_provider_arn }
+        Principal = { Federated = "arn:aws:iam::${var.account_id}:oidc-provider/token.actions.githubusercontent.com" }
         Condition = {
           StringEquals = {
             "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
-            "token.actions.githubusercontent.com:sub" = [for publisher in local.github_publishers : publisher.subject]
+            "token.actions.githubusercontent.com:sub" = [for publisher in var.publisher_github_repositories : "${publisher.subject_prefix}:environment:${publisher.environment}"]
           }
         }
       }] : []
@@ -42,16 +32,7 @@ locals {
       {
         Sid      = "InspectRegionalImages"
         Effect   = "Allow"
-        Action   = ["ec2:DescribeImages", "ec2:DescribeSnapshots"]
-        Resource = "*"
-        Condition = {
-          StringEquals = { "aws:RequestedRegion" = var.region }
-        }
-      },
-      {
-        Sid      = "InspectRegionalEncryptionDefault"
-        Effect   = "Allow"
-        Action   = "ec2:GetEbsEncryptionByDefault"
+        Action   = ["ec2:DescribeImages", "ec2:DescribeSnapshots", "ec2:GetEbsEncryptionByDefault"]
         Resource = "*"
         Condition = {
           StringEquals = { "aws:RequestedRegion" = var.region }
@@ -60,16 +41,7 @@ locals {
       {
         Sid      = "StartOwnedSnapshot"
         Effect   = "Allow"
-        Action   = "ebs:StartSnapshot"
-        Resource = local.snapshot_arn
-        Condition = {
-          StringEquals = { "aws:RequestTag/runs-on-installation" = var.name }
-        }
-      },
-      {
-        Sid      = "TagNewOrOwnedSnapshots"
-        Effect   = "Allow"
-        Action   = "ec2:CreateTags"
+        Action   = ["ebs:StartSnapshot", "ec2:CreateTags"]
         Resource = local.snapshot_arn
         Condition = {
           StringEquals = { "aws:RequestTag/runs-on-installation" = var.name }
@@ -144,7 +116,6 @@ resource "aws_iam_role" "publisher" {
   description          = "Publish and retire AMIs owned by ${var.name}; no deployment privileges."
   assume_role_policy   = jsonencode(local.publisher_trust)
   permissions_boundary = var.workload_boundary_arn
-  max_session_duration = 3600
 }
 
 resource "aws_iam_policy" "publisher" {

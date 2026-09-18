@@ -4,8 +4,6 @@ locals {
     "runs-on-stack-name"   = var.name
     "runs-on-environment"  = var.environment
   }
-  app_version       = "v3.3.1"
-  bootstrap_version = "v0.1.12"
 }
 
 module "runs_on" {
@@ -22,29 +20,16 @@ module "runs_on" {
 
   vpc_id            = aws_vpc.this.id
   public_subnet_ids = aws_subnet.public[*].id
-  private_mode      = "false"
-  ssh_allowed       = false
   ssm_allowed       = false
 
   permission_boundary_arn = var.workload_boundary_arn
-  ebs_encryption_key_id   = ""
-  app_tag                 = local.app_version
-  bootstrap_tag           = local.bootstrap_version
-  app_size                = "small"
-  app_capacity_provider   = "fargate"
 
-  log_retention_days              = 7
   runner_max_runtime              = 60
   runner_config_auto_extends_from = ""
   cache_expiration_days           = 1
-  force_destroy_buckets           = false
-  enable_cost_reports             = "daily"
-  app_budget_daily_usd            = 5
+  app_budget_daily_usd            = 0
+  enable_cost_reports             = "no"
   enable_default_dashboard        = false
-  enable_waf                      = false
-  enable_efs                      = false
-  enable_ecr                      = false
-  enable_bedrock                  = false
   enable_stickydisk_isolation     = true
 
   depends_on = [

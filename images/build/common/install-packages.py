@@ -20,9 +20,7 @@ def main():
     )
     # apt verifies Release signatures and every package against the immutable index.
     subprocess.run(["apt-get", "update"], check=True)
-    selection = [f"{name}={version}" for name, version in sorted(lock["packages"].items())]
-    # No --allow-downgrades: an incompatible newer parent requires an explicit lock refresh.
-    subprocess.run(["apt-get", "-y", "--no-install-recommends", "install", *selection], check=True)
+    subprocess.run(["apt-get", "-y", "--no-install-recommends", "install", *lock["packages"]], check=True)
 
 
 if __name__ == "__main__":

@@ -11,14 +11,13 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import account
 import installer
-import yaml
 
 
 ACCOUNT = "123456789012"
 ROLE = f"arn:aws:iam::{ACCOUNT}:role/runs-on-deployer"
 BOUNDARY = f"arn:aws:iam::{ACCOUNT}:policy/runs-on-workload-boundary"
-KEY = f"arn:aws:kms:us-east-1:{ACCOUNT}:key/12345678-1234-1234-1234-123456789012"
 
 
 class ExternalCommands:
@@ -29,8 +28,8 @@ class ExternalCommands:
         self.calls = []
         self.fail = None
         self.outputs = {
-            "installation_yaml": "schema_version: 1\nkind: runs-on-installation\n",
-            "publishing_yaml": "schema_version: 4\nkind: ami-publishing-target\nrequired_tags:\n  runs-on-installation: runs-on\n",
+            "installation": json.dumps({"account_id": ACCOUNT, "region": "us-east-1", "name": "runs-on"}),
+            "publishing": json.dumps({"account_id": ACCOUNT, "region": "us-east-1", "name": "runs-on", "required_tags": {"runs-on-installation": "runs-on"}}),
         }
         self.bindings = {
             "deployment_role_arn": {"value": ROLE},
@@ -39,17 +38,8 @@ class ExternalCommands:
         self.account = ACCOUNT
         self.role_error = None
         self.oidc_error = None
-        self.inventory_error = None
-        self.snapshots = []
-        self.volumes = []
         self.github_settings = {"use_default": True}
         self.github_repository_settings = {}
-        self.state_values = {
-            "outputs": {
-                "installation": {"value": {"account_id": ACCOUNT, "region": "us-east-1", "name": "runs-on"}},
-            },
-            "root_module": {"resources": [{"address": "aws_kms_key.images", "values": {"arn": KEY}}]},
-        }
 
     def bootstrap_exists(self):
         path = self.root / ".local/state/bootstrap.tfstate"
@@ -79,16 +69,8 @@ class ExternalCommands:
                     returncode, stderr = 254, self.oidc_error
                 else:
                     stdout = json.dumps({"ClientIDList": ["sts.amazonaws.com"]})
-            elif command[1:3] == ["sts", "assume-role"]:
-                stdout = json.dumps({"Credentials": {"AccessKeyId": "temporary-key", "SecretAccessKey": "temporary-secret", "SessionToken": "temporary-token"}})
-            elif command[1:3] == ["ec2", "describe-snapshots"]:
-                stdout = json.dumps({"Snapshots": self.snapshots})
-            elif command[1:3] == ["ec2", "describe-volumes"]:
-                stdout = json.dumps({"Volumes": self.volumes})
             else:
                 stdout = "{}"
-            if command[1:3] in (["ec2", "describe-snapshots"], ["ec2", "describe-volumes"]) and self.inventory_error:
-                returncode, stderr = 254, self.inventory_error
         else:
             component = Path(command[1].removeprefix("-chdir=")).name
             operation = command[2]
@@ -98,10 +80,13 @@ class ExternalCommands:
                 self.bootstrap_exists()
             elif component == "bootstrap" and operation == "output":
                 stdout = json.dumps(self.bindings)
-            elif operation == "show":
-                stdout = json.dumps({"values": self.state_values})
             elif operation == "output":
-                stdout = self.outputs[command[-1]]
+                if command[-1] == "-json":
+                    stdout = json.dumps({name: {"value": json.loads(value)} for name, value in self.outputs.items()})
+                elif command[-1] in self.outputs:
+                    stdout = self.outputs[command[-1]]
+                else:
+                    returncode, stderr = 1, "Missing Terraform output"
         return subprocess.CompletedProcess(command, returncode, stdout, stderr)
 
     def terraform_calls(self, component, operation):
@@ -121,18 +106,18 @@ class InstallerTestCase(unittest.TestCase):
         self.root = Path(self.temporary.name)
         self.config_dir = self.root / "configuration"
         self.config_dir.mkdir()
-        self.config = self.config_dir / "config.yaml"
+        self.config = self.config_dir / "config.toml"
         self.config_value = {
-            "schema_version": 1,
-            "account_id": ACCOUNT,
-            "region": "us-east-1",
-            "name": "runs-on",
-            "environment": "production",
-            "github_organization": "example",
-            "license_file": "license.txt",
-            "notification_email_file": "email.txt",
-            "trusted_principal_arns": [f"arn:aws:iam::{ACCOUNT}:role/Admin"],
-            "publisher_principal_arns": [f"arn:aws:iam::{ACCOUNT}:role/Publisher"],
+            "aws": {"account_id": ACCOUNT, "region": "us-east-1"},
+            "installation": {
+                "name": "runs-on",
+                "environment": "production",
+                "github_organization": "example",
+                "license_file": "license.txt",
+                "notification_email_file": "email.txt",
+            },
+            "deployment": {"trusted_principal_arns": [f"arn:aws:iam::{ACCOUNT}:role/Admin"]},
+            "publishing": {"principal_arns": [f"arn:aws:iam::{ACCOUNT}:role/Publisher"]},
         }
         self.write_config()
         (self.config_dir / "license.txt").write_text("private-license-value\n")
@@ -141,9 +126,22 @@ class InstallerTestCase(unittest.TestCase):
         self.output = io.StringIO()
 
     def write_config(self):
-        self.config.write_text(yaml.safe_dump(self.config_value))
+        def literal(value):
+            if isinstance(value, dict):
+                return "{" + ", ".join(f"{key} = {literal(item)}" for key, item in value.items()) + "}"
+            if isinstance(value, list):
+                return "[" + ", ".join(literal(item) for item in value) + "]"
+            return json.dumps(value)
+
+        self.config.write_text("\n".join(f"{key} = {literal(value)}" for key, value in self.config_value.items()) + "\n")
 
     def execute(self, *arguments):
-        options = installer.parser().parse_args([*arguments, "--config", str(self.config)])
+        config = [] if arguments[0] == "export" else ["--config", str(self.config)]
+        options = installer.parser().parse_args([*arguments, *config])
         with patch.object(installer.subprocess, "run", self.external), redirect_stdout(self.output):
             installer.execute(options, root=self.root)
+
+    def prepare_account(self, *arguments):
+        options = account.parser().parse_args([*arguments, "--config", str(self.config)])
+        with patch("subprocess.run", self.external), redirect_stdout(self.output):
+            account.execute(options)

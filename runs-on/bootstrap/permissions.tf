@@ -26,9 +26,10 @@ locals {
         Resource = local.workload_role_arns
         Condition = {
           ArnEquals = {
-            "iam:PolicyARN" = concat(local.workload_policy_arns, [
+            "iam:PolicyARN" = [
+              local.publisher_policy_arn,
               "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy",
-            ])
+            ]
           }
         }
       },
@@ -40,7 +41,7 @@ locals {
           "iam:ListEntitiesForPolicy", "iam:SetDefaultPolicyVersion", "iam:TagPolicy",
           "iam:UntagPolicy", "iam:ListPolicyTags",
         ]
-        Resource = local.workload_policy_arns
+        Resource = local.publisher_policy_arn
       },
       {
         Effect   = "Allow"
@@ -65,16 +66,6 @@ locals {
             "iam:PassedToService" = ["ec2.amazonaws.com", "ecs-tasks.amazonaws.com", "lambda.amazonaws.com", "scheduler.amazonaws.com"]
           }
         }
-      },
-      {
-        Effect   = "Allow"
-        Action   = "iam:GetRole"
-        Resource = concat(local.service_linked_role_arns, [aws_iam_role.deployment.arn])
-      },
-      {
-        Effect   = "Allow"
-        Action   = "iam:GetOpenIDConnectProvider"
-        Resource = "${local.iam_prefix}:oidc-provider/token.actions.githubusercontent.com"
       },
     ]
   }
@@ -184,8 +175,9 @@ locals {
         Resource = "arn:aws:resource-groups:${local.regional}:group/${var.name}-ec2-instances"
       },
       {
+        # Read and retire the budget present in existing installation state.
         Effect   = "Allow"
-        Action   = ["budgets:ModifyBudget", "budgets:ViewBudget", "budgets:TagResource", "budgets:UntagResource", "budgets:ListTagsForResource"]
+        Action   = ["budgets:ModifyBudget", "budgets:ViewBudget", "budgets:ListTagsForResource"]
         Resource = "arn:aws:budgets::${var.account_id}:budget/${var.name}-app-daily-budget"
       },
     ]
@@ -195,7 +187,9 @@ locals {
     "ec2:CreateVpc", "ec2:DeleteVpc", "ec2:ModifyVpcAttribute", "ec2:CreateSubnet", "ec2:DeleteSubnet", "ec2:ModifySubnetAttribute",
     "ec2:CreateInternetGateway", "ec2:DeleteInternetGateway", "ec2:AttachInternetGateway", "ec2:DetachInternetGateway",
     "ec2:CreateRouteTable", "ec2:DeleteRouteTable", "ec2:AssociateRouteTable", "ec2:DisassociateRouteTable", "ec2:ReplaceRouteTableAssociation",
-    "ec2:CreateRoute", "ec2:DeleteRoute", "ec2:ReplaceRoute", "ec2:CreateVpcEndpoint", "ec2:DeleteVpcEndpoints", "ec2:ModifyVpcEndpoint",
+    "ec2:CreateRoute", "ec2:DeleteRoute", "ec2:ReplaceRoute",
+    # Existing installations still need permission to remove their S3 endpoint.
+    "ec2:DeleteVpcEndpoints",
     "ec2:CreateSecurityGroup", "ec2:DeleteSecurityGroup", "ec2:AuthorizeSecurityGroupIngress", "ec2:AuthorizeSecurityGroupEgress",
     "ec2:RevokeSecurityGroupIngress", "ec2:RevokeSecurityGroupEgress", "ec2:ModifySecurityGroupRules",
     "ec2:CreateLaunchTemplate", "ec2:DeleteLaunchTemplate", "ec2:CreateLaunchTemplateVersion", "ec2:DeleteLaunchTemplateVersions", "ec2:ModifyLaunchTemplate",
@@ -203,7 +197,7 @@ locals {
   ]
   deployment_network = {
     Version = "2012-10-17"
-    Statement = concat([
+    Statement = [
       {
         Effect   = "Allow"
         Action   = "ec2:Describe*"
@@ -219,7 +213,7 @@ locals {
         Effect = "Allow"
         Action = [
           "ec2:CreateVpc", "ec2:CreateSubnet", "ec2:CreateInternetGateway", "ec2:CreateRouteTable",
-          "ec2:CreateVpcEndpoint", "ec2:CreateSecurityGroup", "ec2:CreateLaunchTemplate",
+          "ec2:CreateSecurityGroup", "ec2:CreateLaunchTemplate",
         ]
         Resource  = "${local.ec2}:*"
         Condition = local.new_owned
@@ -239,7 +233,7 @@ locals {
         Condition = {
           StringEquals = {
             "aws:RequestTag/runs-on-stack-name" = var.name
-            "ec2:CreateAction"                  = ["CreateVpc", "CreateSubnet", "CreateInternetGateway", "CreateRouteTable", "CreateVpcEndpoint", "CreateSecurityGroup", "CreateLaunchTemplate", "AuthorizeSecurityGroupEgress"]
+            "ec2:CreateAction"                  = ["CreateVpc", "CreateSubnet", "CreateInternetGateway", "CreateRouteTable", "CreateSecurityGroup", "CreateLaunchTemplate", "AuthorizeSecurityGroupEgress"]
           }
         }
       },
@@ -280,6 +274,6 @@ locals {
           }
         }
       },
-    ], local.legacy_key_retirement_statements)
+    ]
   }
 }

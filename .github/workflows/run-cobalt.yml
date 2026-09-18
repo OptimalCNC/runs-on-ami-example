@@ -37,7 +37,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
         with:
-          ref: ${{ github.sha }}
           persist-credentials: false
       - name: Configure the application
         run: |

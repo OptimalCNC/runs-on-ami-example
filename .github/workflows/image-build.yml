@@ -35,24 +35,23 @@ jobs:
   build:
     runs-on: ubuntu-24.04
     timeout-minutes: 180
-    outputs:
-      artifact_name: image-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
+      - uses: hashicorp/setup-packer@v3
+        with:
+          version: 1.16.0
       - name: Install build tools
         run: |
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends \
             qemu-system-x86 qemu-utils ovmf cloud-image-utils xorriso openssh-client
-          python3 install-tools.py
-          echo "$PWD/.local/tools/bin" >> "$GITHUB_PATH"
-          echo "PACKER_PLUGIN_PATH=$PWD/.local/tools/plugins" >> "$GITHUB_ENV"
+          packer init build/xenomai-cobalt/image.pkr.hcl
       - name: Enable KVM access
         run: sudo chmod 0666 /dev/kvm
       - name: Build disk
-        run: python3 -m build --output .local/build --cpus 4 --memory-mib 8192
+        run: python3 -m build.image --output .local/build --cpus 4 --memory-mib 8192
       - name: Upload build logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -96,7 +95,7 @@ jobs:
       - name: Download the built disk
         uses: actions/download-artifact@v4
         with:
-          name: ${{ needs.build.outputs.artifact_name }}
+          name: image-${{ github.run_id }}-${{ github.run_attempt }}
           path: images/.local
       - name: Extract the built disk
         run: |
@@ -105,7 +104,7 @@ jobs:
           rm .local/image.tar.gz
       - name: Validate the image in a fresh VM
         run: |
-          python3 -m validate --build .local/build/build.json \
+          python3 -m validate.image --build .local/build/build.json \
             --output .local/validation --cpus 2 --memory-mib 2048 --timeout-seconds 600
       - name: Upload VM validation logs
         if: always()
@@ -132,17 +131,14 @@ jobs:
           persist-credentials: false
       - name: Install publishing tools
         run: |
-          python3 -m pip install -r publish/requirements.txt
-          python3 install-tools.py --group publish
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends build-essential cmake pkg-config
           rustup toolchain install 1.94.1 --profile minimal
-          cargo +1.94.1 install --locked coldsnap --version 0.12.0 --root .local/tools
-          echo "$PWD/.local/tools/bin" >> "$GITHUB_PATH"
+          cargo +1.94.1 install --locked coldsnap --version 0.12.0
       - name: Download the validated disk
         uses: actions/download-artifact@v4
         with:
-          name: ${{ needs.build.outputs.artifact_name }}
+          name: image-${{ github.run_id }}-${{ github.run_attempt }}
           path: images/.local
       - name: Extract the validated disk
         run: |
@@ -153,8 +149,9 @@ jobs:
         id: target
         env:
           PUBLISHING_TARGET: ${{ vars.PUBLISHING_TARGET }}
-          PUBLISHING_ENVIRONMENT: ${{ inputs.environment || 'production' }}
-        run: python3 -m publish.github --target .local/publishing.yaml
+        run: |
+          printenv PUBLISHING_TARGET > .local/publishing.json
+          jq -r '"role_arn=\(.publisher_role_arn)\nregion=\(.region)"' .local/publishing.json >> "$GITHUB_OUTPUT"
       - name: Authenticate as the installation publisher
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -164,8 +161,8 @@ jobs:
       - name: Publish the validated image
         timeout-minutes: 85
         run: |
-          python3 -m publish --build .local/build/build.json \
-            --target .local/publishing.yaml --output .local/publication
+          python3 -m publish.image --build .local/build/build.json \
+            --target .local/publishing.json --output .local/publication
       - name: Upload publication record and log
         if: always()
         uses: actions/upload-artifact@v4
@@ -191,17 +188,14 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
-      - name: Install cleanup tools
-        run: |
-          python3 -m pip install -r publish/requirements.txt
-          python3 install-tools.py --group publish
-          echo "$PWD/.local/tools/bin" >> "$GITHUB_PATH"
       - name: Read the installation publishing target
         id: target
         env:
           PUBLISHING_TARGET: ${{ vars.PUBLISHING_TARGET }}
-          PUBLISHING_ENVIRONMENT: ${{ inputs.environment || 'production' }}
-        run: python3 -m publish.github --target .local/publishing.yaml
+        run: |
+          mkdir -p .local
+          printenv PUBLISHING_TARGET > .local/publishing.json
+          jq -r '"role_arn=\(.publisher_role_arn)\nregion=\(.region)"' .local/publishing.json >> "$GITHUB_OUTPUT"
       - name: Authenticate as the installation publisher
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -209,4 +203,4 @@ jobs:
           aws-region: ${{ steps.target.outputs.region }}
           role-session-name: image-clean-${{ github.run_id }}-${{ github.run_attempt }}
       - name: Clean old publications
-        run: python3 -m publish --prune --target .local/publishing.yaml
+        run: python3 -m publish.image --prune --target .local/publishing.json

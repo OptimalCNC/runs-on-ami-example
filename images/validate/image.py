@@ -3,7 +3,6 @@
 import argparse
 from contextlib import contextmanager
 import json
-import os
 from pathlib import Path
 import shlex
 import shutil
@@ -14,14 +13,25 @@ import sys
 import tarfile
 import tempfile
 import time
-import uuid
 
 from contracts import BuiltImage
-from .vm import create_seed, firmware_paths
 
 
 ROOT = Path(__file__).resolve().parents[2]
 GUEST_DIRECTORY = "/tmp/ami-example-validation"
+
+
+def create_seed(destination: Path, public_key: str) -> Path:
+    """Authorize temporary SSH access without changing image groups or limits."""
+    user_data = destination / "user-data"
+    user_data.write_text("#cloud-config\n" + json.dumps({
+        "users": [{"name": "runner", "ssh_authorized_keys": [public_key.strip()]}],
+    }) + "\n")
+    metadata = destination / "meta-data"
+    metadata.write_text(json.dumps({"instance-id": "cobalt-validation"}) + "\n")
+    seed = destination / "seed.img"
+    subprocess.run(["cloud-localds", str(seed), str(user_data), str(metadata)], check=True)
+    return seed
 
 
 def remaining(deadline: float) -> float:
@@ -67,12 +77,11 @@ def qemu_command(overlay: Path, seed: Path, variables: Path, code: Path,
     ]
 
 
-def ssh_command(key: Path, known_hosts: Path, port: int) -> list[str]:
+def ssh_command(key: Path, port: int) -> list[str]:
     return ["ssh", "-T", "-i", str(key), "-p", str(port),
             "-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes", "-o", "ConnectTimeout=5",
-            "-o", "StrictHostKeyChecking=accept-new", "-o", f"UserKnownHostsFile={known_hosts}",
-            "-o", "GlobalKnownHostsFile=/dev/null", "-o", "ServerAliveInterval=5",
-            "-o", "ServerAliveCountMax=2", "runner@127.0.0.1"]
+            "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
+            "runner@127.0.0.1"]
 
 
 def wait_for_ssh(ssh: list[str], process, deadline: float, log):
@@ -104,42 +113,26 @@ def validate(image: BuiltImage, output: Path, *, accelerator: str, cpus: int,
              memory_mib: int, timeout_seconds: int):
     output = output.resolve()
     output.mkdir(parents=True, exist_ok=True)
-    if any(output.iterdir()):
-        raise ValueError("validation output directory must be empty")
-    for tool in ("qemu-system-x86_64", "qemu-img", "cloud-localds", "ssh", "ssh-keygen"):
-        if shutil.which(tool) is None:
-            raise ValueError(f"required local tool is missing: {tool}")
-    if accelerator == "kvm" and not os.access("/dev/kvm", os.R_OK | os.W_OK):
-        raise ValueError("KVM is unavailable; enable /dev/kvm access or explicitly choose --accelerator tcg")
-    code, original_variables = firmware_paths()
     deadline = time.monotonic() + timeout_seconds
     with tempfile.TemporaryDirectory(prefix="cobalt-validation-") as directory:
         temporary = Path(directory)
         key = temporary / "ssh-key"
         subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(key)], check=True)
-        seed = create_seed(temporary, "runner", key.with_suffix(".pub").read_text(),
-                           "cobalt-validation-" + uuid.uuid4().hex)
+        seed = create_seed(temporary, key.with_suffix(".pub").read_text())
         variables = temporary / "OVMF_VARS.fd"
-        shutil.copyfile(original_variables, variables)
+        shutil.copyfile("/usr/share/OVMF/OVMF_VARS_4M.fd", variables)
         overlay = temporary / "disk.qcow2"
         subprocess.run(["qemu-img", "create", "-q", "-f", "qcow2", "-F", "raw",
                         "-b", str(image.disk_path), str(overlay)], check=True)
         with socket.socket() as listener:
             listener.bind(("127.0.0.1", 0))
             port = listener.getsockname()[1]
-        command = qemu_command(overlay, seed, variables, code, output / "serial.log", port,
+        command = qemu_command(overlay, seed, variables, Path("/usr/share/OVMF/OVMF_CODE_4M.fd"), output / "serial.log", port,
                                accelerator, cpus, memory_mib)
-        ssh = ssh_command(key, temporary / "known_hosts", port)
+        ssh = ssh_command(key, port)
         with running_vm(command, output / "qemu.log") as process, (output / "ssh.log").open("wb") as log:
             wait_for_ssh(ssh, process, deadline, log)
             run_guest(image, ssh, temporary, deadline, log)
-
-
-def positive_integer(value):
-    result = int(value)
-    if result < 1:
-        raise argparse.ArgumentTypeError("must be a positive integer")
-    return result
 
 
 def main():
@@ -147,9 +140,9 @@ def main():
     parser.add_argument("--build", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--accelerator", choices=("kvm", "tcg"), default="kvm")
-    parser.add_argument("--cpus", type=positive_integer, default=2)
-    parser.add_argument("--memory-mib", type=positive_integer, default=2048)
-    parser.add_argument("--timeout-seconds", type=positive_integer, default=300)
+    parser.add_argument("--cpus", type=int, default=2)
+    parser.add_argument("--memory-mib", type=int, default=2048)
+    parser.add_argument("--timeout-seconds", type=int, default=300)
     args = parser.parse_args()
     image = BuiltImage.load(args.build)
     validate(image, args.output, accelerator=args.accelerator, cpus=args.cpus,
@@ -157,7 +150,7 @@ def main():
     print(f"Cobalt VM validation passed; logs: {args.output}")
 
 
-def cli():
+if __name__ == "__main__":
     def interrupt(signum, frame):
         raise KeyboardInterrupt("VM validation interrupted")
 
@@ -166,9 +159,4 @@ def cli():
         main()
     except KeyboardInterrupt:
         print("VM validation interrupted.", file=sys.stderr)
-        return 130
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(cli())
+        raise SystemExit(130)

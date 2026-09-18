@@ -12,7 +12,7 @@ locals {
         Effect = "Allow"
         Action = [
           "ec2:Describe*", "ec2:GetEbsEncryptionByDefault", "pricing:GetProducts", "cloudwatch:GetMetric*", "cloudwatch:DescribeAlarms",
-          "cloudtrail:LookupEvents", "ce:GetCostAndUsage", "ecr-public:Get*", "ecr-public:Describe*",
+          "cloudtrail:LookupEvents", "ecr-public:Get*", "ecr-public:Describe*",
           "ecr-public:BatchCheckLayerAvailability", "ecr:GetAuthorizationToken",
         ]
         Resource = "*"
@@ -53,7 +53,7 @@ locals {
       {
         Effect   = "Allow"
         Action   = "iam:GetRole"
-        Resource = local.service_linked_role_arns
+        Resource = "${local.iam_prefix}:role/aws-service-role/spot.amazonaws.com/AWSServiceRoleForEC2Spot"
       },
       {
         # CreateFleet checks future launch resources before tags exist. Its

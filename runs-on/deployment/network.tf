@@ -25,13 +25,6 @@ resource "aws_subnet" "public" {
   availability_zone       = data.aws_availability_zones.available.names[count.index]
   map_public_ip_on_launch = true
   tags                    = { Name = "${var.name}-public-${count.index + 1}" }
-
-  lifecycle {
-    precondition {
-      condition     = length(data.aws_availability_zones.available.names) >= 2
-      error_message = "The installation requires two available AWS availability zones."
-    }
-  }
 }
 
 resource "aws_route_table" "public" {
@@ -49,13 +42,4 @@ resource "aws_route_table_association" "public" {
   count          = 2
   subnet_id      = aws_subnet.public[count.index].id
   route_table_id = aws_route_table.public.id
-}
-
-# S3 gateway endpoints have no hourly charge and keep cache traffic off the public path.
-resource "aws_vpc_endpoint" "s3" {
-  vpc_id            = aws_vpc.this.id
-  service_name      = "com.amazonaws.${var.region}.s3"
-  vpc_endpoint_type = "Gateway"
-  route_table_ids   = [aws_route_table.public.id]
-  tags              = { Name = "${var.name}-s3" }
 }

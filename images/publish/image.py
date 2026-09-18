@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
-from datetime import datetime
 import json
 import os
 from pathlib import Path
@@ -13,14 +12,11 @@ import re
 import signal
 import subprocess
 import sys
-import tempfile
 import time
-from typing import Any, Callable
+from typing import Any
 import uuid
 
-import yaml
-
-from contracts import BuiltImage, read_json, sha256, write_json
+from contracts import BuiltImage, read_json, write_json
 
 
 PUBLICATION_TAG = "image-publication-id"
@@ -36,27 +32,17 @@ def require(condition: bool, message: str) -> None:
         raise ValueError(message)
 
 
-def load_yaml(path: Path) -> dict[str, Any]:
-    value = yaml.safe_load(path.read_text())
-    require(isinstance(value, dict), f"{path} must contain a YAML mapping")
-    return value
-
-
 @dataclass(frozen=True)
 class PublishingTarget:
     name: str
     account_id: str
     region: str
     publisher_role_arn: str
-    legacy_kms_key_arn: str | None
     required_tags: tuple[tuple[str, str], ...]
 
     @classmethod
     def load(cls, path: Path) -> "PublishingTarget":
-        data = load_yaml(path)
-        require(data.get("kind") == "ami-publishing-target" and type(data.get("schema_version")) is int
-                and data["schema_version"] in (1, 2, 3, 4),
-                "Expected an ami-publishing-target contract with schema_version 1, 2, 3 or 4")
+        data = read_json(path)
         name, account, region = (data.get(key) for key in ("name", "account_id", "region"))
         require(isinstance(name, str) and re.fullmatch(r"[a-z][a-z0-9-]{2,23}", name) is not None,
                 "Invalid installation name in publishing target")
@@ -67,39 +53,22 @@ class PublishingTarget:
         role = data.get("publisher_role_arn")
         require(isinstance(role, str) and re.fullmatch(rf"arn:aws:iam::{account}:role/(?:[A-Za-z0-9+=,.@_-]+/)*[A-Za-z0-9+=,.@_-]+", role) is not None,
                 "Publishing role must be an IAM role in the target AWS account")
-        key = None
-        if data["schema_version"] == 4:
-            tags = data.get("required_tags")
-        else:
-            destination = data.get("destination")
-            require(isinstance(destination, dict), "Publishing target is missing destination")
-            require(destination.get("type") == "ec2-ami" and destination.get("upload_method") == "ebs-direct-api"
-                    and destination.get("disk_format") == "raw",
-                    "Publishing requires a raw-disk EBS direct API destination")
-            if data["schema_version"] == 3:
-                require(destination.get("encrypted") is False and "kms_key_arn" not in destination,
-                        "Version 3 publishing requires an unencrypted destination without a KMS key")
-            else:
-                key = destination.get("kms_key_arn")
-                require(destination.get("encrypted") is True and isinstance(key, str) and re.fullmatch(
-                    rf"arn:aws:kms:{region}:{account}:key/[a-zA-Z0-9-]+", key) is not None,
-                    "Legacy encrypted target must name a KMS key in the publishing account and region")
-            tags = destination.get("required_tags")
-        require(isinstance(tags, dict) and 1 <= len(tags) <= 48,
-                "Publishing target must specify between 1 and 48 ownership tags")
+        tags = data.get("required_tags")
+        require(isinstance(tags, dict) and 1 <= len(tags) <= 45,
+                "Publishing target must specify between 1 and 45 ownership tags")
         require(all(isinstance(k, str) and 1 <= len(k) <= 128 and not k.lower().startswith("aws:")
                     and ",Value=" not in k and isinstance(v, str) and len(v) <= 256 for k, v in tags.items()),
                 "Publishing target contains invalid AWS tags")
         require(tags.get("runs-on-installation") == name, "Publishing ownership tag must match installation name")
         require(not {PUBLICATION_TAG, DIGEST_TAG, FAMILY_TAG, NAME_TAG, RETIRED_TAG}.intersection(tags),
                 "Publishing target cannot override publication identity or retention tags")
-        return cls(name, account, region, role, key, tuple(sorted(tags.items())))
+        return cls(name, account, region, role, tuple(sorted(tags.items())))
 
     def identity(self) -> dict[str, Any]:
         return {
             "name": self.name, "account_id": self.account_id, "region": self.region,
             "publisher_role_arn": self.publisher_role_arn,
-            **({"kms_key_arn": self.legacy_kms_key_arn} if self.legacy_kms_key_arn else {"encrypted": False}),
+            "encrypted": False,
             "required_tags": dict(self.required_tags),
         }
 
@@ -165,50 +134,18 @@ class Cloud:
                 f"Unencrypted publication requires EBS encryption by default to be disabled in "
                 f"{self.target.account_id}/{self.target.region}; this command does not change account settings")
 
-    def upload(self, disk: Path, tags: dict[str, str], volume_gib: int, output: Path,
-               on_snapshot: Callable[[str], None]) -> str:
-        command = ["coldsnap", "--region", self.target.region]
-        if self.profile:
-            command += ["--profile", self.profile]
-        command += ["upload", str(disk),
+    def upload(self, disk: Path, tags: dict[str, str], volume_gib: int, output: Path) -> str:
+        command = ["coldsnap", "--region", self.target.region, "upload", str(disk),
                     "--volume-size", str(volume_gib), "--description", f"Image publication {tags[PUBLICATION_TAG]}",
                     "--no-progress"]
         for key, value in sorted(tags.items()):
             command += ["--tag", f"Key={key},Value={value}"]
-        with (output / "upload.log").open("w") as log, tempfile.TemporaryFile(mode="w+") as stdout:
-            process = subprocess.Popen(command, env=self.environment, stdout=stdout, stderr=log, text=True)
-            observed = False
-            deadline = time.monotonic() + 3000
-            try:
-                while process.poll() is None:
-                    if time.monotonic() >= deadline:
-                        raise RuntimeError("Snapshot upload exceeded the 50-minute session limit")
-                    try:
-                        process.wait(timeout=5)
-                    except subprocess.TimeoutExpired:
-                        pass
-                    if not observed:
-                        snapshots, _ = self.discover(tags[PUBLICATION_TAG])
-                        require(len(snapshots) <= 1, "Multiple snapshots unexpectedly share this publication ID")
-                        if snapshots:
-                            on_snapshot(snapshots[0])
-                            observed = True
-            finally:
-                if process.poll() is None:
-                    process.terminate()
-                    try:
-                        process.wait(timeout=10)
-                    except subprocess.TimeoutExpired:
-                        process.kill()
-                        process.wait()
-            if process.returncode:
+        with (output / "upload.log").open("w") as log:
+            result = subprocess.run(command, env=self.environment, stdout=subprocess.PIPE,
+                                    stderr=log, text=True, timeout=3000)
+            if result.returncode:
                 raise RuntimeError(f"coldsnap upload failed; see {output / 'upload.log'}")
-            stdout.seek(0)
-            snapshot_id = stdout.read().strip()
-        require(re.fullmatch(r"snap-[0-9a-f]+", snapshot_id) is not None,
-                "coldsnap did not return exactly one snapshot ID")
-        on_snapshot(snapshot_id)
-        return snapshot_id
+        return result.stdout.strip()
 
     def discover(self, publication_id: str) -> tuple[list[str], list[str]]:
         filters = [
@@ -314,39 +251,28 @@ class PublishedVersion:
     snapshot_id: str
     publication_id: str
     digest: str
-    created_at: datetime
+    created_at: str
 
     @classmethod
-    def parse(cls, image: dict[str, Any], target: PublishingTarget) -> "PublishedVersion":
-        tags = {tag["Key"]: tag["Value"] for tag in image.get("Tags", [])}
-        publication_id, digest = tags.get(PUBLICATION_TAG, ""), tags.get(DIGEST_TAG, "")
-        require(re.fullmatch(r"[0-9a-f]{32}", publication_id) is not None
-                and re.fullmatch(r"[0-9a-f]{64}", digest) is not None,
-                "Image is missing its publication identity")
-        owned(image, target, publication_id, digest)
-        require(tags.get(FAMILY_TAG) == IMAGE_FAMILY and tags.get(NAME_TAG) == IMAGE_FAMILY
-                and image.get("State") == "available"
-                and image.get("Name") == f"{IMAGE_FAMILY}-{digest[:12]}-{publication_id[:12]}",
+    def parse(cls, image: dict[str, Any]) -> "PublishedVersion":
+        tags = {tag["Key"]: tag["Value"] for tag in image["Tags"]}
+        publication_id, digest = tags[PUBLICATION_TAG], tags[DIGEST_TAG]
+        require(image["Name"] == f"{IMAGE_FAMILY}-{digest[:12]}-{publication_id[:12]}",
                 "Image does not belong to the available Cobalt publication family")
-        image_id = image.get("ImageId", "")
         snapshots = [item["Ebs"]["SnapshotId"] for item in image.get("BlockDeviceMappings", [])
                      if "Ebs" in item and "SnapshotId" in item["Ebs"]]
-        require(re.fullmatch(r"ami-[0-9a-f]+", image_id) is not None and len(snapshots) == 1
-                and re.fullmatch(r"snap-[0-9a-f]+", snapshots[0]) is not None,
+        require(len(snapshots) == 1,
                 "Published image must identify one backing snapshot")
-        created_at = datetime.fromisoformat(image.get("CreationDate", "").replace("Z", "+00:00"))
-        require(created_at.tzinfo is not None, "Image creation date must include its timezone")
-        return cls(image_id, snapshots[0], publication_id, digest, created_at)
+        return cls(image["ImageId"], snapshots[0], publication_id, digest, image["CreationDate"])
 
 
 def prune_images(target: PublishingTarget, profile: str | None = None, cloud: Cloud | None = None) -> None:
     cloud = cloud or Cloud(target, profile)
     cloud.authenticate()
-    versions = sorted((PublishedVersion.parse(image, target) for image in cloud.versions()),
+    versions = sorted((PublishedVersion.parse(image) for image in cloud.versions()),
                       key=lambda version: (version.created_at, version.image_id), reverse=True)
-    retained = versions[:1]
     retired = versions[1:]
-    retained_snapshots = {version.snapshot_id for version in retained}
+    retained_snapshot = versions[0].snapshot_id if versions else None
     # Check every selected snapshot before marking or deleting any publication.
     for version in versions:
         snapshot = cloud.snapshot(version.snapshot_id)
@@ -357,22 +283,12 @@ def prune_images(target: PublishingTarget, profile: str | None = None, cloud: Cl
                 "Snapshot does not have the exact published image name")
         require(snapshot.get("State") == "completed", "Published snapshot is not completed")
     for version in retired:
-        require(version.snapshot_id not in retained_snapshots,
+        require(version.snapshot_id != retained_snapshot,
                 "An old image shares a snapshot with a retained image")
     pending_snapshots = cloud.retired_snapshots()
     for snapshot in pending_snapshots:
-        tags = {tag["Key"]: tag["Value"] for tag in snapshot.get("Tags", [])}
-        publication_id, digest = tags.get(PUBLICATION_TAG, ""), tags.get(DIGEST_TAG, "")
-        require(re.fullmatch(r"[0-9a-f]{32}", publication_id) is not None
-                and re.fullmatch(r"[0-9a-f]{64}", digest) is not None
-                and tags.get(FAMILY_TAG) == IMAGE_FAMILY and tags.get(NAME_TAG) == IMAGE_FAMILY
-                and tags.get(RETIRED_TAG) == "true",
-                "Snapshot is missing its retirement identity")
-        owned(snapshot, target, publication_id, digest)
-        snapshot_id = snapshot.get("SnapshotId", "")
-        require(re.fullmatch(r"snap-[0-9a-f]+", snapshot_id) is not None
-                and snapshot_id not in retained_snapshots,
-                "Refusing to delete a retained or invalid snapshot")
+        require(snapshot["SnapshotId"] != retained_snapshot,
+                "Refusing to delete a retained snapshot")
     for version in retired:
         # Persist deletion intent in AWS before deregistration, so a later run can
         # find and retry a snapshot deletion even after its image is gone.
@@ -390,9 +306,7 @@ def prune_images(target: PublishingTarget, profile: str | None = None, cloud: Cl
 
 
 def parse_record(path: Path, target: PublishingTarget) -> dict[str, Any]:
-    record = load_yaml(path) if path.suffix.lower() in {".yaml", ".yml"} else read_json(path)
-    require(record.get("kind") in {"image-publication", "published-image"} and record.get("schema_version") == 1,
-            "Expected a publication state or published image record with schema_version 1")
+    record = read_json(path)
     require(record.get("target") == target.identity(), "Publication record belongs to a different publishing target")
     require(isinstance(record.get("publication_id"), str)
             and re.fullmatch(r"[0-9a-f]{32}", record["publication_id"]) is not None,
@@ -401,15 +315,6 @@ def parse_record(path: Path, target: PublishingTarget) -> dict[str, Any]:
     require(isinstance(artifact, dict) and isinstance(artifact.get("sha256"), str)
             and re.fullmatch(r"[0-9a-f]{64}", artifact["sha256"]) is not None,
             "Publication record has an invalid artifact digest")
-    for key, prefix in (("snapshot_id", "snap"), ("ami_id", "ami")):
-        require(record.get(key) is None or isinstance(record[key], str)
-                and re.fullmatch(rf"{prefix}-[0-9a-f]+", record[key]) is not None,
-                f"Publication record has an invalid {key}")
-    for key, prefix in (("discovered_snapshot_ids", "snap"), ("discovered_ami_ids", "ami")):
-        values = record.get(key, [])
-        require(isinstance(values, list) and all(isinstance(value, str)
-                and re.fullmatch(rf"{prefix}-[0-9a-f]+", value) is not None for value in values),
-                f"Publication record has invalid {key}")
     return record
 
 
@@ -426,7 +331,7 @@ def cleanup_record(path: Path, target: PublishingTarget, profile: str | None = N
     record["discovered_snapshot_ids"] = snapshot_ids
     record["discovered_ami_ids"] = image_ids
     write_json(path, record)
-    if not snapshot_ids and record["status"] in {"uploading", "cleanup-needed"}:
+    if not snapshot_ids and record["status"] in {"pending", "cleanup-needed"}:
         raise RuntimeError("No snapshot ID is visible yet; retain this record and retry cleanup after EBS discovery catches up")
     # Read and check the complete deletion set before performing any mutation.
     snapshots = {sid: cloud.snapshot(sid) for sid in snapshot_ids}
@@ -434,19 +339,11 @@ def cleanup_record(path: Path, target: PublishingTarget, profile: str | None = N
     for resource in [*snapshots.values(), *images.values()]:
         if resource:
             owned(resource, target, record["publication_id"], record["artifact"]["sha256"])
-    # A new upload can unexpectedly become encrypted if the account default
-    # changes after preflight. Ownership and artifact tags still permit its cleanup.
-    for snapshot in snapshots.values():
-        if snapshot and target.legacy_kms_key_arn:
-            require(snapshot.get("Encrypted") is True and snapshot.get("KmsKeyId") == target.legacy_kms_key_arn,
-                    "Refusing to delete a snapshot encrypted outside the publishing target")
     for image in images.values():
         if image:
             sources = {mapping["Ebs"]["SnapshotId"] for mapping in image.get("BlockDeviceMappings", [])
                        if "Ebs" in mapping and "SnapshotId" in mapping["Ebs"]}
             require(sources and sources.issubset(snapshots), "Image refers to snapshots outside this publication")
-    record["status"] = "deleting"
-    write_json(path, record)
     for image_id, image in images.items():
         if image and image.get("State") != "deregistered":
             cloud.deregister(image_id)
@@ -476,24 +373,18 @@ def wait_snapshot(cloud: Cloud, snapshot_id: str, target: PublishingTarget,
 
 def publish_image(build: BuiltImage, target: PublishingTarget, output: Path,
                   profile: str | None = None, cloud: Cloud | None = None) -> dict[str, Any]:
-    require(target.legacy_kms_key_arn is None,
-            "Legacy encrypted publishing targets are supported only for cleanup; apply the installation update and use its current target for new publications")
-    require(len(target.required_tags) <= 45,
-            "Publication requires room for five identity and retention tags within AWS's 50-tag limit")
     volume_gib = build.disk_size_bytes // 1024**3
     output = output.resolve()
     output.mkdir(parents=True, exist_ok=True)
     record_path = output / "published-image.json"
-    require(not any((output / filename).exists() for filename in
-                    ("published-image.json", "published-image.yaml", "publication-state.yaml")),
+    require(not record_path.exists(),
             "Output already contains a publication; use a new directory or clean up the recorded publication")
     publication_id = uuid.uuid4().hex
     name = f"{IMAGE_FAMILY}-{build.disk_sha256[:12]}-{publication_id[:12]}"
     tags = {**dict(target.required_tags), PUBLICATION_TAG: publication_id,
             DIGEST_TAG: build.disk_sha256, FAMILY_TAG: IMAGE_FAMILY, NAME_TAG: IMAGE_FAMILY}
     record = {
-        "schema_version": 1, "kind": "published-image", "status": "uploading",
-        "image": IMAGE_FAMILY, "name": name,
+        "status": "pending", "image": IMAGE_FAMILY, "name": name,
         "publication_id": publication_id, "target": target.identity(),
         "artifact": {"sha256": build.disk_sha256}, "snapshot_id": None, "ami_id": None,
     }
@@ -501,26 +392,15 @@ def publish_image(build: BuiltImage, target: PublishingTarget, output: Path,
     cloud.authenticate()
     cloud.require_unencrypted_snapshots()
     write_json(record_path, record)
-    def remember_snapshot(snapshot_id: str) -> None:
-        require(re.fullmatch(r"snap-[0-9a-f]+", snapshot_id) is not None, "Invalid uploaded snapshot identity")
-        require(record["snapshot_id"] in {None, snapshot_id}, "Upload returned inconsistent snapshot identities")
-        record["snapshot_id"] = snapshot_id
-        write_json(record_path, record)
-
     try:
-        snapshot_id = cloud.upload(build.disk_path, tags, volume_gib, output, remember_snapshot)
-        record.update(snapshot_id=snapshot_id, status="completing-snapshot")
+        snapshot_id = cloud.upload(build.disk_path, tags, volume_gib, output)
+        record["snapshot_id"] = snapshot_id
         write_json(record_path, record)
         cloud.authenticate()
         snapshot = wait_snapshot(cloud, snapshot_id, target, publication_id, build.disk_sha256)
         require(snapshot["VolumeSize"] == volume_gib, "Published snapshot has an unexpected volume size")
-        require(build.disk_path.stat().st_size == build.disk_size_bytes and sha256(build.disk_path) == build.disk_sha256,
-                "Built disk changed during publication; refusing to register it")
-        record["status"] = "registering-image"
-        write_json(record_path, record)
         image_id = cloud.register(name, snapshot_id, volume_gib, tags)
-        require(re.fullmatch(r"ami-[0-9a-f]+", image_id) is not None, "AWS returned an invalid AMI identity")
-        record.update(ami_id=image_id, status="checking-image")
+        record["ami_id"] = image_id
         write_json(record_path, record)
         for attempt in range(60):
             image = cloud.image(image_id)
@@ -569,7 +449,7 @@ def main(argv: list[str] | None = None) -> int:
     operation.add_argument("--cleanup", type=Path, help="Published image or partial publication record to delete")
     operation.add_argument("--prune", action="store_true",
                            help="Keep the newest publication with the exact Cobalt Name tag and retry retirement")
-    parser.add_argument("--target", type=Path, required=True, help="Installation publishing.yaml contract")
+    parser.add_argument("--target", type=Path, required=True, help="Installation publishing.json contract")
     parser.add_argument("--output", type=Path, help="New directory for publication records and upload log")
     parser.add_argument("--profile", help="Existing AWS profile; omitted uses ambient credentials such as GitHub OIDC")
     args = parser.parse_args(argv)
@@ -595,3 +475,7 @@ def main(argv: list[str] | None = None) -> int:
         print(str(error), file=sys.stderr)
         return 1
     return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

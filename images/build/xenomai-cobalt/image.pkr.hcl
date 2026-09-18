@@ -13,8 +13,6 @@ variable "source_sha256" { type = string }
 variable "cpus" { type = number }
 variable "memory_mib" { type = number }
 variable "accelerator" { type = string }
-variable "firmware_code" { type = string }
-variable "firmware_vars" { type = string }
 variable "seed_iso" { type = string }
 variable "ssh_private_key_file" { type = string }
 variable "recipe_directory" { type = string }
@@ -40,15 +38,15 @@ source "qemu" "kernel" {
   machine_type         = "q35"
   net_device           = "virtio-net"
   efi_boot             = true
-  efi_firmware_code    = var.firmware_code
-  efi_firmware_vars    = var.firmware_vars
+  efi_firmware_code    = "/usr/share/OVMF/OVMF_CODE_4M.fd"
+  efi_firmware_vars    = "/usr/share/OVMF/OVMF_VARS_4M.fd"
   efi_drop_efivars     = true
   ssh_username         = "ubuntu"
   ssh_private_key_file = var.ssh_private_key_file
   ssh_timeout          = "15m"
   shutdown_timeout     = "5m"
   # Finalization removes the build SSH key, so shut down in this same session.
-  shutdown_command = "sudo bash /opt/ami-example-recipe/images/build/common/finalize-image.sh && sudo /sbin/shutdown -P now"
+  shutdown_command = "sudo bash /opt/ami-example-recipe/common/finalize-image.sh && sudo /sbin/shutdown -P now"
   qemuargs = [
     ["-cdrom", var.seed_iso],
     ["-serial", "file:${var.output_directory}/serial.log"],
@@ -67,7 +65,7 @@ build {
   provisioner "shell" {
     inline = [
       "sudo mv /tmp/ami-example-recipe /opt/ami-example-recipe",
-      "sudo bash /opt/ami-example-recipe/images/build/xenomai-cobalt/provision.sh"
+      "sudo bash /opt/ami-example-recipe/xenomai-cobalt/provision.sh"
     ]
   }
 }

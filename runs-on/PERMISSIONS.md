@@ -10,7 +10,8 @@ bootstrap permissions below.
 
 | Identity | Responsibility |
 | --- | --- |
-| Existing AWS login | Create and maintain bootstrap IAM, prepare shared account prerequisites, and assume the deployment role |
+| Account administrator | Prepare shared ECS/Spot service-linked roles and the GitHub OIDC provider when needed |
+| Existing AWS login | Create and maintain bootstrap IAM and assume the deployment role |
 | Deployment role, `<name>-deployer` | Provision this installation's networking, RunsOn resources, workload roles, and publisher IAM |
 | RunsOn workload roles | Receive jobs, launch and register runners, and operate the control plane |
 | Publisher role, `<name>-image-publisher` | Upload image snapshots and register or retire the installation's AMIs |
@@ -30,7 +31,7 @@ when changing the pinned RunsOn version or enabling additional services.
 ## Permissions for the existing AWS login
 
 Bootstrap creates these resources, where `<name>` is the installation name from
-`config.yaml`:
+`config.toml`:
 
 - IAM role `<name>-deployer`.
 - Managed policies `<name>-deployment-iam`, `<name>-deployment-services`, and
@@ -41,7 +42,7 @@ Bootstrap creates these resources, where `<name>` is the installation name from
 The initial identity needs permission to create, read, update, tag, and delete
 these exact resources and their policy versions and attachments. It also needs
 `sts:AssumeRole` on `<name>-deployer`. Put its same-account IAM user or role ARN
-in `trusted_principal_arns`; both the source identity's permissions and the
+in `deployment.trusted_principal_arns`; both the source identity's permissions and the
 deployment role's trust must permit assumption. For an assumed session, use its
 underlying IAM role ARN in that list.
 
@@ -50,12 +51,10 @@ so it is a security administrator for the installation. Scoping it to these IAM
 resource names does not make it a routine deployment operator. The routine
 operator's smaller grant is described below.
 
-The installer also reads the account's ECS and EC2 Spot service-linked roles and
-creates them if absent. If GitHub publishing is configured, it reads or creates
-the account's `token.actions.githubusercontent.com` OIDC provider. These shared
-prerequisites use the original AWS login and are not owned by either Terraform
-state. An administrator can prepare them in advance and grant only their read
-permissions to the bootstrap identity.
+An administrator prepares the shared account prerequisites separately, using
+the AWS console, existing account tooling, or `python3 account.py`. These resources
+are not owned by either installation Terraform state. The bootstrap identity
+does not need account-preparation permissions unless it also performs that task.
 
 Have the administrator grant the following policy before bootstrap, replacing
 every `<account-id>` and `<name>` with the intended configuration values:
@@ -91,46 +90,31 @@ every `<account-id>` and `<name>` with the intended configuration values:
         "arn:aws:iam::<account-id>:policy/<name>-deployment-services",
         "arn:aws:iam::<account-id>:policy/<name>-deployment-network"
       ]
-    },
-    {
-      "Effect": "Allow",
-      "Action": "iam:GetRole",
-      "Resource": [
-        "arn:aws:iam::<account-id>:role/aws-service-role/ecs.amazonaws.com/AWSServiceRoleForECS",
-        "arn:aws:iam::<account-id>:role/aws-service-role/spot.amazonaws.com/AWSServiceRoleForEC2Spot"
-      ]
-    },
-    {
-      "Effect": "Allow",
-      "Action": "iam:CreateServiceLinkedRole",
-      "Resource": [
-        "arn:aws:iam::<account-id>:role/aws-service-role/ecs.amazonaws.com/AWSServiceRoleForECS",
-        "arn:aws:iam::<account-id>:role/aws-service-role/spot.amazonaws.com/AWSServiceRoleForEC2Spot"
-      ],
-      "Condition": {
-        "StringEquals": {
-          "iam:AWSServiceName": ["ecs.amazonaws.com", "spot.amazonaws.com"]
-        }
-      }
-    },
-    {
-      "Effect": "Allow",
-      "Action": [
-        "iam:GetOpenIDConnectProvider", "iam:CreateOpenIDConnectProvider",
-        "iam:TagOpenIDConnectProvider"
-      ],
-      "Resource": "arn:aws:iam::<account-id>:oidc-provider/token.actions.githubusercontent.com"
     }
   ]
 }
 ```
 
-The OIDC statement is needed only when GitHub publishing is enabled. If shared
-prerequisites already exist, their creation actions can be omitted. The
-installation-specific policy is also available as the bootstrap
+The installation-specific policy is also available as the bootstrap
 `existing_identity_policy_json` output after bootstrap; its canonical definition
 is [bootstrap/outputs.tf](bootstrap/outputs.tf). That output records required
 authorization and does not grant permissions to the current identity.
+
+The identity running `python3 account.py` needs these separate permissions:
+
+- `iam:GetRole` and `iam:CreateServiceLinkedRole` for
+  `arn:aws:iam::<account-id>:role/aws-service-role/ecs.amazonaws.com/AWSServiceRoleForECS`
+  and `arn:aws:iam::<account-id>:role/aws-service-role/spot.amazonaws.com/AWSServiceRoleForEC2Spot`.
+  Restrict creation with `iam:AWSServiceName` equal to `ecs.amazonaws.com` or
+  `spot.amazonaws.com`.
+- When GitHub publishing is enabled, `iam:GetOpenIDConnectProvider`,
+  and `iam:CreateOpenIDConnectProvider` for
+  `arn:aws:iam::<account-id>:oidc-provider/token.actions.githubusercontent.com`.
+
+The helper checks the caller's account before making changes, reuses existing
+roles and providers, and creates missing ones. If the prerequisites already
+exist, its creation permissions can be omitted; an existing GitHub OIDC provider
+must include the `sts.amazonaws.com` audience.
 
 The policy is scoped to the resources and enabled features of this blueprint.
 AWS Organizations service control policies, a source role's own permissions
@@ -156,17 +140,17 @@ name:
 }
 ```
 
-Its IAM ARN must also appear in `trusted_principal_arns`. Run bootstrap using the
+Its IAM ARN must also appear in `deployment.trusted_principal_arns`. Run bootstrap using the
 authorized administrator to change that list, then give the routine operator
 the existing configuration and private local states. The operator can run
-`./install plan` and `./install apply --deployment-only` using its own profile.
-It does not need the bootstrap administrator's credentials. Provision shared
-account prerequisites during bootstrap before handing off routine deployment.
+`python3 installer.py plan` and `python3 installer.py apply --deployment-only` using its own profile.
+It does not need the bootstrap administrator's credentials. Prepare shared
+account prerequisites before handing off routine deployment.
 
 ## Publishing access
 
 Local publisher identities need `sts:AssumeRole` on the publisher ARN in
-`publishing.yaml` and must appear in `publisher_principal_arns`. An AWS role
+`publishing.json` and must appear in `publishing.principal_arns`. An AWS role
 profile obtains temporary credentials without writing access keys to the
 contract:
 
@@ -182,9 +166,8 @@ in the publisher's AWS configuration, and its source profile uses the
 publisher's existing authentication method.
 
 GitHub publishing uses one account-wide OIDC provider with audience
-`sts.amazonaws.com`. Each `publisher_github_repositories` entry authorizes one
-exact repository/environment subject, exported in the contract's
-`authentication.github.repositories` list. A publishing job requires
+`sts.amazonaws.com`. Each `publishing.github_repositories` entry authorizes one
+exact repository/environment subject in the publisher role's trust. A publishing job requires
 `id-token: write` and must name its authorized GitHub environment when requesting
 temporary credentials. Configure environment protection rules in each repository.
 All authorized repositories assume the same publisher role and can manage the
@@ -198,9 +181,8 @@ selected region. The publisher can read that region's EBS encryption default and
 has no KMS grants. IAM enforces ownership; the
 [image publisher](../images/README.md#publish-to-the-installations-target) checks
 disk and snapshot requirements. RunsOn uses no custom EBS key or associated
-runtime KMS grants. The deployment role retains only the KMS permissions needed to
-inspect and retire an older installation's key and alias. Workload KMS access
-for the S3 cache is scoped separately to that service and its cache objects.
+runtime KMS grants. Workload KMS access for the S3 cache is scoped separately
+to that service and its cache objects.
 
 The exact publishing policy and trust are maintained in
 [deployment/publishing.tf](deployment/publishing.tf), with its permissions boundary
