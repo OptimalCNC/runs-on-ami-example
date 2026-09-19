@@ -1,11 +1,13 @@
 #!/bin/bash
 set -euo pipefail
-# Finalize the Ubuntu 24.04 image after installing its runner and Cobalt payload.
+# Finalize the image after all recipe steps have completed.
+workspace=${1:?workspace required}
+cd /
+umount "$workspace"
+rmdir "$workspace"
 apt-get clean
-rm -rf /var/lib/apt/lists/* /opt/ami-example-recipe
-umount /mnt/ami-example-build
-rmdir /mnt/ami-example-build
-rm -rf /root/.ssh /home/ubuntu/.ssh /home/runner/.ssh
+rm -rf /var/lib/apt/lists/*
+rm -rf /root/.ssh /home/*/.ssh
 rm -f /etc/ssh/ssh_host_*
 # cloud-init must regenerate instance state, host keys and machine-id at the next boot.
 cloud-init clean --logs --machine-id --seed --configs network

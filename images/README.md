@@ -5,39 +5,25 @@ Dovetail, and Xenomai 3 Cobalt payload, validates it in a fresh VM, then publish
 it as an EC2 AMI. All three commands run on a normal Linux host. Building and VM
 validation need no AWS credentials; publishing uploads the completed disk.
 
-- `build/` owns the Packer recipe, provisioning scripts, and disk construction.
-- `validate/` owns the QEMU boot and Cobalt application execution.
-- `publish/` owns the AWS upload, AMI registration, and publication cleanup.
+For on-demand or scheduled automation, see
+[GitHub Actions workflows](#github-actions-workflows).
 
-The commands share the disk contract in `contracts.py`.
+- [build/](build/) owns VM configuration, disk construction, and finalization.
+- [recipes/](recipes/README.md) owns the base image definition, ordered
+  installation scripts, and their inputs.
+- [validate/](validate/) owns the QEMU boot and Cobalt application execution.
+- [publish/](publish/README.md) owns the AWS upload, AMI registration, and
+  publication cleanup, with its own configuration, recovery guide, and local checks.
 
-Start from the repository checkout:
-
-```sh
-cd images
-```
+Build produces a raw disk file; validation and publishing take its path.
 
 ## Prerequisites
 
 Use an x86-64 Ubuntu 24.04 host with Python 3.12. The Python commands use only the
-standard library. Install the prerequisites for each submodule yourself and
-make its commands available on `PATH`:
-
-- `build/`: [Packer](https://developer.hashicorp.com/packer/install) 1.16.0,
-  its [QEMU plugin](https://developer.hashicorp.com/packer/integrations/hashicorp/qemu)
-  1.1.6 installed with `packer init build/xenomai-cobalt/image.pkr.hcl`, QEMU (`qemu-system-x86_64`
-  and `qemu-img`), OVMF firmware, `cloud-localds`, `xorriso`, and OpenSSH client
-  tools. The [Packer recipe](build/xenomai-cobalt/image.pkr.hcl) declares the
-  required Packer and plugin versions.
-- `validate/`: QEMU (`qemu-system-x86_64` and `qemu-img`), OVMF firmware,
-  `cloud-localds`, and OpenSSH client tools (`ssh` and `ssh-keygen`).
-- `publish/`: [AWS CLI v2](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html)
-  and [AWS Labs coldsnap](https://github.com/awslabs/coldsnap) 0.12.0.
-  Cleanup needs only AWS CLI v2. Both operations need an authorized AWS login
-  or GitHub OIDC session. Install and authenticate GitHub CLI (`gh`) to use
-  the workflow configuration and dispatch examples below.
-
-On Ubuntu 24.04, install the system packages for build and validation:
+standard library. Build and validation require QEMU (`qemu-system-x86_64` and
+`qemu-img`), OVMF firmware, `cloud-localds`, and OpenSSH client tools (`ssh` and
+`ssh-keygen`). Building also needs `xorriso`. Install these system packages and
+make their commands available on `PATH`:
 
 ```sh
 sudo apt install \
@@ -45,201 +31,161 @@ sudo apt install \
   openssh-client
 ```
 
+Building also requires [Packer](https://developer.hashicorp.com/packer/install)
+1.16.0 and its QEMU plugin 1.1.6, as declared in the
+[Packer template](build/image.pkr.hcl). With Packer on `PATH`, install the plugin:
+
+```sh
+packer init build/image.pkr.hcl
+```
+
 The host needs neither a Cobalt kernel nor a RunsOn installation. Build and
 validation use KVM by default and require read/write access to `/dev/kvm`;
 `--accelerator tcg` selects slower software emulation when hardware
-virtualization is unavailable. Build downloads the Ubuntu cloud disk and public
-kernel, userspace, and package inputs pinned in
-[inputs.lock.json](build/xenomai-cobalt/inputs.lock.json). It creates no AWS resources.
+virtualization is unavailable.
 
 The default build VM uses 4 CPUs and 8 GiB of memory; leave memory for the host as
 well. Its root disk is 16 GiB, with a separate disposable 16 GiB build disk.
 Allow storage for those sparse disks, downloaded inputs, and build logs. Actual
 host disk consumption depends on the build's written data.
 
-If you build coldsnap from source, install Rust 1.94.1 or newer with Cargo,
-a C/C++ toolchain, CMake, and pkg-config. On Ubuntu, the native build tools are:
-
-```sh
-sudo apt install build-essential cmake pkg-config
-```
+For publishing tools and AWS access, follow the
+[publisher prerequisites](publish/README.md#prerequisites).
 
 ## Build and validate
 
-Create a finalized raw disk and its JSON manifest in a new output directory:
+Create a finalized raw disk in a new output directory:
 
 ```sh
-python3 -m build.image --output .local/build --cpus 4 --memory-mib 8192
+python3 -m build.image --recipe recipes --output .local/build --cpus 4 --memory-mib 8192
 ```
 
-The [Packer QEMU builder](https://developer.hashicorp.com/packer/integrations/hashicorp/qemu/latest/components/builder/qemu)
-boots the pinned source disk with UEFI, compiles the Cobalt kernel and userspace,
-installs the GitHub runner and RunsOn bootstrap, and finalizes the root disk.
-The disposable build disk and temporary login material are removed when the
-build finishes. Follow progress in `.local/build/packer.log`.
+`--recipe` selects an [installation recipe](recipes/README.md). Its
+[recipe.json](recipes/recipe.json) defines the source disk and ordered scripts;
+[build/image.json](build/image.json) configures disk sizes, the SSH user, and
+initial cloud-init settings. The default recipe uses the latest released Ubuntu
+24.04 cloud disk, installs the runner and development tools, and builds the
+pinned Cobalt kernel and SDK.
 
-Success produces `.local/build/disk.raw` and `.local/build/build.json`. The
-manifest records the disk path, digest, kernel release, and Xenomai version.
-Keep it with the disk; its disk path resolves relative to the manifest. Use a new
-output directory for another build.
+Follow progress in `.local/build/packer.log`. A failed step stops the build;
+success produces the finalized `.local/build/disk.raw`. Use a new output
+directory for another build.
 
 Boot the completed image in a fresh VM and run the Cobalt application as the
 image's `runner` user:
 
 ```sh
-python3 -m validate.image --build .local/build/build.json \
+python3 -m validate.image --image .local/build/disk.raw \
   --output .local/validation --timeout-seconds 600
 ```
 
-Validation uses a disposable QCOW2 overlay, checks the booted kernel and Xenomai
-version, then builds and runs the Cobalt application with a 20-second execution
-timeout. The example application is supplied for this VM run. The command must
-succeed before publishing. Logs are written to `.local/validation`; validation
-needs the same QEMU, OVMF, cloud-init seed, and SSH host tools used by the build.
+Validation uses a disposable QCOW2 overlay, then builds and runs the Cobalt
+application with a 20-second execution timeout. The application verifies that a
+real-time task runs in Cobalt primary mode at the required priority. Logs are
+written to `.local/validation`. The command must succeed before publishing.
 
-The [image workflow](../.github/workflows/image-build.yml) runs separate `build`
-and `validate` jobs on GitHub-hosted `ubuntu-24.04` for relevant pull requests,
-manual dispatches, and its weekly schedule. The build job uploads a compressed
-sparse disk bundle; the validation job downloads it and boots the VM on its own
-runner. After validation succeeds, scheduled runs publish automatically; manual
-dispatches publish when requested. A separate `clean` job runs after each
-`publish` job, including failed publish jobs, and skips runs without publication.
-Cleanup needs only Python and AWS CLI v2; it needs no disk bundle.
+For publisher changes, its [local checks](publish/README.md#local-checks) exercise
+configuration, publication, retention, and recovery without a VM or AWS access.
 
-Every successful build retains its disk bundle for 1 day so later jobs can
-consume it. Build and VM validation logs are retained for 7 days. Download and
-extract the disk bundle to obtain `build.json` and `disk.raw`. Build and
-validation jobs need no AWS credentials.
+## Publish to AWS
 
-## Publish to the installation's target
+Create `.local/publishing.json` using the
+[publisher configuration and authentication instructions](publish/README.md#inputs).
+Use `ubuntu2404-xenomai-cobalt` as the stable image name.
 
-Obtain `publishing.json` from the RunsOn installation. Its destination account,
-region, publisher role, and required tags are the publishing
-contract. The [installation permissions guide](../runs-on/PERMISSIONS.md#publishing-access)
-describes local role profiles and GitHub OIDC authentication.
-
-Publish the selected built artifact using an existing authorized AWS profile:
+Publish the validated disk locally:
 
 ```sh
-python3 -m publish.image \
-  --build .local/build/build.json \
-  --target ../runs-on/.local/contracts/publishing.json \
-  --output .local/publication \
-  --profile your-authorized-login
+python3 -m publish.publish --config .local/publishing.json \
+  --image .local/build/disk.raw --output .local/publication
 ```
 
-The command assumes the contract's publisher role when needed and verifies the
-resulting account and role. An existing session for that publisher role is also
-accepted. For GitHub Actions, obtain temporary credentials through OIDC in an
-environment authorized by the installation's `publishing.github_repositories`
-configuration, then omit `--profile`.
+## GitHub Actions workflows
 
-To publish through `image-build.yml`, set the authorized GitHub environment's
-`PUBLISHING_TARGET` variable to the complete exported contract, then dispatch
-with publication enabled. For an environment named `production`:
+The [image workflow](../.github/workflows/image-build.yml) runs separate `build`,
+`validate`, `publish`, and `clean` jobs on GitHub-hosted `ubuntu-24.04`, installing
+the host tools it needs. Use it as a reference for on-demand or weekly image
+builds and publication. The build job uploads a compressed sparse disk bundle,
+which validation boots on its own runner. Publication consumes the same bundle
+after validation succeeds.
+
+The separate [repository validation workflow](../.github/workflows/validate.yml)
+runs the publisher's [local checks](publish/README.md#local-checks) and workflow
+linting on pull requests, pushes to `main`, and manual dispatches.
+
+To adapt the image workflow to another repository, copy it into `.github/workflows/`
+and keep `images/` and `execution/cobalt/` at their existing paths; VM validation
+builds the Cobalt application from that checkout. Enable GitHub Actions and put
+the workflow on the repository's default branch for manual and scheduled runs.
+Install and authenticate GitHub CLI (`gh`) to use the examples below.
+
+Create the chosen GitHub environment in repository settings. Configure its
+`PUBLISHING_CONFIG` variable with the [publishing configuration](#publish-to-aws)
+and `PUBLISHING_ROLE_ARN` with the IAM role authorized for GitHub OIDC. The
+[RunsOn installation guide](../runs-on/README.md#updates-exports-and-removal)
+explains how its exported account, region, ownership tags, and publisher role
+supply these values. For an environment named `production`:
 
 ```sh
-gh variable set PUBLISHING_TARGET --env production \
-  < ../runs-on/.local/contracts/publishing.json
+gh variable set PUBLISHING_CONFIG --env production < .local/publishing.json
+gh variable set PUBLISHING_ROLE_ARN --env production \
+  --body arn:aws:iam::123456789012:role/image-publisher
+```
+
+The workflow obtains temporary credentials through OIDC before calling the
+publisher. AWS checks the repository and environment against the role's trust.
+
+| Trigger in `image-build.yml` | Behavior |
+| --- | --- |
+| Pull request changing `images/**`, `execution/cobalt/**`, or `.github/workflows/image-build.yml` | Build and validate only. |
+| Manual (`workflow_dispatch`) | Build and validate; publish and clean when `publish_image=true`. The `environment` input defaults to `production`. |
+| Schedule (`0 0 * * 1`) | Every Monday at 00:00 UTC, build, validate, publish, and clean from the default branch using `production`. |
+
+To run on demand, select the workflow in GitHub's **Actions** tab and choose
+**Run workflow**, or use GitHub CLI from this checkout:
+
+```sh
+# Build and validate only.
+gh workflow run image-build.yml
+
+# Build, validate, publish, and clean.
 gh workflow run image-build.yml -f publish_image=true -f environment=production
 ```
 
-The publication job reads its role and region from that contract and authenticates
-through GitHub OIDC. AWS checks the repository and environment against the role's
-trust. The job downloads the same disk bundle used by validation.
-Without `publish_image=true`, manual dispatch runs only build and validation.
-Publication records are retained as workflow artifacts for 90 days; keep a copy
-with the target contract for the lifetime of the AWS resources.
+For a different interval, edit the workflow's `on.schedule` cron expression
+(UTC). Scheduled runs use the `production` fallback in both the `publish` and
+`clean` job environments; change both if your publishing environment has another
+name. On forks, enable the scheduled workflow in the Actions tab after
+configuring publishing.
 
-Publication uploads the raw disk through EBS direct APIs without encryption,
-waits for its snapshot, registers a UEFI x86-64 AMI with ENA
-support, and checks the resulting identity. Successful publication
-writes `published-image.json` with `status: available`, the AMI and snapshot IDs,
-source disk digest, and target identity for diagnostics and cleanup. Each version
-has a unique `ubuntu2404-xenomai-cobalt-<digest>-<publication>` name, as required
-by AWS. The AMI and its snapshot also carry the exact stable `Name` tag
-`ubuntu2404-xenomai-cobalt` for cleanup. The
-[execution workflow](../execution/README.md) selects `image=ubuntu2404-xenomai-cobalt`
-through the owner and name pattern in [`.github/runs-on.yml`](../.github/runs-on.yml), so new
-publications require no workflow changes. A new version becomes eligible for
-execution as soon as it is available; VM validation must finish before publishing.
-
-EBS encryption by default must be disabled in the destination account and region:
-AWS cannot create unencrypted snapshots while it is enabled. Publishing checks
-this setting before uploading and verifies that the snapshot and AMI are
-unencrypted. It does not change the account setting. RunsOn omits explicit
-runner-volume encryption settings, leaving encryption to the source image and
-regional EBS defaults. Unencrypted publication does not make the AMI public or
-grant additional launch access.
-
-The current upload includes zero blocks, so a sparse 16 GiB raw disk still
-transfers its full logical 16 GiB. Publication
-incurs [EBS direct API and snapshot storage charges](https://aws.amazon.com/ebs/pricing/),
-plus applicable source network charges. It creates no EC2 build
-instance or S3 staging bucket. Images remain in the contract's account and region;
-sharing or copying them into another account or region requires separate AMI
-and snapshot access and lifecycle management.
+The [execution workflow](../execution/README.md) selects
+`image=ubuntu2404-xenomai-cobalt` through the owner and name pattern in
+[`.github/runs-on.yml`](../.github/runs-on.yml). A new publication becomes eligible
+for execution as soon as it is available; VM validation must finish first.
 
 ## Outputs and cleanup
 
-The separate `clean` job keeps the newest available publication and its one
-backing snapshot for this installation's exact `Name` tag
-`ubuntu2404-xenomai-cobalt`. It deregisters older matching images and deletes
-their snapshots. Different names, including names with an additional suffix,
-do not match. Installation ownership is identified by resource tags. Cleanup
-also runs after failed publication, retaining the newest existing available image.
-The GitHub workflow serializes publishing runs through cleanup; run local
-publication and cleanup commands serially for the same target as well.
+The examples write to the Git-ignored `.local/` directory. The image workflow
+uploads the disk as a compressed bundle and retains these artifacts:
 
-Keep operation results with their corresponding artifacts and publishing target:
+| Output under `.local/` | Purpose | GitHub retention |
+| --- | --- | --- |
+| `build/disk.raw` | Final raw disk | 1 day |
+| `build/packer.log`, `build/serial.log` | Build diagnostics | 7 days |
+| `validation/*.log` | VM boot, application build, and execution diagnostics | 7 days |
+| `publication/published-image.json` | Publication identity and cleanup state | 90 days |
+| `publication/upload.log` | Snapshot upload diagnostics | 90 days |
 
-| Output | Purpose |
-| --- | --- |
-| `build/disk.raw`, `build/build.json` | Final disk, its digest, and expected kernel and Xenomai versions |
-| `build/packer.log`, `build/serial.log` | Build diagnostics |
-| `validation/*.log` | VM boot, application build, and execution diagnostics |
-| `publication/published-image.json` | Publication progress, AMI and snapshot identity, and cleanup state |
-| `publication/upload.log` | Snapshot upload diagnostics |
+After each `publish` job, a separate `clean` job keeps the newest available
+matching publication and its one backing snapshot, removing older versions.
+It also runs after failed publication and skips runs without publication.
+The workflow serializes publishing runs through cleanup.
 
-`.local/` is Git-ignored. Once its logs or artifacts are no
-longer needed, local build outputs and caches can be
-removed independently of AWS resources. Retain publication records and the
-matching target contract while their AMIs or snapshots exist.
+For local publication, run the publisher's
+[prune command](publish/README.md#inputs) afterward; the same guide provides
+deletion of individual publications. Follow its
+[failure and recovery instructions](publish/README.md#failure-and-recovery)
+when publication or cleanup fails or is interrupted.
 
-Retirement records deletion intent on each old snapshot before deregistering its
-image, so a later cleanup can retry unfinished snapshot deletion. If retirement
-fails, the `clean` job fails independently and the new image remains available.
-Run cleanup after local publication, or retry it without rebuilding or publishing:
-
-```sh
-python3 -m publish.image --prune \
-  --target ../runs-on/.local/contracts/publishing.json \
-  --profile your-authorized-login
-```
-
-Automatic retention covers only publications with the exact stable `Name` tag,
-Cobalt family tag, and expected versioned AMI name. Use their saved records to
-clean up publications from before this naming scheme. GitHub artifact expiry and
-deletion of local files do not remove AWS resources.
-
-Delete a published image and its backing snapshot using its record:
-
-```sh
-python3 -m publish.image \
-  --cleanup .local/publication/published-image.json \
-  --target ../runs-on/.local/contracts/publishing.json \
-  --profile your-authorized-login
-```
-
-Cleanup verifies the target, ownership and artifact tags, and publication
-identity before deregistering the recorded AMI and deleting its
-snapshot. It updates the supplied record to `status: deleted`. Individual image
-retention belongs to this module; removing local files does not remove an AMI.
-
-Publication creates `published-image.json` before uploading and updates that
-same record as resources are created. An interrupted publication preserves the
-record and attempts to clean up its created resources. If it reports
-`cleanup-needed`, retry the cleanup command above. Publishing and cleanup use
-JSON records and the current publishing target. To refresh an older
-installation's target, follow the
-[installation update instructions](../runs-on/README.md#updates-exports-and-removal).
+Keep publication records while their AMIs or snapshots exist. GitHub artifact
+expiry and deletion of local files do not remove AWS resources.

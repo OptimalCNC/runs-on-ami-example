@@ -1,0 +1,11 @@
+{
+  "source_image": {
+    "url": "https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-amd64.img",
+    "sha256sums_url": "https://cloud-images.ubuntu.com/releases/24.04/release/SHA256SUMS"
+  },
+  "steps": [
+    "install-runs-on.sh",
+    "install-tools.sh",
+    "xenomai-cobalt/provision.sh"
+  ]
+}

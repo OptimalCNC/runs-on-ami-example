@@ -179,7 +179,7 @@ and snapshots carrying that tag. AMI registration also requires that tag on its
 backing snapshots. Image inspection is read-only across the
 selected region. The publisher can read that region's EBS encryption default and
 has no KMS grants. IAM enforces ownership; the
-[image publisher](../images/README.md#publish-to-the-installations-target) checks
+[image publisher](../images/publish/README.md) checks
 disk and snapshot requirements. RunsOn uses no custom EBS key or associated
 runtime KMS grants. Workload KMS access for the S3 cache is scoped separately
 to that service and its cache objects.

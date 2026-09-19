@@ -1,0 +1,23 @@
+{
+  "root_disk_gib": 16,
+  "build_disk_gib": 16,
+  "ssh_username": "ubuntu",
+  "cloud_init": {
+    "bootcmd": [
+      [
+        "systemctl",
+        "disable",
+        "--now",
+        "apt-daily.timer",
+        "apt-daily-upgrade.timer"
+      ],
+      [
+        "systemctl",
+        "mask",
+        "apt-daily.service",
+        "apt-daily-upgrade.service",
+        "unattended-upgrades.service"
+      ]
+    ]
+  }
+}

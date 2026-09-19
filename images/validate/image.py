@@ -14,8 +14,6 @@ import tarfile
 import tempfile
 import time
 
-from contracts import BuiltImage
-
 
 ROOT = Path(__file__).resolve().parents[2]
 GUEST_DIRECTORY = "/tmp/ami-example-validation"
@@ -95,7 +93,7 @@ def wait_for_ssh(ssh: list[str], process, deadline: float, log):
         time.sleep(min(1, remaining(deadline)))
 
 
-def run_guest(image: BuiltImage, ssh: list[str], temporary: Path, deadline: float, log):
+def run_guest(ssh: list[str], temporary: Path, deadline: float, log):
     archive = temporary / "test.tar"
     with tarfile.open(archive, "w") as stream:
         for name in ("CMakeLists.txt", "main.c"):
@@ -105,12 +103,13 @@ def run_guest(image: BuiltImage, ssh: list[str], temporary: Path, deadline: floa
         subprocess.run([*ssh, f"mkdir -m 0700 {GUEST_DIRECTORY} && tar -xf - -C {GUEST_DIRECTORY}"],
                        stdin=stream, stdout=log, stderr=log, check=True, timeout=remaining(deadline))
     command = shlex.join(["bash", f"{GUEST_DIRECTORY}/validate-guest.sh",
-                          image.kernel_release, image.xenomai_version, GUEST_DIRECTORY])
+                          GUEST_DIRECTORY])
     subprocess.run([*ssh, command], stdout=log, stderr=log, check=True, timeout=remaining(deadline))
 
 
-def validate(image: BuiltImage, output: Path, *, accelerator: str, cpus: int,
+def validate(image: Path, output: Path, *, accelerator: str, cpus: int,
              memory_mib: int, timeout_seconds: int):
+    image = image.resolve(strict=True)
     output = output.resolve()
     output.mkdir(parents=True, exist_ok=True)
     deadline = time.monotonic() + timeout_seconds
@@ -123,7 +122,7 @@ def validate(image: BuiltImage, output: Path, *, accelerator: str, cpus: int,
         shutil.copyfile("/usr/share/OVMF/OVMF_VARS_4M.fd", variables)
         overlay = temporary / "disk.qcow2"
         subprocess.run(["qemu-img", "create", "-q", "-f", "qcow2", "-F", "raw",
-                        "-b", str(image.disk_path), str(overlay)], check=True)
+                        "-b", str(image), str(overlay)], check=True)
         with socket.socket() as listener:
             listener.bind(("127.0.0.1", 0))
             port = listener.getsockname()[1]
@@ -132,20 +131,19 @@ def validate(image: BuiltImage, output: Path, *, accelerator: str, cpus: int,
         ssh = ssh_command(key, port)
         with running_vm(command, output / "qemu.log") as process, (output / "ssh.log").open("wb") as log:
             wait_for_ssh(ssh, process, deadline, log)
-            run_guest(image, ssh, temporary, deadline, log)
+            run_guest(ssh, temporary, deadline, log)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--build", type=Path, required=True)
+    parser.add_argument("--image", type=Path, required=True, help="Raw disk to boot and validate")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--accelerator", choices=("kvm", "tcg"), default="kvm")
     parser.add_argument("--cpus", type=int, default=2)
     parser.add_argument("--memory-mib", type=int, default=2048)
     parser.add_argument("--timeout-seconds", type=int, default=300)
     args = parser.parse_args()
-    image = BuiltImage.load(args.build)
-    validate(image, args.output, accelerator=args.accelerator, cpus=args.cpus,
+    validate(args.image, args.output, accelerator=args.accelerator, cpus=args.cpus,
              memory_mib=args.memory_mib, timeout_seconds=args.timeout_seconds)
     print(f"Cobalt VM validation passed; logs: {args.output}")
 

@@ -1,0 +1,21 @@
+#!/bin/bash
+BUILD_ONLY_PACKAGES=(
+  autoconf
+  automake
+  autotools-dev
+  bc
+  bison
+  flex
+  libelf-dev
+  libltdl-dev
+  libssl-dev
+  libtool-bin
+  m4
+  pkgconf
+)
+SOURCE_URL='https://gitlab.com/api/v4/projects/xenomai%2Flinux-dovetail/repository/archive.tar.gz?sha=dac73761a5daa5992bc866aa1ef8d284c0920aaa'
+SOURCE_SHA256=bfd5331fbf4293f23a306b7873acde343ebfdaf44a80a665b3eca6565f5d5cc4
+XENOMAI_URL=https://gitlab.com/xenomai/xenomai3/xenomai/-/archive/654ce0ad60520b766606868d2705159e564774fe/xenomai-654ce0ad60520b766606868d2705159e564774fe.tar.gz
+XENOMAI_SHA256=f8f460f2d973750da1bd3900a9bcc0b50bd2c31aa2d892358fec6eb8148735cd
+XENOMAI_PREFIX=/usr/xenomai
+XENOMAI_GID=4242

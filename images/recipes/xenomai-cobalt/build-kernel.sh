@@ -2,28 +2,19 @@
 set -euo pipefail
 export LC_ALL=C TZ=UTC
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
-recipe=/opt/ami-example-recipe
-source_dir=/mnt/ami-example-build/linux
-xenomai_dir=/mnt/ami-example-build/xenomai
-userspace_build=/mnt/ami-example-build/xenomai-build
-lock="$recipe/xenomai-cobalt/inputs.lock.json"
-mkdir -p "$source_dir" "$xenomai_dir" "$userspace_build"
-eval "$(python3 - "$lock" <<'PY'
-import json, shlex, sys
-lock = json.load(open(sys.argv[1]))
-k, x = lock['kernel'], lock['xenomai']
-for name, value in {'SOURCE_URL': k['url'], 'SOURCE_SHA256': k['sha256'],
-                    'XENOMAI_URL': x['url'], 'XENOMAI_SHA256': x['sha256'],
-                    'XENOMAI_PREFIX': x['prefix'],
-                    'XENOMAI_GID': x['allowed_group_gid']}.items():
- print(f'{name}={shlex.quote(str(value))}')
-PY
-)"
-archive=/mnt/ami-example-build/inputs/linux-dovetail.tar.gz
+recipe_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+source "$recipe_dir/inputs.sh"
+build_dir="$recipe_dir/.build"
+export TMPDIR="$build_dir/tmp"
+source_dir="$build_dir/linux"
+xenomai_dir="$build_dir/xenomai"
+userspace_build="$build_dir/xenomai-build"
+mkdir -p "$TMPDIR" "$source_dir" "$xenomai_dir" "$userspace_build"
+archive="$build_dir/linux-dovetail.tar.gz"
 curl --fail --location --retry 3 --proto '=https' --tlsv1.2 "$SOURCE_URL" -o "$archive"
 printf '%s  %s\n' "$SOURCE_SHA256" "$archive" | sha256sum --check --strict
 tar -xzf "$archive" --strip-components=1 -C "$source_dir"
-archive=/mnt/ami-example-build/inputs/xenomai.tar.gz
+archive="$build_dir/xenomai.tar.gz"
 curl --fail --location --retry 3 --proto '=https' --tlsv1.2 "$XENOMAI_URL" -o "$archive"
 printf '%s  %s\n' "$XENOMAI_SHA256" "$archive" | sha256sum --check --strict
 tar -xzf "$archive" --strip-components=1 -C "$xenomai_dir"
@@ -31,7 +22,7 @@ tar -xzf "$archive" --strip-components=1 -C "$xenomai_dir"
 "$xenomai_dir/scripts/prepare-kernel.sh" --linux="$source_dir" --arch=x86_64
 cd "$source_dir"
 kernel_make=(make CC=gcc-13 HOSTCC=gcc-13)
-cp "$recipe/xenomai-cobalt/kernel.config" .config
+cp "$recipe_dir/kernel.config" .config
 "${kernel_make[@]}" olddefconfig
 release=$("${kernel_make[@]}" -s kernelrelease)
 "${kernel_make[@]}" -j"$(nproc)" bzImage modules

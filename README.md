@@ -14,12 +14,24 @@ The image recipe builds Ubuntu 24.04 with a Dovetail-enabled Linux kernel,
 Xenomai 3 Cobalt integration, and matching userspace development tools. The
 Cobalt application test establishes functional execution without a latency target.
 
+## Get started
+
+1. Follow the [RunsOn installation guide](runs-on/README.md), including
+   [GitHub setup and the installation check](runs-on/README.md#finish-the-github-setup).
+2. Follow the [image guide](images/README.md) to build, validate, and publish an
+   image. The installation guide explains how to
+   [configure publishing from its exported contract](runs-on/README.md#updates-exports-and-removal).
+3. Follow the [execution guide](execution/README.md) to run the Cobalt example
+   with the installed RunsOn environment and AWS region. New publications are
+   selected automatically through the stable `image=ubuntu2404-xenomai-cobalt`
+   selector.
+
 ## Validate locally
 
 Run the validation commands documented by the module you are changing:
 
-- [Images](images/README.md#build-and-validate): Build the disk, then boot it in a
-  fresh VM to build and run the Cobalt application.
+- [Images](images/README.md): Publishing tests and full disk build and VM
+  validation.
 - [RunsOn installation](runs-on/README.md#prerequisites): Python tests and
   isolated Terraform validation and mock tests.
 - [Execution](execution/README.md): CMake build and CTest commands for a
@@ -30,53 +42,13 @@ installation tests and workflow linting as independent jobs.
 Generated files stay in each module's ignored `.local/` directory.
 
 For workflow changes, have [actionlint](https://github.com/rhysd/actionlint)
-available on `PATH` and run it from the repository root:
+available on `PATH` and run:
 
 ```sh
 actionlint -shellcheck= -config-file=.github/actionlint.yaml
 ```
 
-To build a complete disk on a Linux host, follow the [image guide](images/README.md).
-Pull requests run the [image workflow](.github/workflows/image-build.yml) with
-separate build and VM validation jobs on GitHub-hosted Ubuntu when its
-image-related paths change. Weekly scheduled runs publish the validated disk;
-manual dispatch can also request publication.
-
-## Supply deployment configuration
-
-For a new installation, follow the [RunsOn guide](runs-on/README.md) from
-`runs-on/`. Keep its input configuration, secret files, and Terraform states in
-the Git-ignored `runs-on/.local/` directory. Successful deployment exports:
-
-| Contract | Consumer |
-| --- | --- |
-| `runs-on/.local/contracts/installation.json` | Installation setup: account, region, environment, organization, and setup URL |
-| `runs-on/.local/contracts/publishing.json` | Image publishing: account, region, publisher role, and required ownership tags |
-
-The [image module](images/README.md#publish-to-the-installations-target) consumes
-the publishing contract through an explicit file path. Build produces a local
-disk, Validate boots it in a fresh VM, and Publish uploads that artifact.
-
-## Run on RunsOn
-
-After GitHub App setup, run [Check RunsOn
-installation](.github/workflows/runs-on-installation-smoke.yml) with the installed
-RunsOn environment. The [installation guide](runs-on/README.md#finish-the-github-setup)
-provides the dispatch command and acceptance criteria. The check uses a stock
-image to prove EC2 launch, runner registration, and job execution.
-
-[RunsOn execution](execution/README.md) builds and tests the Cobalt example
-application using the stable `image=ubuntu2404-xenomai-cobalt` selector. Dispatch
-its workflow with the RunsOn environment and AWS region; new publications are
-selected automatically.
-
-## Operate and reuse
-
-[RunsOn installation](runs-on/README.md) owns deployment, permissions, exported
-contracts, and installation removal. [Image build, validation, and publishing](images/README.md)
-owns disk artifacts, VM validation, published AMIs, and their cleanup.
-[RunsOn execution](execution/README.md) owns the example application and its
-build-and-test workflow.
+## License
 
 Repository code uses the [MIT license](LICENSE); the pinned Linux and Xenomai
 sources retain their upstream licenses.
