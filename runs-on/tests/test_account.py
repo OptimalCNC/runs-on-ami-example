@@ -62,18 +62,24 @@ class AccountTests(InstallerTestCase):
         self.assertTrue(all(command[0] == "aws" for command, _ in self.external.calls))
         self.assertFalse((self.root / ".local").exists())
 
-    def test_explicit_profile_uses_the_selected_identity_for_account_preparation(self):
-        with patch.dict(os.environ, {
+    def test_profile_selection_preserves_native_credential_resolution(self):
+        environment = {
             "AWS_ACCESS_KEY_ID": "other-account", "AWS_SECRET_ACCESS_KEY": "secret",
-            "AWS_SESSION_TOKEN": "token", "AWS_DEFAULT_PROFILE": "other-profile",
+            "AWS_SESSION_TOKEN": "token", "AWS_PROFILE": "other-profile", "AWS_DEFAULT_PROFILE": "other-profile",
             "AWS_ROLE_ARN": "arn:aws:iam::999999999999:role/OtherRole", "AWS_WEB_IDENTITY_TOKEN_FILE": "/other/token",
-        }):
-            self.prepare_account("--profile", "account-admin")
-        for _, options in self.external.calls:
-            self.assertEqual(options["env"]["AWS_PROFILE"], "account-admin")
-            self.assertEqual(options["env"]["AWS_DEFAULT_PROFILE"], "account-admin")
-            for name in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_ROLE_ARN", "AWS_WEB_IDENTITY_TOKEN_FILE"):
-                self.assertNotIn(name, options["env"])
+        }
+        for profile in (None, "account-admin"):
+            with self.subTest(profile=profile), patch.dict(os.environ, environment):
+                self.external.calls.clear()
+                self.prepare_account(*(["--profile", profile] if profile else []))
+                for command, options in self.external.calls:
+                    self.assertIsNone(options.get("env"))
+                    if profile:
+                        self.assertEqual(command[command.index("--profile") + 1], profile)
+                    else:
+                        self.assertNotIn("--profile", command)
+                for name, value in environment.items():
+                    self.assertEqual(os.environ[name], value)
 
 
 if __name__ == "__main__":

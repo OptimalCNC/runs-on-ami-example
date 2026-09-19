@@ -10,7 +10,6 @@ from pathlib import Path
 import subprocess
 import sys
 
-from aws_cli import aws_environment
 from configuration import Configuration, InstallError
 
 
@@ -41,11 +40,10 @@ class Terraform:
         self.directory = root / component
         self.state_path = root / ".local" / "state" / f"{component}.tfstate"
         self.data_path = root / ".local" / "terraform" / component
-        self.environment = aws_environment(profile)
         # A caller's TF_VAR values must not silently override this configuration.
-        self.environment = {key: value for key, value in self.environment.items() if not key.startswith("TF_VAR_")}
+        self.environment = {key: value for key, value in os.environ.items() if not key.startswith("TF_VAR_")}
         self.environment.update(TF_DATA_DIR=str(self.data_path), TF_IN_AUTOMATION="true", TF_WORKSPACE="default")
-        self.variables: dict[str, object] = {}
+        self.variables: dict[str, object] = {"aws_profile": profile} if profile else {}
         self.initialized = False
 
     def command(self, *arguments: str, capture: bool = False) -> str:
@@ -120,7 +118,7 @@ def execute(arguments: argparse.Namespace, *, root: Path = ROOT) -> None:
 
     configuration = Configuration.load(arguments.config)
     bootstrap = Terraform(root, "bootstrap", arguments.profile)
-    bootstrap.variables = configuration.bootstrap_variables()
+    bootstrap.variables.update(configuration.bootstrap_variables())
     require_matching_installation(configuration, deployment.outputs())
     approval = ["-auto-approve", "-input=false"] if arguments.yes else []
 
@@ -153,11 +151,11 @@ def execute(arguments: argparse.Namespace, *, root: Path = ROOT) -> None:
         if bindings is None:
             raise InstallError("Bootstrap completed without producing deployment role outputs")
 
-    deployment.variables = {
+    deployment.variables.update({
         **deployment_variables,
         "deployment_role_arn": bindings.deployment_role_arn,
         "workload_boundary_arn": bindings.workload_boundary_arn,
-    }
+    })
     deployment.initialize()
     if arguments.command == "plan":
         deployment.command("plan", "-input=false")

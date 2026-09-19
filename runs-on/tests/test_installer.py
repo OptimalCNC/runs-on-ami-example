@@ -18,7 +18,7 @@ class InstallerTests(InstallerTestCase):
         environment = deployment_apply[1]["env"]
         self.assertEqual(environment["TF_VAR_deployment_role_arn"], ROLE)
         self.assertEqual(environment["TF_VAR_workload_boundary_arn"], BOUNDARY)
-        self.assertEqual(environment["AWS_PROFILE"], "source-admin")
+        self.assertEqual(environment["TF_VAR_aws_profile"], "source-admin")
         self.assertEqual(environment["TF_VAR_license_key"], "private-license-value")
         self.assertNotIn("TF_VAR_license_key", bootstrap_apply[1]["env"])
         self.assertEqual(json.loads(environment["TF_VAR_publisher_principal_arns"]), self.config_value["publishing"]["principal_arns"])
@@ -118,23 +118,26 @@ class InstallerTests(InstallerTestCase):
         self.assertTrue((self.root / ".local/state/bootstrap.tfstate").exists())
         self.assertFalse(list(destination.glob("*.json")))
 
-    def test_explicit_profile_does_not_use_inherited_static_credentials(self):
-        with patch.dict(os.environ, {
+    def test_profile_selection_preserves_native_credential_resolution(self):
+        environment = {
             "AWS_ACCESS_KEY_ID": "other-account", "AWS_SECRET_ACCESS_KEY": "secret",
+            "AWS_SESSION_TOKEN": "token", "AWS_PROFILE": "other-profile", "AWS_DEFAULT_PROFILE": "other-profile",
             "AWS_ROLE_ARN": "arn:aws:iam::999999999999:role/OtherRole", "AWS_WEB_IDENTITY_TOKEN_FILE": "/other/token",
-            "AWS_DEFAULT_PROFILE": "other-profile", "TF_VAR_account_id": "999999999999", "TF_WORKSPACE": "other-workspace",
-        }):
-            self.execute("apply", "--yes", "--profile", "chosen-profile")
-        for _, options in self.external.calls:
-            self.assertNotIn("AWS_ACCESS_KEY_ID", options["env"])
-            self.assertNotIn("AWS_SECRET_ACCESS_KEY", options["env"])
-            self.assertNotIn("AWS_ROLE_ARN", options["env"])
-            self.assertNotIn("AWS_WEB_IDENTITY_TOKEN_FILE", options["env"])
-            self.assertEqual(options["env"]["AWS_PROFILE"], "chosen-profile")
-            self.assertEqual(options["env"]["AWS_DEFAULT_PROFILE"], "chosen-profile")
-            self.assertEqual(options["env"]["TF_WORKSPACE"], "default")
-        deployment_env = self.external.terraform_calls("deployment", "apply")[0][1]["env"]
-        self.assertEqual(deployment_env["TF_VAR_account_id"], ACCOUNT)
+        }
+        for profile in (None, "chosen-profile"):
+            with self.subTest(profile=profile), patch.dict(os.environ, {
+                **environment, "TF_VAR_account_id": "999999999999",
+                "TF_VAR_aws_profile": "inherited-profile", "TF_WORKSPACE": "other-workspace",
+            }):
+                self.external.calls.clear()
+                self.execute("apply", "--yes", *(["--profile", profile] if profile else []))
+                for _, options in self.external.calls:
+                    for name, value in environment.items():
+                        self.assertEqual(options["env"][name], value)
+                    self.assertEqual(options["env"].get("TF_VAR_aws_profile"), profile)
+                    self.assertEqual(options["env"]["TF_WORKSPACE"], "default")
+                deployment_env = self.external.terraform_calls("deployment", "apply")[0][1]["env"]
+                self.assertEqual(deployment_env["TF_VAR_account_id"], ACCOUNT)
 
     def test_configuration_rejects_invalid_toml_before_external_commands(self):
         self.config.write_text('[aws\n')

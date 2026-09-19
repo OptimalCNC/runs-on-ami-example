@@ -77,6 +77,8 @@ account. The existing AWS identity needs the permissions described in
 authentication method, such as an existing profile or temporary credentials
 copied from the AWS access portal into environment variables. The examples below
 use `--profile runs-on-admin`; omit that option when using environment credentials.
+The account script passes the profile to AWS CLI's `--profile` option; the
+installer passes it to the Terraform AWS provider's `profile` setting.
 
 Create private configuration storage and copy the example:
 

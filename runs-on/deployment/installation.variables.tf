@@ -8,6 +8,12 @@ variable "region" {
   type        = string
 }
 
+variable "aws_profile" {
+  description = "Optional AWS profile for the existing authorized identity."
+  type        = string
+  default     = null
+}
+
 variable "name" {
   description = "Unique installation name, also used to scope IAM permissions."
   type        = string
