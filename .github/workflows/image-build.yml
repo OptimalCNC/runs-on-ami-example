@@ -164,6 +164,7 @@ jobs:
           role-to-assume: ${{ vars.PUBLISHING_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
           role-session-name: image-${{ github.run_id }}-${{ github.run_attempt }}
+          role-duration-seconds: 7200
       - name: Publish the validated image
         timeout-minutes: 85
         run: |

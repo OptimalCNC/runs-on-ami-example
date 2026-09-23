@@ -115,6 +115,7 @@ resource "aws_iam_role" "publisher" {
   name                 = "${var.name}-image-publisher"
   description          = "Publish and retire AMIs owned by ${var.name}; no deployment privileges."
   assume_role_policy   = jsonencode(local.publisher_trust)
+  max_session_duration = 7200
   permissions_boundary = var.workload_boundary_arn
 }
 
