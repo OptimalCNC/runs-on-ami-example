@@ -264,17 +264,19 @@ changes. Retain the bootstrap role while deployment resources still require it.
 For an existing YAML configuration, move its settings into the tables shown in
 `installation.example.toml` and save it as `.local/config.toml`. Run `python3 installer.py
 apply --deployment-only` to refresh the Terraform outputs and export the current
-JSON contracts, then update consumer paths. For GitHub image publishing, set
-`PUBLISHING_CONFIG` with the chosen image name, exported `account_id` and `region`,
-and exported `required_tags` as `tags`. Set `PUBLISHING_ROLE_ARN` separately from
-`publisher_role_arn`:
+JSON contracts, then update consumer paths. For GitHub image publishing, set the
+[repository variables](../images/README.md#github-actions-workflows) from the
+exported publishing contract:
 
 ```sh
-jq --arg name ubuntu2404-xenomai-cobalt \
-  '{name: $name, account_id, region, tags: .required_tags}' .local/contracts/publishing.json \
-  | gh variable set PUBLISHING_CONFIG --env production
+jq -r '.account_id' .local/contracts/publishing.json \
+  | gh variable set AWS_ACCOUNT_ID
+jq -r '.region' .local/contracts/publishing.json \
+  | gh variable set AWS_REGION
+jq -c '.required_tags' .local/contracts/publishing.json \
+  | gh variable set IMAGE_TAGS
 jq -r '.publisher_role_arn' .local/contracts/publishing.json \
-  | gh variable set PUBLISHING_ROLE_ARN --env production
+  | gh variable set PUBLISHING_ROLE_ARN
 ```
 
 Export alone reads the outputs already saved in state.

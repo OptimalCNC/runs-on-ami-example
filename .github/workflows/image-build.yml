@@ -17,7 +17,7 @@ on:
       environment:
         description: GitHub environment authorized by the publishing target
         type: string
-        default: production
+        default: image-publish
 
 permissions:
   contents: read
@@ -120,7 +120,7 @@ jobs:
     if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.publish_image)
     needs: [build, validate]
     runs-on: ubuntu-24.04
-    environment: ${{ inputs.environment || 'production' }}
+    environment: ${{ inputs.environment || 'image-publish' }}
     permissions:
       contents: read
       id-token: write
@@ -145,18 +145,24 @@ jobs:
           mkdir -p .local/build
           tar --extract --gzip --sparse --file .local/image.tar.gz --directory .local/build
           rm .local/image.tar.gz
-      - name: Read the publishing configuration
-        id: publishing
+      - name: Write the publishing configuration
         env:
-          PUBLISHING_CONFIG: ${{ vars.PUBLISHING_CONFIG }}
+          AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          IMAGE_TAGS: ${{ vars.IMAGE_TAGS || '{}' }}
         run: |
-          printenv PUBLISHING_CONFIG > .local/publishing.json
-          jq -r '"region=\(.region)"' .local/publishing.json >> "$GITHUB_OUTPUT"
+          jq -n \
+            --arg name ubuntu2404-xenomai-cobalt \
+            --arg account_id "$AWS_ACCOUNT_ID" \
+            --arg region "$AWS_REGION" \
+            --argjson tags "$IMAGE_TAGS" \
+            '{name: $name, account_id: $account_id, region: $region, tags: $tags}' \
+            > .local/publishing.json
       - name: Authenticate for publishing
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.PUBLISHING_ROLE_ARN }}
-          aws-region: ${{ steps.publishing.outputs.region }}
+          aws-region: ${{ vars.AWS_REGION }}
           role-session-name: image-${{ github.run_id }}-${{ github.run_attempt }}
       - name: Publish the validated image
         timeout-minutes: 85
@@ -179,7 +185,7 @@ jobs:
     if: always() && needs.publish.result != 'skipped'
     needs: publish
     runs-on: ubuntu-24.04
-    environment: ${{ inputs.environment || 'production' }}
+    environment: ${{ inputs.environment || 'image-publish' }}
     permissions:
       contents: read
       id-token: write
@@ -188,19 +194,25 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
-      - name: Read the publishing configuration
-        id: publishing
+      - name: Write the publishing configuration
         env:
-          PUBLISHING_CONFIG: ${{ vars.PUBLISHING_CONFIG }}
+          AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          IMAGE_TAGS: ${{ vars.IMAGE_TAGS || '{}' }}
         run: |
           mkdir -p .local
-          printenv PUBLISHING_CONFIG > .local/publishing.json
-          jq -r '"region=\(.region)"' .local/publishing.json >> "$GITHUB_OUTPUT"
+          jq -n \
+            --arg name ubuntu2404-xenomai-cobalt \
+            --arg account_id "$AWS_ACCOUNT_ID" \
+            --arg region "$AWS_REGION" \
+            --argjson tags "$IMAGE_TAGS" \
+            '{name: $name, account_id: $account_id, region: $region, tags: $tags}' \
+            > .local/publishing.json
       - name: Authenticate for publishing
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.PUBLISHING_ROLE_ARN }}
-          aws-region: ${{ steps.publishing.outputs.region }}
+          aws-region: ${{ vars.AWS_REGION }}
           role-session-name: image-clean-${{ github.run_id }}-${{ github.run_attempt }}
       - name: Clean old publications
         run: |
