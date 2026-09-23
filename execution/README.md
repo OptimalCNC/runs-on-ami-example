@@ -13,7 +13,7 @@ install them yourself when preparing another host.
 The workflow selects `image=ubuntu2404-xenomai-cobalt`, defined in
 [`.github/runs-on.yml`](../.github/runs-on.yml). RunsOn launches the newest
 available image matching `ubuntu2404-xenomai-cobalt-*` in the configured account.
-When using another account, set the selector's `owner` to that account.
+The selector's `owner: self` scopes the lookup to the installation's AWS account.
 
 Install and authenticate GitHub CLI (`gh`) to dispatch the workflow. Once the
 workflow is on the default branch, dispatch it from the repository checkout
