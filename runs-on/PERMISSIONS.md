@@ -120,8 +120,12 @@ The policy is scoped to the resources and enabled features of this blueprint.
 AWS Organizations service control policies, a source role's own permissions
 boundary, and session policies can further restrict these grants. Read/list API
 actions in the deployment and workload policies that do not support
-resource-level authorization use `Resource: "*"`; that does not grant unrelated
-write access.
+resource-level authorization use `Resource: "*"`. The deployment role also needs
+`Resource: "*"` for
+[`ecs:DeregisterTaskDefinition`](https://docs.aws.amazon.com/service-authorization/latest/reference/list_ecs.html#ecs-DeregisterTaskDefinition),
+which does not support resource-level authorization. This grant is restricted to
+the installation's AWS region and permits deregistering task definitions across
+that region.
 
 ## Routine deployment access
 

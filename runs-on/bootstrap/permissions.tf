@@ -114,7 +114,7 @@ locals {
           "ecs:CreateCluster", "ecs:DeleteCluster", "ecs:DescribeClusters", "ecs:PutClusterCapacityProviders",
           "ecs:UpdateCluster", "ecs:UpdateClusterSettings", "ecs:CreateService", "ecs:DeleteService",
           "ecs:UpdateService", "ecs:DescribeServices", "ecs:ListServices", "ecs:ListTasks", "ecs:DescribeTasks",
-          "ecs:RegisterTaskDefinition", "ecs:DeregisterTaskDefinition",
+          "ecs:RegisterTaskDefinition",
           "ecs:TagResource", "ecs:UntagResource", "ecs:ListTagsForResource",
         ]
         Resource = [
@@ -123,6 +123,13 @@ locals {
           "arn:aws:ecs:${local.regional}:task/${var.name}/*",
           "arn:aws:ecs:${local.regional}:task-definition/${var.name}-flexd:*",
         ]
+      },
+      {
+        # ECS does not support resource-level authorization for deregistration.
+        Effect    = "Allow"
+        Action    = "ecs:DeregisterTaskDefinition"
+        Resource  = "*"
+        Condition = { StringEquals = { "aws:RequestedRegion" = var.region } }
       },
       {
         # Provider 6.45 waits for the deployment created by CreateService or
