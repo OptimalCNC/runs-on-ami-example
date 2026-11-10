@@ -24,7 +24,8 @@ module "runs_on" {
 
   permission_boundary_arn = var.workload_boundary_arn
 
-  runner_max_runtime              = 60
+  # 覆盖源码 SDK、应用构建和完整测试，为 110 分钟 job 预留启动与收尾时间。
+  runner_max_runtime              = 120
   runner_config_auto_extends_from = ""
   cache_expiration_days           = 1
   app_budget_daily_usd            = 0

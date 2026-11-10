@@ -23,8 +23,11 @@ It uses a small Fargate control plane and two public subnets. Recurring costs in
 [public IPv4 address](https://aws.amazon.com/vpc/pricing/), and two
 [Secrets Manager secrets](https://aws.amazon.com/secrets-manager/pricing/).
 Use the linked pricing pages for rates in your region. Runner jobs, stored data,
-logs, and API requests add to that baseline. The default maximum runner lifetime
-is 60 minutes.
+logs, and API requests add to that baseline.
+Runner 最长运行时间为 120 分钟，用于容纳源码 SDK、应用构建和完整测试；
+workflow 的 `timeout-minutes` 应预留启动与收尾时间，例如设置为 110。
+该限制由平台的 `runner_max_runtime` 控制，修改后需在原有部署目录执行 plan 和 apply；
+只修改 workflow 或合并代码不会更新已部署平台，也不需要重建 AMI。
 
 ## Prerequisites
 
